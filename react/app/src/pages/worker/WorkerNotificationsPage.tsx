@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Bell, Mail, Calendar, Package, AlertTriangle, CheckCircle, XCircle, MessageSquare, MoreVertical } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/db';
+
+const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
 
 const WorkerNotificationsPage = () => {
   const { user, profile } = useAuth();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const token = localStorage.getItem('token');
 
   useEffect(() => {
     if (user && profile?.role === 'worker') {
@@ -20,24 +22,22 @@ const WorkerNotificationsPage = () => {
   }, [user, profile]);
 
   const fetchNotifications = async () => {
-    if (!user) return;
+    if (!user || !token) return;
 
     try {
       setLoading(true);
 
-      // Fetch notifications for the user
-      const { data: notificationsData, error: notificationsError } = await db
-        .collection('notifications')
-        .select('*')
-        .eq('recipient_id', user.id)
-        .order('created_at', { ascending: false });
+      const res = await fetch(`${API_BASE}/api/notifications`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      if (notificationsError) {
-        console.error('Error fetching notifications:', notificationsError);
+      if (!res.ok) {
+        console.error('Error fetching notifications:', await res.text());
       } else {
+        const notificationsData = await res.json();
         setNotifications(notificationsData || []);
         // Count unread notifications
-        const unread = notificationsData?.filter((n: any) => !n.is_read).length || 0;
+        const unread = notificationsData?.filter((n: any) => !n.read).length || 0;
         setUnreadCount(unread);
       }
     } catch (error) {
@@ -48,47 +48,48 @@ const WorkerNotificationsPage = () => {
   };
 
   const markAsRead = async (notificationId: string) => {
+    if (!token) return;
     try {
-      const { error } = await db
-        .collection('notifications')
-        .update({ is_read: true })
-        .eq('id', notificationId);
+      const res = await fetch(`${API_BASE}/api/notifications/${notificationId}/read`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      if (error) {
-        console.error('Error marking notification as read:', error);
+      if (!res.ok) {
+        console.error('Error marking notification as read');
         return;
       }
 
       // Update local state
       setNotifications(prev => 
         prev.map(n => 
-          n.id === notificationId ? { ...n, is_read: true } : n
+          n._id === notificationId ? { ...n, read: true } : n
         )
       );
 
       // Update unread count
-      setUnreadCount(prev => prev - 1);
+      setUnreadCount(prev => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
   };
 
   const markAllAsRead = async () => {
+    if (!token) return;
     try {
-      const { error } = await db
-        .collection('notifications')
-        .update({ is_read: true })
-        .eq('recipient_id', user?.id)
-        .eq('is_read', false);
+        const res = await fetch(`${API_BASE}/api/notifications/read-all`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-      if (error) {
-        console.error('Error marking all notifications as read:', error);
+      if (!res.ok) {
+        console.error('Error marking all notifications as read');
         return;
       }
 
       // Update local state
       setNotifications(prev => 
-        prev.map(n => ({ ...n, is_read: true }))
+        prev.map(n => ({ ...n, read: true }))
       );
 
       // Update unread count
@@ -178,7 +179,7 @@ const WorkerNotificationsPage = () => {
           <CardContent>
             <div className="text-2xl font-bold">
               {notifications.filter(n => 
-                new Date(n.created_at).toDateString() === new Date().toDateString()
+                new Date(n.createdAt).toDateString() === new Date().toDateString()
               ).length}
             </div>
             <p className="text-xs text-muted-foreground">Today's notifications</p>
@@ -192,7 +193,7 @@ const WorkerNotificationsPage = () => {
           <CardContent>
             <div className="text-2xl font-bold">
               {notifications.filter(n => {
-                const notificationDate = new Date(n.created_at);
+                const notificationDate = new Date(n.createdAt);
                 const weekAgo = new Date();
                 weekAgo.setDate(weekAgo.getDate() - 7);
                 return notificationDate >= weekAgo;
@@ -206,11 +207,20 @@ const WorkerNotificationsPage = () => {
       {/* Actions */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold">Recent Activity</h2>
-        {unreadCount > 0 && (
-          <Button variant="outline" size="sm" onClick={markAllAsRead}>
-            Mark All as Read
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={async () => {
+            if (!token) return;
+            await fetch(`${API_BASE}/api/notifications/test`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }});
+            fetchNotifications();
+          }}>
+            Create Test Notification
           </Button>
-        )}
+          {unreadCount > 0 && (
+            <Button variant="outline" size="sm" onClick={markAllAsRead}>
+              Mark All as Read
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Notifications List */}
@@ -280,13 +290,13 @@ const WorkerNotificationsPage = () => {
         <TabsContent value="unread">
           <Card>
             <CardContent className="p-0">
-              {notifications.filter(n => !n.is_read).length > 0 ? (
+              {notifications.filter(n => !n.read).length > 0 ? (
                 <div className="divide-y">
                   {notifications
-                    .filter(n => !n.is_read)
+                    .filter(n => !n.read)
                     .map((notification) => (
                       <div 
-                        key={notification.id} 
+                        key={notification._id} 
                         className="p-4 bg-blue-50"
                       >
                         <div className="flex items-start gap-4">
@@ -300,14 +310,14 @@ const WorkerNotificationsPage = () => {
                             </div>
                             <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
                             <p className="text-xs text-gray-500 mt-2">
-                              {new Date(notification.created_at).toLocaleString()}
+                              {new Date(notification.createdAt).toLocaleString()}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
                             <Button 
                               variant="outline" 
                               size="sm" 
-                              onClick={() => markAsRead(notification.id)}
+                              onClick={() => markAsRead(notification._id)}
                             >
                               Mark Read
                             </Button>
@@ -339,8 +349,8 @@ const WorkerNotificationsPage = () => {
                     .filter(n => n.type.includes('booking'))
                     .map((notification) => (
                       <div 
-                        key={notification.id} 
-                        className={`p-4 ${!notification.is_read ? 'bg-blue-50' : ''}`}
+                        key={notification._id} 
+                        className={`p-4 ${!notification.read ? 'bg-blue-50' : ''}`}
                       >
                         <div className="flex items-start gap-4">
                           <div className="mt-1">
@@ -349,21 +359,21 @@ const WorkerNotificationsPage = () => {
                           <div className="flex-1">
                             <div className="flex items-center justify-between">
                               <h3 className="font-medium">{notification.title}</h3>
-                              {!notification.is_read && (
+                              {!notification.read && (
                                 <Badge variant="default">New</Badge>
                               )}
                             </div>
                             <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
                             <p className="text-xs text-gray-500 mt-2">
-                              {new Date(notification.created_at).toLocaleString()}
+                              {new Date(notification.createdAt).toLocaleString()}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
-                            {!notification.is_read && (
+                            {!notification.read && (
                               <Button 
                                 variant="outline" 
                                 size="sm" 
-                                onClick={() => markAsRead(notification.id)}
+                                onClick={() => markAsRead(notification._id)}
                               >
                                 Mark Read
                               </Button>
@@ -396,8 +406,8 @@ const WorkerNotificationsPage = () => {
                     .filter(n => n.type.includes('payment'))
                     .map((notification) => (
                       <div 
-                        key={notification.id} 
-                        className={`p-4 ${!notification.is_read ? 'bg-blue-50' : ''}`}
+                        key={notification._id} 
+                        className={`p-4 ${!notification.read ? 'bg-blue-50' : ''}`}
                       >
                         <div className="flex items-start gap-4">
                           <div className="mt-1">
@@ -406,21 +416,21 @@ const WorkerNotificationsPage = () => {
                           <div className="flex-1">
                             <div className="flex items-center justify-between">
                               <h3 className="font-medium">{notification.title}</h3>
-                              {!notification.is_read && (
+                              {!notification.read && (
                                 <Badge variant="default">New</Badge>
                               )}
                             </div>
                             <p className="text-sm text-gray-600 mt-1">{notification.message}</p>
                             <p className="text-xs text-gray-500 mt-2">
-                              {new Date(notification.created_at).toLocaleString()}
+                              {new Date(notification.createdAt).toLocaleString()}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
-                            {!notification.is_read && (
+                            {!notification.read && (
                               <Button 
                                 variant="outline" 
                                 size="sm" 
-                                onClick={() => markAsRead(notification.id)}
+                                onClick={() => markAsRead(notification._id)}
                               >
                                 Mark Read
                               </Button>

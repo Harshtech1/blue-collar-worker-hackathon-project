@@ -22,6 +22,8 @@ import { useAuth } from "@/contexts/AuthContext";
 // import { supabase } from "@/integrations/supabase/client";
 import { db } from "@/lib/db";
 
+const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
 const WorkerLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notifications, setNotifications] = useState(0); // We'll update this based on actual notification count
@@ -30,6 +32,7 @@ const WorkerLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, profile, signOut } = useAuth();
+  const token = localStorage.getItem('token');
   
   // Check if we're on the notifications page to reset the count
   const isOnNotificationsPage = useMatch('/worker/notifications');
@@ -41,6 +44,33 @@ const WorkerLayout = () => {
     }
   }, [isOnNotificationsPage, notifications]);
   
+  // Fetch notifications
+  const fetchNotifications = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/notifications`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Count unread notifications
+        const unread = data.filter((n: any) => !n.read).length;
+        setNotifications(unread);
+      }
+    } catch (err) {
+      console.error('Error fetching notifications:', err);
+    }
+  };
+
+  // Poll for notifications every 30 seconds
+  useEffect(() => {
+    if (user && token) {
+      fetchNotifications();
+      const interval = setInterval(fetchNotifications, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [user, token]);
+
   // Fetch worker profile and status
   useEffect(() => {
     if (user) {
@@ -55,7 +85,7 @@ const WorkerLayout = () => {
       const { data, error } = await db
         .collection('worker_profiles')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', user.id || user._id)
         .single();
       
       if (data) {
@@ -75,7 +105,7 @@ const WorkerLayout = () => {
       const { error } = await db
         .collection('worker_profiles')
         .update({ status: newStatus })
-        .eq('user_id', user.id);
+        .eq('user_id', user.id || user._id);
       
       if (!error) {
         setIsOnline(!isOnline);

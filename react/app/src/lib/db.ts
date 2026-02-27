@@ -33,6 +33,9 @@ function collection(table: string) {
         try {
             let res, data, error = null;
 
+            const token = localStorage.getItem('token');
+            const authHeader: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
+
             // --- UPDATE ---
             if (state.operation === 'UPDATE') {
                 // Special handling for worker_profiles update by user_id
@@ -40,7 +43,7 @@ function collection(table: string) {
                     const userFilter = state.filters.find(f => f.field === 'user_id');
                     if (userFilter) {
                         res = await fetch(`${API_BASE}/api/worker-profiles/user/${userFilter.value}`, {
-                            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.payload)
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader }, body: JSON.stringify(state.payload)
                         });
                     } else {
                         // Try generic update if ID is present
@@ -57,7 +60,7 @@ function collection(table: string) {
                     const idFilter = state.filters.find(f => f.field === 'id');
                     if (idFilter) {
                         res = await fetch(`${API_BASE}/api/users/${idFilter.value}`, {
-                            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.payload)
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader }, body: JSON.stringify(state.payload)
                         });
                     } else {
                         error = { message: 'Update profiles requires id' };
@@ -67,7 +70,7 @@ function collection(table: string) {
                     const idFilter = state.filters.find(f => f.field === 'id');
                     if (idFilter) {
                         res = await fetch(`${API_BASE}/api/bookings/${idFilter.value}`, {
-                            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.payload)
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader }, body: JSON.stringify(state.payload)
                         });
                     } else {
                         error = { message: 'Update bookings requires id' };
@@ -87,7 +90,7 @@ function collection(table: string) {
                 // For UPSERT, we should ideally check existence, but for now map to POST (backend should handle duplicates or we map to update if ID exists)
                 // Since this is a simple wrapper, we'll try POST.
                 res = await fetch(`${API_BASE}/api/${state.table}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state.payload)
+                    method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader }, body: JSON.stringify(state.payload)
                 });
                 if (!res.ok) error = await res.json();
                 else data = await res.json();
@@ -98,13 +101,13 @@ function collection(table: string) {
                 if (state.table === 'worker_profiles') {
                     const userFilter = state.filters.find(f => f.field === 'user_id');
                     if (userFilter) {
-                        res = await fetch(`${API_BASE}/api/worker-profiles/user/${userFilter.value}`);
+                        res = await fetch(`${API_BASE}/api/worker-profiles/user/${userFilter.value}`, { headers: authHeader });
                         if (res.ok) data = await res.json();
                         else error = await res.json();
                     } else {
                         // List all or filter
                         const q = buildQuery(state.filters);
-                        res = await fetch(`${API_BASE}/api/worker-profiles${q ? `?${q}` : ''}`);
+                        res = await fetch(`${API_BASE}/api/worker-profiles${q ? `?${q}` : ''}`, { headers: authHeader });
                         if (res.ok) data = await res.json();
                         else error = await res.json();
                     }
@@ -113,12 +116,12 @@ function collection(table: string) {
                 else if (state.table === 'bookings') {
                     const workerFilter = state.filters.find(f => f.field === 'worker_id');
                     if (workerFilter) {
-                        res = await fetch(`${API_BASE}/api/bookings/worker/${workerFilter.value}`);
+                        res = await fetch(`${API_BASE}/api/bookings/worker/${workerFilter.value}`, { headers: authHeader });
                         if (res.ok) data = await res.json();
                         else error = await res.json();
                     } else {
                         const q = buildQuery(state.filters);
-                        res = await fetch(`${API_BASE}/api/bookings${q ? `?${q}` : ''}`);
+                        res = await fetch(`${API_BASE}/api/bookings${q ? `?${q}` : ''}`, { headers: authHeader });
                         if (res.ok) data = await res.json();
                         else error = await res.json();
                     }
@@ -127,7 +130,7 @@ function collection(table: string) {
                 else {
                     const q = buildQuery(state.filters);
                     const url = `${API_BASE}/api/${state.table}${q ? `?${q}` : ''}`;
-                    res = await fetch(url);
+                    res = await fetch(url, { headers: authHeader });
                     if (res.ok) data = await res.json();
                     else error = await res.json();
                 }

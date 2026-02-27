@@ -4,6 +4,12 @@ import { ObjectId } from 'mongodb';
 export const updateUser = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Security: Only allow users to update their own profile, unless admin
+    if (req.user && req.user._id.toString() !== id && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Forbidden. You can only update your own user details.' });
+    }
+
     const updates = req.body;
 
     // Security: don't allow updating sensitive fields directly here if not needed

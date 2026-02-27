@@ -36,41 +36,51 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/db';
+import { uploadFile } from '@/lib/upload';
+import { z } from 'zod';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+const settingsSchema = z.object({
+  full_name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email address"),
+  phone: z.string().regex(/^[0-9]{10}$/, "Must be a valid 10-digit phone number"),
+  city: z.string().min(2, "City is required"),
+  state: z.string().min(2, "State is required"),
+  pincode: z.string().min(6, "Invalid pincode"),
+  preferred_language: z.string(),
+  bio: z.string().optional(),
+  experience_years: z.coerce.number().min(0, "Experience cannot be negative"),
+  base_price: z.coerce.number().min(0, "Base price cannot be negative"),
+  service_radius_km: z.coerce.number().min(1, "Radius must be > 0"),
+});
+
+type SettingsFormValues = z.infer<typeof settingsSchema>;
 
 const WorkerSettingsPage = () => {
   const { user, profile } = useAuth();
   const [activeTab, setActiveTab] = useState('profile');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   
-  // Profile state
-  const [profileData, setProfileData] = useState<{
-    full_name: string;
-    email: string;
-    phone: string;
-    city: string;
-    state: string;
-    pincode: string;
-    preferred_language: string;
-    avatar_url: string | null;
-  }>({
-    full_name: '',
-    email: '',
-    phone: '',
-    city: '',
-    state: '',
-    pincode: '',
-    preferred_language: 'en',
-    avatar_url: null
-  });
+  const [profileData, setProfileData] = useState<any>({});
   
-  // Worker profile state
-  const [workerData, setWorkerData] = useState({
-    bio: '',
-    experience_years: 0,
-    base_price: 0,
-    service_radius_km: 10,
-    status: 'online'
+  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<SettingsFormValues>({
+    resolver: zodResolver(settingsSchema),
+    defaultValues: {
+      full_name: '',
+      email: '',
+      phone: '',
+      city: '',
+      state: '',
+      pincode: '',
+      preferred_language: 'en',
+      bio: '',
+      experience_years: 0,
+      base_price: 0,
+      service_radius_km: 10
+    }
   });
   
   // Notification preferences
@@ -109,7 +119,19 @@ const WorkerSettingsPage = () => {
 
     try {
       // Load profile data
-      setProfileData({
+      setProfileData({ avatar_url: profile?.avatar_url || null });
+
+      let wData = null;
+      if (profile?.role === 'worker') {
+        const { data: workerProfile } = await db
+          .collection('worker_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        wData = workerProfile;
+      }
+      
+      reset({
         full_name: profile?.full_name || '',
         email: profile?.email || '',
         phone: profile?.phone || '',
@@ -117,27 +139,11 @@ const WorkerSettingsPage = () => {
         state: profile?.state || '',
         pincode: profile?.pincode || '',
         preferred_language: profile?.preferred_language || 'en',
-        avatar_url: profile?.avatar_url || null
+        bio: wData?.bio || '',
+        experience_years: wData?.experience_years || 0,
+        base_price: wData?.base_price || 0,
+        service_radius_km: wData?.service_radius_km || 10
       });
-      
-      // Load worker profile data
-      if (profile?.role === 'worker') {
-        const { data: workerProfile } = await db
-          .collection('worker_profiles')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
-        
-        if (workerProfile) {
-          setWorkerData({
-            bio: workerProfile.bio || '',
-            experience_years: workerProfile.experience_years || 0,
-            base_price: workerProfile.base_price || 0,
-            service_radius_km: workerProfile.service_radius_km || 10,
-            status: workerProfile.status || 'online'
-          });
-        }
-      }
       
       // Load notification preferences (would come from a settings table)
       // For now, using default values
@@ -157,8 +163,33 @@ const WorkerSettingsPage = () => {
     }
   };
 
-  const handleProfileUpdate = async (e: React.FormEvent) => {
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     e.preventDefault();
+    if (!e.target.files || e.target.files.length === 0) return;
+    
+    const file = e.target.files[0];
+    setUploadingAvatar(true);
+    
+    try {
+      const { url, error } = await uploadFile(file);
+      
+      if (error) {
+        alert(error);
+        return;
+      }
+      
+      if (url) {
+        setProfileData((prev: any) => ({ ...prev, avatar_url: url }));
+        alert('Image uploaded successfully. Remember to save changes to apply.');
+      }
+    } catch (err: any) {
+      alert('Error uploading image');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const onSubmitProfile = async (data: SettingsFormValues) => {
     if (!user) return;
     
     setSaving(true);
@@ -167,13 +198,13 @@ const WorkerSettingsPage = () => {
       const { error: profileError } = await db
         .collection('profiles')
         .update({
-          full_name: profileData.full_name,
-          email: profileData.email,
-          phone: profileData.phone,
-          city: profileData.city,
-          state: profileData.state,
-          pincode: profileData.pincode,
-          preferred_language: profileData.preferred_language
+          full_name: data.full_name,
+          email: data.email,
+          phone: data.phone,
+          city: data.city,
+          state: data.state,
+          pincode: data.pincode,
+          preferred_language: data.preferred_language,
         })
         .eq('id', user.id);
       
@@ -184,10 +215,10 @@ const WorkerSettingsPage = () => {
         const { error: workerError } = await db
           .collection('worker_profiles')
           .update({
-            bio: workerData.bio,
-            experience_years: workerData.experience_years,
-            base_price: workerData.base_price,
-            service_radius_km: workerData.service_radius_km
+            bio: data.bio,
+            experience_years: data.experience_years,
+            base_price: data.base_price,
+            service_radius_km: data.service_radius_km
           })
           .eq('user_id', user.id);
         
@@ -293,13 +324,22 @@ const WorkerSettingsPage = () => {
                       size="icon" 
                       className="absolute bottom-0 right-0 rounded-full"
                       variant="outline"
+                      onClick={() => document.getElementById('avatar-upload')?.click()}
+                      disabled={uploadingAvatar}
                     >
                       <Camera className="h-4 w-4" />
                     </Button>
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm">
-                      <Upload className="h-4 w-4 mr-2" />
+                    <input 
+                      type="file" 
+                      id="avatar-upload"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleAvatarUpload}
+                    />
+                    <Button variant="outline" size="sm" onClick={() => document.getElementById('avatar-upload')?.click()} disabled={uploadingAvatar}>
+                      {uploadingAvatar ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
                       Upload
                     </Button>
                     <Button variant="outline" size="sm">
@@ -319,16 +359,16 @@ const WorkerSettingsPage = () => {
                   <CardDescription>Update your personal and professional details</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <form onSubmit={handleProfileUpdate} className="space-y-6">
+                  <form onSubmit={handleSubmit(onSubmitProfile)} className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="full_name">Full Name</Label>
                         <Input
                           id="full_name"
-                          value={profileData.full_name}
-                          onChange={(e) => setProfileData({...profileData, full_name: e.target.value})}
+                          {...register('full_name')}
                           placeholder="Enter your full name"
                         />
+                        {errors.full_name && <span className="text-xs text-red-500">{errors.full_name.message}</span>}
                       </div>
                       
                       <div className="space-y-2">
@@ -336,38 +376,44 @@ const WorkerSettingsPage = () => {
                         <Input
                           id="email"
                           type="email"
-                          value={profileData.email}
-                          onChange={(e) => setProfileData({...profileData, email: e.target.value})}
+                          {...register('email')}
                           placeholder="Enter your email"
                         />
+                        {errors.email && <span className="text-xs text-red-500">{errors.email.message}</span>}
                       </div>
                       
                       <div className="space-y-2">
                         <Label htmlFor="phone">Phone Number</Label>
                         <Input
                           id="phone"
-                          value={profileData.phone}
-                          onChange={(e) => setProfileData({...profileData, phone: e.target.value})}
+                          {...register('phone')}
                           placeholder="Enter your phone number"
                         />
+                        {errors.phone && <span className="text-xs text-red-500">{errors.phone.message}</span>}
                       </div>
                       
                       <div className="space-y-2">
                         <Label htmlFor="preferred_language">Language</Label>
-                        <Select
-                          value={profileData.preferred_language}
-                          onValueChange={(value) => setProfileData({...profileData, preferred_language: value})}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select language" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="en">English</SelectItem>
-                            <SelectItem value="hi">Hindi</SelectItem>
-                            <SelectItem value="mr">Marathi</SelectItem>
-                            <SelectItem value="ta">Tamil</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <Controller
+                          name="preferred_language"
+                          control={control}
+                          render={({ field }) => (
+                          <Select
+                            value={field.value}
+                            onValueChange={field.onChange}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select language" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="en">English</SelectItem>
+                              <SelectItem value="hi">Hindi</SelectItem>
+                              <SelectItem value="mr">Marathi</SelectItem>
+                              <SelectItem value="ta">Tamil</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          )}
+                        />
                       </div>
                     </div>
                     
@@ -375,11 +421,11 @@ const WorkerSettingsPage = () => {
                       <Label htmlFor="bio">Bio</Label>
                       <Textarea
                         id="bio"
-                        value={workerData.bio}
-                        onChange={(e) => setWorkerData({...workerData, bio: e.target.value})}
+                        {...register('bio')}
                         placeholder="Tell us about yourself and your expertise"
                         rows={4}
                       />
+                      {errors.bio && <span className="text-xs text-red-500">{errors.bio.message}</span>}
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -388,10 +434,10 @@ const WorkerSettingsPage = () => {
                         <Input
                           id="experience"
                           type="number"
-                          value={workerData.experience_years}
-                          onChange={(e) => setWorkerData({...workerData, experience_years: parseInt(e.target.value) || 0})}
+                          {...register('experience_years')}
                           placeholder="0"
                         />
+                        {errors.experience_years && <span className="text-xs text-red-500">{errors.experience_years.message}</span>}
                       </div>
                       
                       <div className="space-y-2">
@@ -401,12 +447,12 @@ const WorkerSettingsPage = () => {
                           <Input
                             id="base_price"
                             type="number"
-                            value={workerData.base_price}
-                            onChange={(e) => setWorkerData({...workerData, base_price: parseFloat(e.target.value) || 0})}
+                            {...register('base_price')}
                             placeholder="0"
                             className="pl-8"
                           />
                         </div>
+                        {errors.base_price && <span className="text-xs text-red-500">{errors.base_price.message}</span>}
                       </div>
                       
                       <div className="space-y-2">
@@ -414,10 +460,10 @@ const WorkerSettingsPage = () => {
                         <Input
                           id="service_radius"
                           type="number"
-                          value={workerData.service_radius_km}
-                          onChange={(e) => setWorkerData({...workerData, service_radius_km: parseInt(e.target.value) || 10})}
+                          {...register('service_radius_km')}
                           placeholder="10"
                         />
+                        {errors.service_radius_km && <span className="text-xs text-red-500">{errors.service_radius_km.message}</span>}
                       </div>
                     </div>
                     
@@ -426,20 +472,30 @@ const WorkerSettingsPage = () => {
                         <Label htmlFor="city">City</Label>
                         <Input
                           id="city"
-                          value={profileData.city}
-                          onChange={(e) => setProfileData({...profileData, city: e.target.value})}
+                          {...register('city')}
                           placeholder="Enter your city"
                         />
+                        {errors.city && <span className="text-xs text-red-500">{errors.city.message}</span>}
                       </div>
                       
                       <div className="space-y-2">
                         <Label htmlFor="state">State</Label>
                         <Input
                           id="state"
-                          value={profileData.state}
-                          onChange={(e) => setProfileData({...profileData, state: e.target.value})}
+                          {...register('state')}
                           placeholder="Enter your state"
                         />
+                        {errors.state && <span className="text-xs text-red-500">{errors.state.message}</span>}
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="pincode">Pincode</Label>
+                        <Input
+                          id="pincode"
+                          {...register('pincode')}
+                          placeholder="Enter pincode"
+                        />
+                        {errors.pincode && <span className="text-xs text-red-500">{errors.pincode.message}</span>}
                       </div>
                     </div>
                     

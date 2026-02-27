@@ -55,7 +55,7 @@ export default function EnhancedLogin() {
         }
       } else {
         // Initial Login Step
-        const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+        const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
         const res = await fetch(`${API}/auth/login`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },

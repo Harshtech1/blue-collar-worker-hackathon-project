@@ -7,12 +7,22 @@ import workerRoutes from "./routes/worker.routes.js";
 import bookingRoutes from "./routes/booking.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import serviceRoutes from "./routes/service.routes.js";
+import uploadRoutes from "./routes/upload.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from the public/uploads directory
+app.use('/uploads', express.static(path.join(__dirname, '../public/uploads')));
 
 // Connect to MongoDB
 connectDB()
@@ -27,6 +37,8 @@ connectDB()
     app.use("/api/bookings", bookingRoutes);
     app.use("/api/users", usersRoutes);
     app.use("/api/service_categories", serviceRoutes);
+    app.use("/api/upload", uploadRoutes);
+    app.use("/api/notifications", notificationRoutes);
 
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () =>

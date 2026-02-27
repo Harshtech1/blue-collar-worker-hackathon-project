@@ -31,7 +31,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<any | null>(null);
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const res = await fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
         if (res.ok) {
           const { user } = await res.json();
-          setUser(user);
+          setUser({ ...user, id: user.id || user._id });
           // Normalize ID handling
           const userId = user.id || user._id;
           setProfile({
@@ -117,7 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Normal login (if 2FA disabled or handled otherwise)
       if (data.token) {
         localStorage.setItem('token', data.token);
-        setUser(data.user);
+        setUser(data.user ? { ...data.user, id: data.user.id || data.user._id } : data.user);
         const userId = data.user?.id || data.user?._id;
         if (userId) {
           setProfile({ id: userId, full_name: data.user.full_name, email: data.user.email, role: data.user.role });

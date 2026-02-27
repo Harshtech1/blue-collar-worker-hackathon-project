@@ -30,7 +30,7 @@ const WorkerJobsPage = () => {
       const { data: workerProfile, error: profileError } = await db
         .collection('worker_profiles')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', user.id || user._id)
         .single();
 
       if (!workerProfile || profileError) {
