@@ -57,32 +57,50 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL;
-  const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD;
+  const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
   /* ================= AUTH ================= */
 
   useEffect(() => {
-    const auth = localStorage.getItem("adminAuth");
-    if (auth === "true") {
-      setIsAuthenticated(true);
-      fetchDashboardData();
-    }
-  }, []);
-
-  const handleLogin = () => {
-    setError("");
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      localStorage.setItem("adminAuth", "true");
+    // Check for existing admin session token
+    const token = localStorage.getItem("adminToken");
+    if (token) {
       setIsAuthenticated(true);
       fetchDashboardData();
     } else {
-      setError("Invalid admin credentials");
+      setLoading(false);
+    }
+  }, []);
+
+  // PRIORITY 1 FIX: Credentials validated SERVER-SIDE via POST /api/auth/admin-login.
+  // Admin password no longer lives in the JS bundle as a VITE_ variable.
+  const handleLogin = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/auth/admin-login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.message || "Invalid admin credentials");
+        return;
+      }
+      const { token } = await res.json();
+      localStorage.setItem("adminToken", token);
+      setIsAuthenticated(true);
+      fetchDashboardData();
+    } catch (err) {
+      setError("Server unreachable. Is the backend running?");
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("adminAuth");
+    localStorage.removeItem("adminToken");
     setIsAuthenticated(false);
   };
 
@@ -90,11 +108,13 @@ export default function AdminDashboard() {
 
   const fetchDashboardData = async () => {
     setLoading(true);
+    const token = localStorage.getItem("adminToken");
+    const headers = { Authorization: `Bearer ${token}` } as HeadersInit;
     try {
       const [usersRes, bookingsRes, workersRes] = await Promise.all([
-        fetch("/api/admin/users"),
-        fetch("/api/admin/bookings"),
-        fetch("/api/admin/workers"),
+        fetch(`${API}/admin/users`, { headers }),
+        fetch(`${API}/admin/bookings`, { headers }),
+        fetch(`${API}/admin/workers`, { headers }),
       ]);
 
       const users = await usersRes.json();

@@ -16,6 +16,7 @@ import { Layout } from '@/components/layout/Layout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { PaymentGatewayCard } from '@/components/payment/PaymentGatewayCard';
+import { BookingStatusBanner } from '@/components/customer/BookingStatusBanner';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -31,20 +32,49 @@ export default function PaymentPage() {
   const [selectedMethod, setSelectedMethod] = useState<string>('upi');
   const [processing, setProcessing] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [transactionId, setTransactionId] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState(1240);
 
-  const handleAction = () => {
+  const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+  // PRIORITY 5 FIX: Real API call — creates payment record + updates booking in MongoDB.
+  // Replaces the 2.5-second setTimeout mock that previously always "succeeded"
+  // without any backend interaction.
+  const handleAction = async () => {
     setProcessing(true);
-    // Simulate payment gateway delay
-    setTimeout(() => {
-      setProcessing(false);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API}/payments/initiate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          bookingId: bookingId || null,
+          amount: Number(amount),
+          method: selectedMethod,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Payment failed');
+      }
+
+      const data = await res.json();
+      setTransactionId(data.transactionId);
       setSuccess(true);
       toast.success(
-        type === 'payment' 
-          ? (language === 'hi' ? 'भुगतान सफल रहा!' : 'Payment Successful!')
+        type === 'payment'
+          ? (language === 'hi' ? 'भुगतान सफल रहा!' : `Payment successful! Ref: ${data.transactionId}`)
           : (language === 'hi' ? 'निकासी अनुरोध भेज दिया गया है' : 'Payout request sent successfully')
       );
-    }, 2500);
+    } catch (err: any) {
+      toast.error(`Payment failed: ${err.message}`);
+    } finally {
+      setProcessing(false);
+    }
   };
 
   if (success) {

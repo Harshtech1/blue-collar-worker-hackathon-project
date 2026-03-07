@@ -1,50 +1,68 @@
 version: "3.9"
 
-services:
-  # ======================
-  # Frontend Service
-  # ======================
-  rahi-web:
-    build:
-      context: .
-      dockerfile: infrastructure/docker/Dockerfile.frontend
-    ports:
-      - "80:80"
-    env_file:
-      - .env
-    depends_on:
-      rahi-api:
-        condition: service_healthy
-    networks:
-      - rahi-network
-    restart: always
+# ──────────────────────────────────────────────────────────────────────────────
+# PRIORITY 4 FIX: Stripped-down docker-compose.yml
+#
+# Previous version referenced nonexistent Dockerfiles and a broken nginx gateway
+# with 5 of 7 upstream services missing → HTTP 502 for most routes.
+#
+# This version contains ONLY the 3 services that actually exist and work:
+#   1. rahi-api     → Node.js/Express Backend on port 5000
+#   2. rahi-chatbot → Python FastAPI chatbot on port 8004
+#   3. mongo        → MongoDB 7 on port 27017
+#
+# The React frontend is NOT containerized here — run it with `npm run dev`
+# during the hackathon demo for faster iteration. For a proper build, see
+# the Dockerfile.frontend build step below (commented out for reference).
+# ──────────────────────────────────────────────────────────────────────────────
 
-  # ======================
-  # Backend API Service
-  # ======================
+services:
+  # =============================================================
+  # Backend — Node.js / Express + Socket.IO
+  # =============================================================
   rahi-api:
     build:
-      context: .
-      dockerfile: infrastructure/docker/Dockerfile.backend
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: rahi-api
     ports:
-      - "8000:8000"
+      - "5000:5000"
     env_file:
-      - .env
+      - ./Backend/.env
+    environment:
+      - NODE_ENV=production
+      - CLIENT_URL=http://localhost:5173
     depends_on:
       mongo:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - rahi-network
-    restart: always
+    restart: unless-stopped
 
-  # ======================
-  # MongoDB Database
-  # ======================
+  # =============================================================
+  # Chatbot — Python FastAPI (Groq / LangGraph)
+  # =============================================================
+  rahi-chatbot:
+    build:
+      context: ./react/app/microservices/chatbot-service
+      dockerfile: Dockerfile
+    container_name: rahi-chatbot
+    ports:
+      - "8004:8004"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+    networks:
+      - rahi-network
+    restart: unless-stopped
+
+  # =============================================================
+  # Database — MongoDB 7
+  # =============================================================
   mongo:
     image: mongo:7
     container_name: rahi-mongo
@@ -59,17 +77,14 @@ services:
       retries: 5
     networks:
       - rahi-network
-    restart: always
+    restart: unless-stopped
 
-# ======================
-# Volumes
-# ======================
+# =============================================================
+# Volumes & Networks
+# =============================================================
 volumes:
   mongo_data:
 
-# ======================
-# Network
-# ======================
 networks:
   rahi-network:
     driver: bridge

@@ -45,7 +45,7 @@ export function EnhancedHeroSection() {
             ? 'सत्यापित पेशेवरों के साथ अपने घर के कामों को आसान बनाएं। कोई छिपी हुई फीस नहीं।'
             : "Turn your home to-do list into a 'done' list with verified professionals.",
         image:
-          '/images/amina-atar-4mEyvORkbN0-unsplash.jpg'
+          'img2.jpg'
       },
       {
         badge:

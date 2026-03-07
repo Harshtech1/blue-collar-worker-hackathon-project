@@ -19,8 +19,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
-// import { supabase } from "@/integrations/supabase/client";
 import { db } from "@/lib/db";
+import { IncomingBookingModal } from "@/components/worker/IncomingBookingModal";
 
 const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
 
@@ -153,6 +153,8 @@ const WorkerLayout = () => {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-orange-50 to-amber-50">
+      {/* REAL-TIME: IncomingBookingModal listens globally across all worker pages */}
+      <IncomingBookingModal />
       {/* Sidebar for desktop */}
       <aside className="hidden md:flex md:w-64 lg:w-72 flex-col bg-gradient-to-b from-worker-primary to-worker-secondary shadow-xl">
         <div className="p-4 border-b border-worker-light/20">

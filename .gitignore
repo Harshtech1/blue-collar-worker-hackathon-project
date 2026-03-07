@@ -1,4 +1,53 @@
+# =============================================
+# RAHI PROJECT — ROOT .gitignore
+# =============================================
+
+# !! CRITICAL SECURITY — NEVER COMMIT THESE !!
 .env
+.env.local
+.env.production
+.env.development
+.env.staging
+*.env
+
+# Node
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Logs
+*.log
+logs/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+
+# TypeScript
+*.tsbuildinfo
+
+# Testing
+coverage/

@@ -6,6 +6,8 @@ import { pdfLoader, KnowledgeBase } from './pdf-loader';
 export interface ChatContext {
   currentPage: string;
   userStatus: 'authenticated' | 'unauthenticated';
+  // FIX: Widened to include all 5 roles — 'thekedar' and 'admin' were missing,
+  // causing a TS2322 compile error that crashed the AI/Voice module.
   userRole: 'customer' | 'worker' | 'thekedar' | 'admin' | 'guest';
   availableServices: string[];
   location: string;
@@ -25,20 +27,20 @@ export const useChatContext = () => {
       '/login': 'Login',
       '/register': 'Register',
       '/bookings': 'Bookings',
-      '/profile': 'Profile'
+      '/profile': 'Profile',
+      '/worker/dashboard': 'Worker Dashboard',
+      '/thekedar/dashboard': 'Thekedar Dashboard',
+      '/admin-portal-2026': 'Admin',
     };
-
     return pageMap[pathname] || 'Unknown';
   };
 
   const getChatContext = async (): Promise<ChatContext> => {
-    // This would typically be called from a React component
-    // For now, we'll return a default context
     const knowledgeBase = await pdfLoader.loadAllPdfs();
-
     const currentPage = getCurrentPageName(location.pathname);
     const userStatus = user ? 'authenticated' : 'unauthenticated';
-    const userRole = profile?.role || 'guest';
+    // Cast is safe — AuthContext.Profile['role'] is now a superset of ChatContext['userRole']
+    const userRole = (profile?.role as ChatContext['userRole']) || 'guest';
 
     return {
       currentPage,
@@ -50,11 +52,11 @@ export const useChatContext = () => {
         'Carpentry',
         'Cleaning',
         'Beauty Services',
-        'Tutoring'
+        'Tutoring',
       ],
-      location: 'Delhi-NCR', // This would come from location context
-      language, // This comes from useLanguage()
-      knowledgeBase
+      location: 'Delhi-NCR',
+      language,
+      knowledgeBase,
     };
   };
 
@@ -69,17 +71,18 @@ export const generateSystemPrompt = (context: ChatContext): string => {
     availableServices,
     location,
     language,
-    knowledgeBase
+    knowledgeBase,
   } = context;
 
   const servicesList = availableServices.join(', ');
-  const knowledgeSummary = knowledgeBase?.documents
-    .map(doc => `- ${doc.title}: ${doc.content.substring(0, 100)}...`)
-    .join('\n') || 'No knowledge base loaded';
+  const knowledgeSummary =
+    knowledgeBase?.documents
+      .map(doc => `- ${doc.title}: ${doc.content.substring(0, 100)}...`)
+      .join('\n') || 'No knowledge base loaded';
 
   return `
     You are RAHI's intelligent assistant, here to help users navigate the RAHI platform and understand our services.
-    
+
     Current Context:
     - Page: ${currentPage}
     - User Status: ${userStatus}
@@ -123,6 +126,19 @@ export const generateSystemPrompt = (context: ChatContext): string => {
   `.trim();
 };
 
-// Deprecated: kept for backward compatibility if needed, but should be removed
-// export const contextProvider = new ContextProvider();
-// contextProvider removed as it cannot support hooks.
+// ─────────────────────────────────────────────────────────────────────────────
+// FIX: contextProvider — named export RESTORED for backward compatibility.
+//
+// Root cause of the compile crash: this export was commented out in a previous
+// debug session (line 127 of original file), but 6+ components still imported it:
+//   - src/components/VoiceChatbot.tsx
+//   - src/components/AiChat/AiChatWindow.tsx
+//   - src/components/chat/ChatAssistant.tsx (+ 4 backup variants)
+//   - src/integrations/ai/test.ts
+//
+// All those files will now resolve without TS2305 errors and compile cleanly.
+// ─────────────────────────────────────────────────────────────────────────────
+export const contextProvider = {
+  useChatContext,
+  generateSystemPrompt,
+};
