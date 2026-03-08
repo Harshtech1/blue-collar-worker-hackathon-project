@@ -29,8 +29,18 @@ const httpServer = createServer(app);
 initSocket(httpServer);   // binds io to the singleton; routes can call getIO()
 
 // ─── Core middleware ──────────────────────────────────────────────────────────
-const allowedOrigin = process.env.CLIENT_URL || "http://localhost:5173";
-app.use(cors({ origin: allowedOrigin, credentials: true }));
+const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((o) => o.trim());
+// Also allow 5174 in case Vite picks a different port
+if (!allowedOrigins.includes("http://localhost:5174")) allowedOrigins.push("http://localhost:5174");
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(null, true); // be permissive in dev
+  },
+  credentials: true,
+}));
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
 

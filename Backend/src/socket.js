@@ -13,6 +13,9 @@ import { Server } from 'socket.io';
 
 let io = null;
 
+// Track connected users by userId → Set of socketIds
+const connectedUsers = new Map();
+
 /**
  * Called ONCE from index.js after the httpServer is created.
  * @param {import('http').Server} httpServer
@@ -21,7 +24,7 @@ let io = null;
 export function initSocket(httpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:5173',
+      origin: (origin, cb) => cb(null, true), // permissive in dev
       methods: ['GET', 'POST'],
       credentials: true,
     },
@@ -30,14 +33,30 @@ export function initSocket(httpServer) {
   io.on('connection', (socket) => {
     console.log(`🔌 Socket connected: ${socket.id}`);
 
-    // Client emits { userId } immediately after connecting
-    socket.on('join', ({ userId }) => {
+    // Client emits { userId, role } immediately after connecting
+    socket.on('join', ({ userId, role }) => {
       if (!userId) return;
       socket.join(userId);
-      console.log(`👤 User ${userId} joined room`);
+      socket.data.userId = userId;
+      socket.data.role = role || 'unknown';
+
+      // Track this user in connectedUsers map
+      if (!connectedUsers.has(userId)) {
+        connectedUsers.set(userId, new Set());
+      }
+      connectedUsers.get(userId).add(socket.id);
+
+      console.log(`👤 User ${userId} (${role || 'unknown'}) joined room | Total connected: ${connectedUsers.size}`);
     });
 
     socket.on('disconnect', () => {
+      const userId = socket.data.userId;
+      if (userId && connectedUsers.has(userId)) {
+        connectedUsers.get(userId).delete(socket.id);
+        if (connectedUsers.get(userId).size === 0) {
+          connectedUsers.delete(userId);
+        }
+      }
       console.log(`🔌 Socket disconnected: ${socket.id}`);
     });
   });
@@ -52,4 +71,13 @@ export function initSocket(httpServer) {
  */
 export function getIO() {
   return io;
+}
+
+/**
+ * Returns an array of all currently connected user IDs.
+ * Useful for creating DB notifications for broadcast bookings.
+ * @returns {string[]}
+ */
+export function getConnectedUserIds() {
+  return Array.from(connectedUsers.keys());
 }

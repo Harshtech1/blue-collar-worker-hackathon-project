@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ArrowLeft, MapPin, Clock, Calendar, Zap, AlertTriangle, 
+import {
+  ArrowLeft, MapPin, Clock, Calendar, Zap, AlertTriangle,
   ChevronRight, Check, Loader2, Shield, Star, IndianRupee,
-  User, Phone, MessageSquare, X, Info, Sparkles, Navigation, Briefcase
+  User, Phone, MessageSquare, X, Info, Sparkles, Navigation, Briefcase,
+  XCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,14 +18,14 @@ import { useServices } from '@/hooks/useServices';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { useNotifications } from '@/contexts/NotificationContext';
+import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
-// import { supabase } from '@/integrations/supabase/client';
 import { db } from '@/lib/db';
 import { FadeIn, HoverScale, ScaleIn } from '@/components/ui/animated-container';
 import { cn } from '@/lib/utils';
-import { 
-  Droplets, Zap as ZapIcon, Hammer, Paintbrush, Grid3X3, Settings, 
-  HardHat, Tent, Thermometer 
+import {
+  Droplets, Zap as ZapIcon, Hammer, Paintbrush, Grid3X3, Settings,
+  HardHat, Tent, Thermometer
 } from 'lucide-react';
 import { Layout } from '@/components/layout/Layout';
 import LocationPicker from '../components/LocationPicker';
@@ -64,7 +65,8 @@ export default function BookService() {
   const { data: services } = useServices();
   const { t, language } = useLanguage();
   const { subscribeToBooking } = useNotifications();
-  
+  const { socket } = useSocket();
+
   const [step, setStep] = useState(1);
   const [bookingType, setBookingType] = useState<BookingType>('instant');
   const [address, setAddress] = useState('');
@@ -73,11 +75,15 @@ export default function BookService() {
   const [scheduledTime, setScheduledTime] = useState('');
   const [loading, setLoading] = useState(false);
   const [showMapPicker, setShowMapPicker] = useState(false);
-  const [selectedLocation, setSelectedLocation] = useState<{lat: number; lng: number} | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [searching, setSearching] = useState(false);
   const [workerFound, setWorkerFound] = useState(false);
+  const [workerDeclined, setWorkerDeclined] = useState(false);
   const [newBookingId, setNewBookingId] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<ServiceItem | null>(null);
+  const [workerInfo, setWorkerInfo] = useState<{ name: string; phone: string } | null>(null);
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
   // Get detailed items for the current service
   const detailedItems = useMemo(() => {
@@ -97,7 +103,7 @@ export default function BookService() {
 
   const findService = (serviceList: any[], id: string | undefined) => {
     if (!id) return null;
-    
+
     // 1. Exact ID match (covers UUIDs)
     const exactMatch = serviceList.find(s => s.id === id);
     if (exactMatch) return exactMatch;
@@ -118,16 +124,16 @@ export default function BookService() {
       if (normalizedId === 'plumber' && name === 'plumbing') return true;
       if (normalizedId === 'carpenter' && name === 'carpentry') return true;
       if (normalizedId === 'painter' && name === 'painting') return true;
-      
+
       return name.includes(normalizedId) || normalizedId.includes(name);
     });
-    
+
     return fuzzyMatch || null;
   };
 
   const service = useMemo(() => {
-    return (services && services.length > 0 
-      ? findService(services, serviceId) 
+    return (services && services.length > 0
+      ? findService(services, serviceId)
       : null) || findService(fallbackServices, serviceId);
   }, [services, serviceId]);
 
@@ -147,6 +153,42 @@ export default function BookService() {
     }
   }, [user, navigate, language]);
 
+  // ── Listen for booking_updated socket event from workers ───────────────
+  useEffect(() => {
+    if (!socket || !newBookingId) return;
+
+    const handleBookingUpdated = (data: any) => {
+      if (data.bookingId !== newBookingId) return;
+
+      if (data.status === 'accepted') {
+        setSearching(false);
+        setWorkerFound(true);
+        setWorkerDeclined(false);
+        setWorkerInfo({
+          name: data.workerName || 'Worker',
+          phone: data.workerPhone || '',
+        });
+        toast.success(
+          language === 'hi'
+            ? `✅ ${data.workerName || 'कारीगर'} ने आपकी बुकिंग स्वीकार कर ली!`
+            : `✅ ${data.workerName || 'Worker'} accepted your booking!`
+        );
+      } else if (data.status === 'declined') {
+        setWorkerDeclined(true);
+        toast.info(
+          language === 'hi'
+            ? 'कारीगर ने मना कर दिया। दूसरा खोज रहे हैं...'
+            : 'Worker declined. Searching for another...'
+        );
+        // Keep searching state, worker declined but another may accept
+      }
+    };
+
+    socket.on('booking_updated', handleBookingUpdated);
+    return () => { socket.off('booking_updated', handleBookingUpdated); };
+  }, [socket, newBookingId, language]);
+
+  // ── Create real booking via API and wait for worker response ───────────
   const handleBooking = async () => {
     if (!address) {
       toast.error(language === 'hi' ? 'कृपया पता दर्ज करें' : 'Please enter address');
@@ -154,88 +196,69 @@ export default function BookService() {
     }
 
     setSearching(true);
-    
-    // Simulate searching for a worker
-    setTimeout(() => {
-      setSearching(false);
-      setWorkerFound(true);
-      toast.success(language === 'hi' ? 'प्रोफेशनल मिल गया!' : 'Professional found!');
-    }, 3000);
-  };
+    setWorkerFound(false);
+    setWorkerDeclined(false);
+    setWorkerInfo(null);
 
-  const confirmBookingAndNavigate = async () => {
     try {
-      // Find category ID from database or use a fallback
-      let categoryId = service?.id;
-      
-      // If the service is from fallbackServices or has a slug ID, find its real UUID
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[089ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      
-      if (service && (!categoryId || !uuidRegex.test(categoryId || ''))) {
-        const { data: catData } = await db
-          .collection('service_categories')
-          .select('id')
-          .ilike('name', service.name)
-          .single(); // Using single() as maybeSingle() might not be in our custom client yet, or we'll assume it handles it.
-          // Actually, let's check db.ts again. It has single(). 
-          // But wait, the original code used maybeSingle(). 
-          // Our db.ts single() returns { data: T | null, error: any }.
-          // So it effectively acts like maybeSingle if it doesn't throw on no rows.
-          // Let's verify db.ts behavior for single().
-          // "single() { ... if (this.data && this.data.length > 0) return { data: this.data[0], error: null }; return { data: null, error: ... } }"
-          // So it works like maybeSingle/single combined.
+      const userId = user?.id || user?._id;
+      const token = localStorage.getItem('token');
 
-        if (catData) {
-          categoryId = catData.id;
-        } else {
-          // If not found by exact name, try finding a similar one (e.g. for Construction)
-          const { data: fuzzyCat } = await db
-            .collection('service_categories')
-            .select('id')
-            .or(`name.ilike.%${service.name}%,name.ilike.%Construction%`)
-            .limit(1)
-            .single();
-            
-          categoryId = fuzzyCat?.id || '00000000-0000-0000-0000-000000000000';
-        }
-      }
-
-      const bookingData = {
-        customer_id: user.id,
-        category_id: categoryId,
-        address,
-        description: description || selectedItem?.name || service?.description,
-        status: 'matched' as const, // Initially matched, will move to payment later
-        base_price: priceDetails.base,
-        platform_fee: priceDetails.fee,
-        worker_earning: priceDetails.workerShare,
-        total_price: priceDetails.total,
-        is_instant: bookingType === 'instant',
-        is_emergency: bookingType === 'emergency',
-        scheduled_at: bookingType === 'scheduled' ? `${scheduledDate}T${scheduledTime}:00` : new Date().toISOString(),
-        city: profile?.city || 'Unspecified',
-        latitude: selectedLocation?.lat,
-        longitude: selectedLocation?.lng,
-        otp_start: Math.floor(1000 + Math.random() * 9000).toString() // Generate 4-digit OTP
+      const bookingPayload = {
+        serviceName: selectedItem?.name || service?.localizedName || service?.name || 'Service',
+        customer_user_id: userId,
+        customerId: userId,
+        customerName: profile?.full_name || 'Customer',
+        customerPhone: profile?.phone || '',
+        address: address,
+        city: profile?.city || '',
+        amount: priceDetails.total,
+        bookingType: bookingType,
+        description: description || selectedItem?.name || '',
+        scheduled_at: bookingType === 'scheduled'
+          ? `${scheduledDate}T${scheduledTime}:00`
+          : null,
       };
 
-      const { data: booking, error: bookingError } = await db
-        .collection('bookings')
-        .insert(bookingData)
-        .select()
-        .single();
+      const res = await fetch(`${API_URL}/bookings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(bookingPayload),
+      });
 
-      if (bookingError) throw bookingError;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Booking creation failed');
+      }
 
-      const bookingId = booking.id;
+      const data = await res.json();
+      const bookingId = data.bookingId || data._id?.toString();
       setNewBookingId(bookingId);
-      
-      // Navigate to tracking page with OTP state
-      navigate(`/tracking/${bookingId}`, { state: { showOtp: true, amount: priceDetails.total } });
-      
+
+      toast.info(
+        language === 'hi'
+          ? '🔍 बुकिंग बनाई गई! कारीगर खोज रहे हैं...'
+          : '🔍 Booking created! Searching for workers...'
+      );
+      // Now we wait for socket event `booking_updated` from a worker
+
     } catch (error: any) {
       console.error('Booking error:', error);
-      toast.error(language === 'hi' ? 'बुकिंग में त्रुटि' : `Booking failed: ${error.message}`);
+      setSearching(false);
+      toast.error(
+        language === 'hi'
+          ? `बुकिंग में त्रुटि: ${error.message}`
+          : `Booking failed: ${error.message}`
+      );
+    }
+  };
+
+  const goToTracking = () => {
+    if (newBookingId) {
+      navigate(`/tracking/${newBookingId}`, { state: { amount: priceDetails.total } });
     }
   };
 
@@ -269,7 +292,7 @@ export default function BookService() {
     <Layout>
       <div className="min-h-screen bg-slate-50/50 pb-20">
         <div className="container max-w-2xl px-4 py-8">
-          
+
           {/* Step Indicator Header */}
           <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100 mb-8">
             <div className="flex items-center justify-between mb-8">
@@ -279,7 +302,7 @@ export default function BookService() {
               <div className="text-center">
                 <h1 className="font-bold text-lg">{selectedItem ? selectedItem.name : service.localizedName}</h1>
                 <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">
-                   {language === 'hi' ? `चरण ${step}` : `Step ${step}`} OF {totalSteps}
+                  {language === 'hi' ? `चरण ${step}` : `Step ${step}`} OF {totalSteps}
                 </p>
               </div>
               <div className="h-10 w-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${service.color}15` }}>
@@ -289,11 +312,11 @@ export default function BookService() {
 
             <div className="flex justify-between relative px-2">
               <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-slate-100 -translate-y-1/2 z-0" />
-              <div 
+              <div
                 className="absolute top-1/2 left-0 h-0.5 bg-primary -translate-y-1/2 z-0 transition-all duration-500"
                 style={{ width: `${((step - 1) / (totalSteps - 1)) * 100}%` }}
               />
-              
+
               {steps.map((s, i) => {
                 const isCompleted = i + 1 < step;
                 const isActive = i + 1 === step;
@@ -301,9 +324,9 @@ export default function BookService() {
                   <div key={i} className="relative z-10 flex flex-col items-center">
                     <div className={cn(
                       "h-8 w-8 rounded-full flex items-center justify-center border-2 transition-all duration-500",
-                      isCompleted ? "bg-primary border-primary text-white" : 
-                      isActive ? "bg-white border-primary text-primary shadow-lg shadow-primary/20 scale-110" : 
-                      "bg-white border-slate-200 text-slate-400"
+                      isCompleted ? "bg-primary border-primary text-white" :
+                        isActive ? "bg-white border-primary text-primary shadow-lg shadow-primary/20 scale-110" :
+                          "bg-white border-slate-200 text-slate-400"
                     )}>
                       {isCompleted ? <Check className="h-4 w-4" /> : <span className="text-xs font-bold">{i + 1}</span>}
                     </div>
@@ -352,7 +375,7 @@ export default function BookService() {
                       <CardContent className="p-5 flex items-center justify-between">
                         <div className="flex items-center gap-4">
                           <div className="h-12 w-12 rounded-2xl bg-slate-50 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-                             <Sparkles className="h-6 w-6" />
+                            <Sparkles className="h-6 w-6" />
                           </div>
                           <div>
                             <h3 className="font-bold text-slate-800">{item.name}</h3>
@@ -470,12 +493,12 @@ export default function BookService() {
                         onChange={(e) => setAddress(e.target.value)}
                         className="rounded-3xl min-h-[120px] p-5 bg-white border-slate-200 focus:ring-primary focus:border-primary"
                       />
-                      <Button 
-                        variant="link" 
+                      <Button
+                        variant="link"
                         onClick={() => setShowMapPicker(true)}
                         className="absolute bottom-4 right-4 text-primary font-bold flex items-center gap-2 hover:no-underline"
                       >
-                         <Navigation className="h-4 w-4" /> Pick from Map
+                        <Navigation className="h-4 w-4" /> Pick from Map
                       </Button>
                     </div>
                   </div>
@@ -493,13 +516,13 @@ export default function BookService() {
                   </div>
                 </div>
 
-                <Button onClick={() => setStep(3)} disabled={!address} className="w-full h-14 rounded-2xl text-lg font-bold shadow-lg shadow-primary/30 mt-4">
+                <Button onClick={() => setStep(step + 1)} disabled={!address} className="w-full h-14 rounded-2xl text-lg font-bold shadow-lg shadow-primary/30 mt-4">
                   Review & Book
                 </Button>
               </motion.div>
             )}
 
-            {step === 3 && !searching && !workerFound && (
+            {step === totalSteps && !searching && !workerFound && (
               <motion.div
                 key="step3"
                 initial={{ opacity: 0, x: 20 }}
@@ -568,76 +591,146 @@ export default function BookService() {
                   </Card>
                 </div>
 
-                <Button onClick={handleBooking} className="w-full h-16 rounded-[2rem] text-xl font-black shadow-xl shadow-primary/30 mt-4 group">
-                  <Zap className="mr-2 h-6 w-6 transition-transform group-hover:scale-125 group-hover:rotate-12" />
-                  CONFIRM & BOOK
+                <Button onClick={handleBooking} disabled={searching} className="w-full h-16 rounded-[2rem] text-xl font-black shadow-xl shadow-primary/30 mt-4 group">
+                  {searching ? (
+                    <><Loader2 className="mr-2 h-6 w-6 animate-spin" /> Creating Booking...</>
+                  ) : (
+                    <><Zap className="mr-2 h-6 w-6 transition-transform group-hover:scale-125 group-hover:rotate-12" /> CONFIRM & BOOK</>
+                  )}
                 </Button>
               </motion.div>
             )}
 
+            {/* ── WAITING FOR WORKER ── */}
             {searching && (
-              <motion.div key="searching" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-20 flex flex-col items-center justify-center">
-                 <div className="relative mb-12">
-                   <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping h-32 w-32" />
-                   <div className="absolute inset-0 bg-primary/10 rounded-full animate-ping h-32 w-32 delay-700" />
-                   <div className="relative z-10 h-32 w-32 rounded-full bg-white shadow-2xl flex items-center justify-center border-4 border-primary">
-                     <Icon className="h-16 w-16 text-primary" />
-                   </div>
-                 </div>
-                 <h2 className="text-2xl font-black text-slate-800 mb-2">Finding Your Professional</h2>
-                 <p className="text-slate-500 font-medium">Scanning 14 available workers nearby...</p>
-                 <div className="mt-8 flex gap-2">
-                   {[...Array(3)].map((_, i) => (
-                     <div key={i} className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
-                   ))}
-                 </div>
+              <motion.div key="searching" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="py-12 flex flex-col items-center justify-center">
+                <div className="relative mb-12">
+                  <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping h-32 w-32" />
+                  <div className="absolute inset-0 bg-primary/10 rounded-full animate-ping h-32 w-32" style={{ animationDelay: '0.7s' }} />
+                  <div className="relative z-10 h-32 w-32 rounded-full bg-white shadow-2xl flex items-center justify-center border-4 border-primary">
+                    <Icon className="h-16 w-16 text-primary" />
+                  </div>
+                </div>
+
+                <h2 className="text-2xl font-black text-slate-800 mb-2">
+                  {language === 'hi' ? 'कारीगर खोज रहे हैं...' : 'Waiting for a Worker...'}
+                </h2>
+                <p className="text-slate-500 font-medium text-center max-w-sm">
+                  {language === 'hi'
+                    ? 'आपकी बुकिंग सभी उपलब्ध कारीगरों को भेजी गई है। कोई जल्दी ही स्वीकार करेगा!'
+                    : 'Your booking has been sent to all available workers. Someone will accept it shortly!'}
+                </p>
+
+                {workerDeclined && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-4 px-5 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-700 text-sm font-bold flex items-center gap-2"
+                  >
+                    <AlertTriangle className="h-4 w-4" />
+                    {language === 'hi'
+                      ? 'एक कारीगर ने मना किया। दूसरा खोज रहे हैं...'
+                      : 'A worker declined. Searching for another...'}
+                  </motion.div>
+                )}
+
+                <div className="mt-8 flex gap-2">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className="h-3 w-3 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
+                  ))}
+                </div>
+
+                <p className="text-xs text-slate-400 mt-6 font-bold">
+                  {language === 'hi' ? 'बुकिंग ID: ' : 'Booking ID: '}
+                  {newBookingId?.slice(0, 8)}...
+                </p>
               </motion.div>
             )}
 
+            {/* ── WORKER ACCEPTED ── */}
             {workerFound && (
               <motion.div key="found" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
                 <div className="text-center py-8">
-                  <div className="h-24 w-24 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-glow">
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+                    className="h-24 w-24 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200"
+                  >
                     <Check className="h-12 w-12 stroke-[4]" />
-                  </div>
-                  <h2 className="text-3xl font-black text-emerald-600">Professional Found!</h2>
-                  <p className="text-slate-500 mt-2">Success! We've matched you with an expert.</p>
+                  </motion.div>
+                  <h2 className="text-3xl font-black text-emerald-600">
+                    {language === 'hi' ? 'कारीगर मिल गया!' : 'Worker Accepted!'}
+                  </h2>
+                  <p className="text-slate-500 mt-2">
+                    {language === 'hi'
+                      ? 'बधाई! एक कारीगर ने आपकी बुकिंग स्वीकार कर ली है।'
+                      : 'Great! A worker has accepted your booking request.'}
+                  </p>
                 </div>
 
                 <Card className="rounded-[2.5rem] border-slate-100 shadow-2xl shadow-slate-200 overflow-hidden bg-white">
                   <CardContent className="p-8">
                     <div className="flex items-center gap-6">
-                      <div className="h-24 w-24 rounded-[2rem] bg-slate-50 flex items-center justify-center text-3xl font-black text-primary shadow-inner border border-slate-100">
-                        RK
+                      <div className="h-24 w-24 rounded-[2rem] bg-gradient-to-br from-emerald-50 to-primary/10 flex items-center justify-center text-3xl font-black text-primary shadow-inner border border-slate-100">
+                        {workerInfo?.name?.charAt(0)?.toUpperCase() || 'W'}
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-2xl font-extrabold text-slate-800">Ramesh Kumar</h3>
-                          <Badge className="bg-emerald-50 text-emerald-600 border-emerald-100"><Shield className="h-3 w-3 mr-1" /> Vetted</Badge>
+                          <h3 className="text-2xl font-extrabold text-slate-800">
+                            {workerInfo?.name || 'Worker'}
+                          </h3>
+                          <Badge className="bg-emerald-50 text-emerald-600 border-emerald-100">
+                            <Shield className="h-3 w-3 mr-1" /> Verified
+                          </Badge>
                         </div>
-                        <div className="flex items-center gap-4 text-slate-500 font-bold mb-4">
-                           <span className="flex items-center gap-1.5"><Star className="h-4 w-4 fill-amber-400 text-amber-400" /> 4.9</span>
-                           <span className="flex items-center gap-1.5"><Briefcase className="h-4 w-4" /> 8y Exp</span>
-                        </div>
+                        {workerInfo?.phone && (
+                          <p className="text-slate-500 font-bold mb-4 flex items-center gap-2">
+                            <Phone className="h-4 w-4" /> {workerInfo.phone}
+                          </p>
+                        )}
                         <div className="flex gap-3">
-                          <Button size="sm" variant="outline" className="rounded-full font-bold border-slate-200"><Phone className="h-4 w-4 mr-2" /> Call</Button>
-                          <Button size="sm" variant="outline" className="rounded-full font-bold border-slate-200"><MessageSquare className="h-4 w-4 mr-2" /> Chat</Button>
+                          {workerInfo?.phone && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="rounded-full font-bold border-slate-200"
+                              onClick={() => window.open(`tel:${workerInfo.phone}`)}
+                            >
+                              <Phone className="h-4 w-4 mr-2" /> Call
+                            </Button>
+                          )}
+                          <Button size="sm" variant="outline" className="rounded-full font-bold border-slate-200">
+                            <MessageSquare className="h-4 w-4 mr-2" /> Chat
+                          </Button>
                         </div>
                       </div>
                     </div>
-                    
-                    <div className="mt-8 p-6 bg-slate-50 rounded-3xl flex items-center justify-between">
+
+                    <div className="mt-8 p-6 bg-gradient-to-r from-emerald-50 to-primary/5 rounded-3xl flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <Clock className="h-5 w-5 text-primary" />
+                        <Clock className="h-5 w-5 text-emerald-600" />
                         <div>
-                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-none">Estimated Arrival</p>
-                          <p className="text-lg font-black text-slate-800">32 Minutes</p>
+                          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider leading-none">
+                            {language === 'hi' ? 'अनुमानित पहुँच' : 'Estimated Arrival'}
+                          </p>
+                          <p className="text-lg font-black text-slate-800">
+                            {bookingType === 'emergency' ? '15' : bookingType === 'instant' ? '30-45' : '—'} {language === 'hi' ? 'मिनट' : 'Minutes'}
+                          </p>
                         </div>
                       </div>
-                      <Button onClick={confirmBookingAndNavigate} className="rounded-2xl px-8 font-bold">Track Now</Button>
+                      <Button onClick={goToTracking} className="rounded-2xl px-8 font-bold shadow-lg shadow-primary/20">
+                        {language === 'hi' ? 'ट्रैक करें' : 'Track Now'}
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>
+
+                <div className="text-center">
+                  <p className="text-xs text-slate-400 font-bold">
+                    {language === 'hi' ? 'बुकिंग ID: ' : 'Booking ID: '}{newBookingId?.slice(0, 8)}...
+                  </p>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -647,13 +740,13 @@ export default function BookService() {
       <Dialog open={showMapPicker} onOpenChange={setShowMapPicker}>
         <DialogContent className="sm:max-w-2xl p-0 overflow-hidden rounded-[2rem]">
           <div className="h-[500px] relative">
-            <LocationPicker 
-               onConfirm={(loc) => {
-                 setAddress(loc.address);
-                 setShowMapPicker(false);
-                 toast.success("Location updated!");
-               }}
-               onCancel={() => setShowMapPicker(false)}
+            <LocationPicker
+              onConfirm={(loc) => {
+                setAddress(loc.address);
+                setShowMapPicker(false);
+                toast.success("Location updated!");
+              }}
+              onCancel={() => setShowMapPicker(false)}
             />
           </div>
         </DialogContent>

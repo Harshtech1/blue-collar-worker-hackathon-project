@@ -22,7 +22,7 @@ const BACKEND_URL =
 let socketSingleton: Socket | null = null;
 
 export const useSocket = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
@@ -39,15 +39,17 @@ export const useSocket = () => {
 
     // Join the user's private room whenever we have a userId
     const userId = user?.id || user?._id;
+    const role = profile?.role || 'customer';
     if (userId && socketSingleton.connected) {
-      socketSingleton.emit('join', { userId });
+      socketSingleton.emit('join', { userId, role });
     }
 
     socketSingleton.on('connect', () => {
       const uid = user?.id || user?._id;
+      const r = profile?.role || 'customer';
       if (uid) {
-        socketSingleton?.emit('join', { userId: uid });
-        console.log(`🔌 Socket connected — joined room: ${uid}`);
+        socketSingleton?.emit('join', { userId: uid, role: r });
+        console.log(`🔌 Socket connected — joined room: ${uid} (${r})`);
       }
     });
 

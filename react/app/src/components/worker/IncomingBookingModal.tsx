@@ -66,7 +66,7 @@ export function IncomingBookingModal() {
 
       try {
         const token = localStorage.getItem('token');
-        const res = await fetch(`${API}/bookings/${booking.bookingId}/status`, {
+        const res = await fetch(`${API}/bookings/${booking.bookingId}/respond`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
