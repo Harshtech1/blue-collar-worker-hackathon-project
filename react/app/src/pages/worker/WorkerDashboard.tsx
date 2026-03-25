@@ -102,7 +102,7 @@ const WorkerDashboard = () => {
     earningsToday: allJobs
       .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid'))
       .filter(j => {
-        const date = new Date(j.updatedAt || j.updated_at || j.completed_at || j.created_at);
+        const date = new Date(j.updated_at || j.created_at);
         return !isNaN(date.getTime()) && date.toDateString() === new Date().toDateString();
       })
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0),
@@ -446,7 +446,7 @@ const WorkerDashboard = () => {
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-xl">{job.category?.icon || '🛠️'}</span>
-                          <h3 className="font-bold text-gray-900">{job.serviceName || job.category?.name || 'Service'}</h3>
+                          <h3 className="font-bold text-gray-900">{job.category?.name || 'Service'}</h3>
                           <Badge 
                             variant={
                               job.status === 'completed' ? 'default' :
