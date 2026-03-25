@@ -57,20 +57,26 @@ const JobLog = () => {
           services (name, description),
           customers (full_name, phone, email)
         `)
-        .eq('worker_id', workerProfile.id)
+        .eq('worker_id', workerProfile.id || workerProfile._id)
         .order('created_at', { ascending: false });
 
       if (jobsError) {
         console.error('Error fetching jobs:', jobsError);
       } else if (jobsData) {
-        setJobs(jobsData);
+        // Normalize job IDs and handle potentially missing fields
+        const normalizedJobs = jobsData.map((job: any) => ({
+          ...job,
+          id: job.id || job._id || `job-${Math.random().toString(36).substr(2, 6)}`
+        }));
+        
+        setJobs(normalizedJobs);
         
         // Categorize jobs by status
-        const pending = jobsData.filter((job: any) => 
-          job.status === 'pending' || job.status === 'matched' || job.status === 'accepted'
+        const pending = normalizedJobs.filter((job: any) => 
+          job.status === 'pending' || job.status === 'matched' || job.status === 'accepted' || job.status === 'arriving'
         );
-        const current = jobsData.filter((job: any) => job.status === 'in_progress');
-        const completed = jobsData.filter((job: any) => job.status === 'completed');
+        const current = normalizedJobs.filter((job: any) => job.status === 'in_progress' || job.status === 'otp_verify');
+        const completed = normalizedJobs.filter((job: any) => job.status === 'completed');
         
         setPendingJobs(pending);
         setCurrentJobs(current);
@@ -185,21 +191,21 @@ const JobLog = () => {
                   <TableBody>
                     {jobs.map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell className="font-medium">#{job.id.substring(0, 8)}</TableCell>
+                        <TableCell className="font-medium">#{job.id?.substring(0, 8) || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4" />
                             <div>
-                              <div className="font-medium">{job.customers?.full_name || 'N/A'}</div>
-                              <div className="text-xs text-gray-500">{job.customers?.phone || 'N/A'}</div>
+                              <div className="font-medium">{job.customerName || job.customers?.full_name || 'N/A'}</div>
+                              <div className="text-xs text-gray-500">{job.customerPhone || job.customers?.phone || 'N/A'}</div>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>{job.services?.name || 'N/A'}</TableCell>
+                        <TableCell>{job.serviceName || job.services?.name || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <MapPin className="h-3 w-3" />
-                            <span>{job.city || job.address?.split(',').slice(-1)[0] || 'N/A'}</span>
+                            <span>{job.city || (job.address ? job.address.split(',').slice(-1)[0] : 'N/A')}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -249,21 +255,21 @@ const JobLog = () => {
                   <TableBody>
                     {pendingJobs.map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell className="font-medium">#{job.id.substring(0, 8)}</TableCell>
+                        <TableCell className="font-medium">#{job.id?.substring(0, 8) || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4" />
                             <div>
-                              <div className="font-medium">{job.customers?.full_name || 'N/A'}</div>
-                              <div className="text-xs text-gray-500">{job.customers?.phone || 'N/A'}</div>
+                              <div className="font-medium">{job.customerName || job.customers?.full_name || 'N/A'}</div>
+                              <div className="text-xs text-gray-500">{job.customerPhone || job.customers?.phone || 'N/A'}</div>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>{job.services?.name || 'N/A'}</TableCell>
+                        <TableCell>{job.serviceName || job.services?.name || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <MapPin className="h-3 w-3" />
-                            <span>{job.city || job.address?.split(',').slice(-1)[0] || 'N/A'}</span>
+                            <span>{job.city || (job.address ? job.address.split(',').slice(-1)[0] : 'N/A')}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -312,21 +318,21 @@ const JobLog = () => {
                   <TableBody>
                     {currentJobs.map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell className="font-medium">#{job.id.substring(0, 8)}</TableCell>
+                        <TableCell className="font-medium">#{job.id?.substring(0, 8) || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4" />
                             <div>
-                              <div className="font-medium">{job.customers?.full_name || 'N/A'}</div>
-                              <div className="text-xs text-gray-500">{job.customers?.phone || 'N/A'}</div>
+                              <div className="font-medium">{job.customerName || job.customers?.full_name || 'N/A'}</div>
+                              <div className="text-xs text-gray-500">{job.customerPhone || job.customers?.phone || 'N/A'}</div>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>{job.services?.name || 'N/A'}</TableCell>
+                        <TableCell>{job.serviceName || job.services?.name || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <MapPin className="h-3 w-3" />
-                            <span>{job.city || job.address?.split(',').slice(-1)[0] || 'N/A'}</span>
+                            <span>{job.city || (job.address ? job.address.split(',').slice(-1)[0] : 'N/A')}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -375,21 +381,21 @@ const JobLog = () => {
                   <TableBody>
                     {completedJobs.map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell className="font-medium">#{job.id.substring(0, 8)}</TableCell>
+                        <TableCell className="font-medium">#{job.id?.substring(0, 8) || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <User className="h-4 w-4" />
                             <div>
-                              <div className="font-medium">{job.customers?.full_name || 'N/A'}</div>
-                              <div className="text-xs text-gray-500">{job.customers?.phone || 'N/A'}</div>
+                              <div className="font-medium">{job.customerName || job.customers?.full_name || 'N/A'}</div>
+                              <div className="text-xs text-gray-500">{job.customerPhone || job.customers?.phone || 'N/A'}</div>
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell>{job.services?.name || 'N/A'}</TableCell>
+                        <TableCell>{job.serviceName || job.services?.name || 'N/A'}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
                             <MapPin className="h-3 w-3" />
-                            <span>{job.city || job.address?.split(',').slice(-1)[0] || 'N/A'}</span>
+                            <span>{job.city || (job.address ? job.address.split(',').slice(-1)[0] : 'N/A')}</span>
                           </div>
                         </TableCell>
                         <TableCell>

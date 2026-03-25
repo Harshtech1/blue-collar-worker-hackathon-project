@@ -46,7 +46,10 @@ export function useJobRequests() {
   useEffect(() => {
     if (user) {
       fetchJobs();
-      // Realtime not implemented in this migration
+      
+      // Auto-refresh every 10 seconds to keep dashboard in sync
+      const interval = setInterval(fetchJobs, 10000);
+      return () => clearInterval(interval);
     }
   }, [user]);
 

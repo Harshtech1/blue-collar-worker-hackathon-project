@@ -64,7 +64,7 @@ export function useWorkerProfile() {
           status,
           last_online_at: status === 'online' ? new Date().toISOString() : undefined
         })
-        .eq('id', workerProfile.id);
+        .eq('user_id', workerProfile.user_id);
 
       if (error) throw error;
 

@@ -32,6 +32,10 @@ const WorkerEarningsPage = () => {
   useEffect(() => {
     if (user && profile?.role === 'worker') {
       fetchEarningsData();
+      
+      // Auto-refresh every 30 seconds to show new payments
+      const interval = setInterval(fetchEarningsData, 30000);
+      return () => clearInterval(interval);
     }
   }, [user, profile]);
 
@@ -68,9 +72,18 @@ const WorkerEarningsPage = () => {
       startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
       const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
       
-      const todayCompleted = completedJobs.filter((j: any) => new Date(j.updatedAt || j.completed_at || j.created_at).toDateString() === today);
-      const weeklyCompleted = completedJobs.filter((j: any) => new Date(j.updatedAt || j.completed_at || j.created_at) >= startOfWeek);
-      const monthlyCompleted = completedJobs.filter((j: any) => new Date(j.updatedAt || j.completed_at || j.created_at) >= startOfMonth);
+      const todayCompleted = completedJobs.filter((j: any) => {
+        const date = new Date(j.updatedAt || j.updated_at || j.completed_at || j.created_at);
+        return !isNaN(date.getTime()) && date.toDateString() === today;
+      });
+      const weeklyCompleted = completedJobs.filter((j: any) => {
+        const date = new Date(j.updatedAt || j.updated_at || j.completed_at || j.created_at);
+        return !isNaN(date.getTime()) && date >= startOfWeek;
+      });
+      const monthlyCompleted = completedJobs.filter((j: any) => {
+        const date = new Date(j.updatedAt || j.updated_at || j.completed_at || j.created_at);
+        return !isNaN(date.getTime()) && date >= startOfMonth;
+      });
 
       // Calculate earnings
       const todayEarnings = todayCompleted.reduce((sum: number, job: any) => sum + (job.worker_earning || job.total_price || 0), 0);
@@ -99,7 +112,9 @@ const WorkerEarningsPage = () => {
       // Transactions (completed jobs)
       setTransactions(completedJobs.slice(0, 10));
 
-      // Fetch payout history (if API exists, else mock for now)
+      // Fetch payout history (Mocked for now as backend route doesn't exist)
+      setPayouts([]);
+      /*
       try {
         const payoutRes = await fetch(`${API_BASE}/api/payouts`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -111,6 +126,7 @@ const WorkerEarningsPage = () => {
       } catch (e) {
         console.warn('Payouts API not available yet');
       }
+      */
       
     } catch (error) {
       console.error('Error fetching earnings data:', error);
@@ -382,27 +398,30 @@ const WorkerEarningsPage = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {transactions.map((transaction, index) => (
-                      <TableRow key={transaction.id || transaction._id || index}>
-                        <TableCell className="font-medium">
-                          {transaction.services?.name || 'Service'}
-                        </TableCell>
-                        <TableCell>
-                          {new Date(transaction.updated_at).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell>
-                          <Badge className={getTransactionStatusColor(transaction.status)}>
-                            {transaction.status.replace('_', ' ')}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-baseline gap-1 justify-end">
-                            <IndianRupee className="h-3 w-3 text-muted-foreground" />
-                            <span>{(transaction.total_price || 0).toFixed(2)}</span>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {transactions.map((transaction, index) => {
+                      const transactionDate = new Date(transaction.updatedAt || transaction.updated_at || transaction.completed_at || transaction.created_at);
+                      return (
+                        <TableRow key={transaction.id || transaction._id || index}>
+                          <TableCell className="font-medium">
+                            {transaction.serviceName || transaction.services?.name || 'Service'}
+                          </TableCell>
+                          <TableCell>
+                            {!isNaN(transactionDate.getTime()) ? transactionDate.toLocaleDateString() : 'Recent'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={getTransactionStatusColor(transaction.status)}>
+                              {transaction.status.replace('_', ' ')}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-baseline gap-1 justify-end">
+                              <IndianRupee className="h-3 w-3 text-muted-foreground" />
+                              <span>{(transaction.worker_earning || transaction.total_price || 0).toFixed(2)}</span>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               ) : (

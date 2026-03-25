@@ -110,7 +110,7 @@ export default function WorkerMapDashboard() {
           service_categories!inner(name),
           customer_profiles!inner(full_name, phone)
         `)
-        .eq('worker_id', workerProfile.id)
+        .eq('worker_id', workerProfile.id || workerProfile._id)
         .in('status', ['pending', 'matched', 'accepted', 'in_progress'])
         .order('scheduled_at', { ascending: true });
 

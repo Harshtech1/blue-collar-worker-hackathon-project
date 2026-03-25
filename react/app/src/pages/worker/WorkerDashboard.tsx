@@ -90,20 +90,24 @@ const WorkerDashboard = () => {
 
   // Dynamic Stats calculated from real jobs
   const stats = {
-    todayJobs: activeJobs.filter(j => {
+    todayJobs: allJobs.filter(j => {
       const today = new Date().toDateString();
       const jobDate = j.scheduled_at ? new Date(j.scheduled_at).toDateString() : new Date(j.created_at).toDateString();
       return jobDate === today;
     }).length,
     completedJobs: allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid').length, 
     pendingJobs: pendingJobs.length,
-    activeJobsCount: activeJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
-    upcomingJobs: activeJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length + pendingJobs.length,
+    activeJobsCount: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
+    upcomingJobs: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length + pendingJobs.length,
     earningsToday: allJobs
-      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid') && new Date(j.updated_at || j.created_at).toDateString() === new Date().toDateString())
+      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid'))
+      .filter(j => {
+        const date = new Date(j.updatedAt || j.updated_at || j.completed_at || j.created_at);
+        return !isNaN(date.getTime()) && date.toDateString() === new Date().toDateString();
+      })
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0),
     totalEarnings: allJobs
-      .filter(j => j.status === 'completed' || j.paymentStatus === 'paid')
+      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid'))
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0)
   };
 
@@ -441,8 +445,8 @@ const WorkerDashboard = () => {
                     <div key={job.id || (job as any)._id || index} className="flex items-center justify-between p-4 border rounded-xl hover:bg-worker-light/20 transition-all duration-300 hover-scale border-worker-primary/10 animate-fade-in" style={{animationDelay: `${index * 0.1}s`}}>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-xl">{job.category?.icon}</span>
-                          <h3 className="font-bold text-gray-900">{job.category?.name || 'Service'}</h3>
+                          <span className="text-xl">{job.category?.icon || '🛠️'}</span>
+                          <h3 className="font-bold text-gray-900">{job.serviceName || job.category?.name || 'Service'}</h3>
                           <Badge 
                             variant={
                               job.status === 'completed' ? 'default' :
