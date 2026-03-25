@@ -46,36 +46,27 @@ const WorkerSchedulePage = () => {
     try {
       setLoading(true);
 
-      // Fetch worker profile to get worker ID
-      const { data: workerProfile, error: profileError } = await db
-        .collection('worker_profiles')
-        .select('id')
-        .eq('user_id', user.id)
-        .single();
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      
+      // Fetch all bookings for this worker via API
+      const res = await fetch(`${API_BASE}/api/bookings?worker_user_id=${user.id || user._id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      if (!workerProfile || profileError) {
-        console.error('Error fetching worker profile:', profileError);
-        setLoading(false);
-        return;
+      if (!res.ok) {
+        throw new Error('Failed to fetch schedule');
       }
 
-      // Fetch schedule for the selected date
-      const { data: scheduleData, error: scheduleError } = await db
-        .collection('bookings')
-        .select(
-          'id, category_id, customer_id, status, scheduled_at, address, total_price'
-        )
-        .eq('worker_id', workerProfile.id)
-        .ilike('scheduled_at', `${selectedDate}%`)  // Match date portion of scheduled_at
-        .order('scheduled_at', { ascending: true });
+      const allJobs = await res.json();
+      
+      // Filter by selected date
+      const scheduleData = allJobs.filter((job: any) => {
+        if (!job.scheduled_at) return false;
+        return new Date(job.scheduled_at).toISOString().split('T')[0] === selectedDate;
+      });
 
-      if (scheduleError) {
-        console.error('Error fetching schedule:', scheduleError);
-      } else {
-        // Fetch additional data separately to avoid complex joins
-        const enhancedSchedule = scheduleData || [];
-        setSchedule(enhancedSchedule);
-      }
+      setSchedule(scheduleData);
     } catch (error) {
       console.error('Error fetching schedule:', error);
     } finally {
@@ -104,6 +95,9 @@ const WorkerSchedulePage = () => {
     try {
       if (!user) return;
 
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
       // Update job status based on action
       let newStatus = '';
       switch (action) {
@@ -120,14 +114,17 @@ const WorkerSchedulePage = () => {
           return;
       }
 
-      const { error } = await db
-        .collection('bookings')
-        .update({ status: newStatus as any })
-        .eq('id', jobId);
+      const res = await fetch(`${API_BASE}/api/bookings/${jobId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
 
-      if (error) {
-        console.error('Error updating job status:', error);
-        return;
+      if (!res.ok) {
+        throw new Error('Error updating job status');
       }
 
       // Refresh schedule

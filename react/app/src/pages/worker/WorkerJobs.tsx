@@ -26,7 +26,7 @@ import { useToast } from '@/hooks/use-toast';
 
 export default function WorkerJobs() {
   const { profile, user, loading: authLoading } = useAuth();
-  const { activeJobs, loading: jobsLoading, startJob, completeJob } = useJobRequests();
+  const { activeJobs, loading: jobsLoading, startJob, completeJob, updateJobStatus } = useJobRequests();
   const { toast } = useToast();
   
   const [otpDialogOpen, setOtpDialogOpen] = useState(false);
@@ -181,10 +181,28 @@ export default function WorkerJobs() {
                       {job.status === 'accepted' && (
                         <Button 
                           className="flex-1 bg-blue-600 hover:bg-blue-700"
+                          onClick={() => updateJobStatus(job.id, 'arriving')}
+                        >
+                          <Navigation className="w-4 h-4 mr-2" />
+                          On the Way
+                        </Button>
+                      )}
+                      {job.status === 'arriving' && (
+                        <Button 
+                          className="flex-1 bg-amber-600 hover:bg-amber-700"
+                          onClick={() => updateJobStatus(job.id, 'otp_verify')}
+                        >
+                          <MapPin className="w-4 h-4 mr-2" />
+                          Arrived
+                        </Button>
+                      )}
+                      {job.status === 'otp_verify' && (
+                        <Button 
+                          className="flex-1 bg-blue-600 hover:bg-blue-700"
                           onClick={() => handleStartJob(job.id)}
                         >
                           <Play className="w-4 h-4 mr-2" />
-                          Start Job (Enter OTP)
+                          Enter OTP & Start
                         </Button>
                       )}
                       {job.status === 'in_progress' && (

@@ -43,7 +43,7 @@ const RecenterMap = ({ center }: { center: [number, number] }) => {
 
 interface TrackingMapProps {
   userLocation: [number, number];
-  workerLocation: [number, number];
+  workerLocation: [number, number] | null;
 }
 
 const TrackingMap = ({ userLocation, workerLocation }: TrackingMapProps) => {
@@ -51,6 +51,8 @@ const TrackingMap = ({ userLocation, workerLocation }: TrackingMapProps) => {
 
   // Fetch OSRM route
   useEffect(() => {
+    if (!workerLocation) return;
+    
     const fetchRoute = async () => {
       try {
         const response = await fetch(
@@ -90,12 +92,14 @@ const TrackingMap = ({ userLocation, workerLocation }: TrackingMapProps) => {
         <Popup>Your Location</Popup>
       </Marker>
       
-      <Marker position={workerLocation} icon={workerIcon}>
-        <Popup>Worker Location</Popup>
-      </Marker>
+      {workerLocation && (
+        <Marker position={workerLocation} icon={workerIcon}>
+          <Popup>Worker Location</Popup>
+        </Marker>
+      )}
 
       {/* Dynamic Route Line */}
-      {routePath.length > 0 && (
+      {workerLocation && routePath.length > 0 && (
         <Polyline 
           positions={routePath}
           pathOptions={{ 
@@ -108,7 +112,7 @@ const TrackingMap = ({ userLocation, workerLocation }: TrackingMapProps) => {
         />
       )}
 
-      <RecenterMap center={workerLocation} />
+      {workerLocation && <RecenterMap center={workerLocation} />}
     </MapContainer>
   );
 };

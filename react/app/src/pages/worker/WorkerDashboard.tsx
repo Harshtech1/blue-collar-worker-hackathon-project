@@ -4,12 +4,23 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Calendar, MapPin, Package, DollarSign, Bell, Clock, CheckCircle, AlertCircle, MessageCircle, TrendingUp, ArrowRight, BarChart3, BellRing, X } from 'lucide-react';
+import { Calendar, MapPin, Package, DollarSign, Bell, Clock, CheckCircle, AlertCircle, MessageCircle, TrendingUp, ArrowRight, BarChart3, BellRing, X, Play, Navigation } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-// import { supabase } from '@/integrations/supabase/client';
+import { useSocket } from '@/hooks/useSocket';
 import { db } from '@/lib/db';
 import ChatComponent from '@/components/chat/ChatComponent';
 import { toast } from 'sonner';
+import { useJobRequests } from '@/hooks/useJobRequests';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   AreaChart,
   Area,
@@ -26,23 +37,7 @@ import {
   Legend
 } from 'recharts';
 
-// Mock earnings data for chart
-const earningsData = [
-  { day: 'Mon', earnings: 1200, jobs: 3 },
-  { day: 'Tue', earnings: 1850, jobs: 4 },
-  { day: 'Wed', earnings: 900, jobs: 2 },
-  { day: 'Thu', earnings: 2100, jobs: 5 },
-  { day: 'Fri', earnings: 1650, jobs: 4 },
-  { day: 'Sat', earnings: 2400, jobs: 6 },
-  { day: 'Sun', earnings: 1100, jobs: 3 },
-];
 
-// Mock job status data for pie chart
-const jobStatusData = [
-  { name: 'Completed', value: 12, color: '#10b981' },
-  { name: 'In Progress', value: 2, color: '#f59e0b' },
-  { name: 'Pending', value: 5, color: '#6366f1' },
-];
 
 // Mock monthly comparison data
 const monthlyData = [
@@ -51,145 +46,105 @@ const monthlyData = [
   { month: 'Mar', current: 24500, previous: 21000 },
 ];
 
-// Dummy jobs data
-const dummyJobs = [
-  {
-    id: '1',
-    service_id: '1',
-    customer_id: '1',
-    customer_name: 'Rajesh Kumar',
-    customer_phone: '+91 98765 43210',
-    status: 'accepted',
-    scheduled_date: '2024-01-29',
-    scheduled_time: '10:00 AM',
-    address: '123, Sector 15, Noida',
-    amount: 850,
-    services: { name: 'AC Repair' }
-  },
-  {
-    id: '2',
-    service_id: '2',
-    customer_id: '2',
-    customer_name: 'Priya Sharma',
-    customer_phone: '+91 87654 32109',
-    status: 'in_progress',
-    scheduled_date: '2024-01-28',
-    scheduled_time: '2:00 PM',
-    address: '456, Green Park, Delhi',
-    amount: 650,
-    services: { name: 'Plumbing Service' }
-  },
-  {
-    id: '3',
-    service_id: '3',
-    customer_id: '3',
-    customer_name: 'Amit Verma',
-    customer_phone: '+91 76543 21098',
-    status: 'pending',
-    scheduled_date: '2024-01-30',
-    scheduled_time: '11:00 AM',
-    address: '789, Model Town, Gurgaon',
-    amount: 1200,
-    services: { name: 'Electrical Work' }
-  },
-  {
-    id: '4',
-    service_id: '4',
-    customer_id: '4',
-    customer_name: 'Sneha Patel',
-    customer_phone: '+91 65432 10987',
-    status: 'completed',
-    scheduled_date: '2024-01-27',
-    scheduled_time: '4:00 PM',
-    address: '321, Civil Lines, Delhi',
-    amount: 550,
-    services: { name: 'Painting' }
-  }
-];
-
-// Dummy notifications
-const dummyNotifications = [
-  { id: 1, title: 'New job assigned: AC Repair at Sector 15', type: 'job', created_at: new Date().toISOString(), read: false },
-  { id: 2, title: 'Payment of ₹850 received for completed job', type: 'payment', created_at: new Date(Date.now() - 3600000).toISOString(), read: false },
-  { id: 3, title: 'Customer Priya Sharma left a 5-star review!', type: 'review', created_at: new Date(Date.now() - 86400000).toISOString(), read: true },
-  { id: 4, title: 'Reminder: Job at Green Park tomorrow at 2 PM', type: 'reminder', created_at: new Date(Date.now() - 172800000).toISOString(), read: true },
-  { id: 5, title: 'Your weekly earnings report is ready', type: 'report', created_at: new Date(Date.now() - 259200000).toISOString(), read: true }
-];
-
-// Dummy reminders
-const dummyReminders = [
-  { id: 1, title: 'AC Repair at Sector 15', time: '10:00 AM', date: 'Tomorrow', customer: 'Rajesh Kumar', urgent: true },
-  { id: 2, title: 'Plumbing at Green Park', time: '2:00 PM', date: 'Tomorrow', customer: 'Priya Sharma', urgent: false },
-  { id: 3, title: 'Electrical at Model Town', time: '11:00 AM', date: 'Day After', customer: 'Amit Verma', urgent: false },
-];
+// Dynamic Data replaces mock ones
 
 const WorkerDashboard = () => {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
-  const [stats, setStats] = useState({
-    todayJobs: 3,
-    completedJobs: 12,
-    pendingJobs: 2,
-    earningsToday: 1850,
-    totalEarnings: 24500,
-    upcomingJobs: 5
-  });
-  
-  const [recentJobs, setRecentJobs] = useState<any[]>(dummyJobs);
-  const [notifications, setNotifications] = useState<any[]>(dummyNotifications);
-  const [reminders, setReminders] = useState(dummyReminders);
+  const { activeJobs, pendingJobs, allJobs, updateJobStatus, startJob, completeJob } = useJobRequests();
+
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [reminders, setReminders] = useState<any[]>([]);
   const [showChat, setShowChat] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
 
+  // OTP State
+  const [otpDialogOpen, setOtpDialogOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [otp, setOtp] = useState('');
+
+  // Fetch jobs and profile data
   useEffect(() => {
-    const fetchRealJobs = async () => {
-      if (!user) return;
+    if (user && profile?.role === 'worker') {
+      fetchDashboardData();
+    }
+  }, [user, profile]);
+
+  const fetchDashboardData = async () => {
+    if (!user) return;
+    try {
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
       
-      try {
-        const { data, error } = await db
-          .collection('bookings')
-          .select(`
-            *,
-            service_categories(name, name_hi)
-          `)
-          .order('created_at', { ascending: false })
-          .limit(10);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          const formatted = data.map((b: any) => ({
-            id: b.id,
-            jobType: b.service_type || 'General Service',
-            customerName: b.profiles?.full_name || 'Unknown Customer',
-            location: b.profiles?.city || 'Location not specified',
-            date: new Date(b.booking_date).toLocaleDateString(),
-            time: b.booking_time,
-            status: b.status,
-            amount: b.total_price || 0
-          }));
-
-          setStats({
-            todayJobs: formatted.filter((j: any) => j.date === new Date().toLocaleDateString()).length,
-            completedJobs: formatted.filter((j: any) => j.status === 'completed').length,
-            pendingJobs: formatted.filter((j: any) => j.status === 'pending' || j.status === 'in_progress').length,
-            earningsToday: formatted.filter((j: any) => j.date === new Date().toLocaleDateString()).reduce((sum: number, b: any) => sum + (b.amount || 0), 0),
-            totalEarnings: formatted.reduce((sum: number, b: any) => sum + (b.amount || 0), 0),
-            upcomingJobs: formatted.filter((j: any) => j.status === 'accepted').length
-          });
-        }
-      } catch (err) {
-        console.error('Error fetching jobs:', err);
+      const res = await fetch(`${API_BASE}/api/notifications?limit=5`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data || []);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    }
+  };
 
-    fetchRealJobs();
+  // Dynamic Stats calculated from real jobs
+  const stats = {
+    todayJobs: activeJobs.filter(j => {
+      const today = new Date().toDateString();
+      const jobDate = j.scheduled_at ? new Date(j.scheduled_at).toDateString() : new Date(j.created_at).toDateString();
+      return jobDate === today;
+    }).length,
+    completedJobs: allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid').length, 
+    pendingJobs: pendingJobs.length,
+    activeJobsCount: activeJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
+    upcomingJobs: activeJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length + pendingJobs.length,
+    earningsToday: allJobs
+      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid') && new Date(j.updated_at || j.created_at).toDateString() === new Date().toDateString())
+      .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0),
+    totalEarnings: allJobs
+      .filter(j => j.status === 'completed' || j.paymentStatus === 'paid')
+      .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0)
+  };
+
+  const jobStatusData = [
+    { name: 'Completed', value: stats.completedJobs, color: '#10b981' },
+    { name: 'Active', value: stats.activeJobsCount, color: '#6366f1' },
+    { name: 'Pending', value: stats.pendingJobs, color: '#f59e0b' },
+  ];
+
+  // Generate earnings trend from completed jobs
+  const earningsData = Array.from({ length: 7 }, (_, i) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (6 - i));
+    const dateStr = date.toDateString();
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
     
-    // Realtime not implemented for bookings yet (no Supabase). You can poll or add websocket later.
-    return () => {
-      // cleanup placeholder
-    };
-  }, [user]);
+    const dayEarnings = allJobs
+      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid') && new Date(j.updated_at || j.created_at).toDateString() === dateStr)
+      .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0);
+      
+    return { day: dayName, earnings: dayEarnings };
+  });
+
+  const handleStartJob = (jobId: string) => {
+    setSelectedJobId(jobId);
+    setOtpDialogOpen(true);
+  };
+
+  const handleVerifyOTP = async () => {
+    if (!selectedJobId) return;
+    const result = await startJob(selectedJobId, otp);
+    if (!result.error) {
+      setOtpDialogOpen(false);
+      setOtp('');
+      setSelectedJobId(null);
+    }
+  };
+
+  const handleCompleteJob = async (jobId: string) => {
+    await completeJob(jobId);
+  };
 
   const handleMarkNotificationRead = (id: number) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -465,7 +420,7 @@ const WorkerDashboard = () => {
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Jobs */}
+        {/* Active Jobs */}
         <div className="lg:col-span-2">
           <Card className="hover:shadow-lg transition-all duration-300 hover-lift border-worker-primary/10">
             <CardHeader className="bg-gradient-to-r from-worker-primary/5 to-worker-secondary/5">
@@ -473,67 +428,105 @@ const WorkerDashboard = () => {
                 <div className="p-2 rounded-lg bg-worker-primary/10">
                   <Package className="h-5 w-5 text-worker-primary" />
                 </div>
-                Recent Jobs
+                Active Jobs
               </CardTitle>
-              <CardDescription className="text-gray-600">Your latest service requests</CardDescription>
+              <CardDescription className="text-gray-600">Your latest accepted or in-progress requests</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {recentJobs.map((job, index) => (
-                  <div key={job.id} className="flex items-center justify-between p-4 border rounded-xl hover:bg-worker-light/20 transition-all duration-300 hover-scale border-worker-primary/10 animate-fade-in" style={{animationDelay: `${index * 0.1}s`}}>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-gray-900">{job.services?.name || 'Service'}</h3>
-                        <Badge 
-                          variant={
-                            job.status === 'completed' ? 'default' :
-                            job.status === 'pending' ? 'secondary' :
-                            job.status === 'in_progress' ? 'outline' :
-                            'destructive'
-                          }
-                          className={
-                            job.status === 'completed' ? 'bg-green-500 hover:bg-green-600' :
-                            job.status === 'pending' ? 'bg-yellow-500 hover:bg-yellow-600' :
-                            job.status === 'in_progress' ? 'border-blue-500 text-blue-600 bg-blue-50' :
-                            job.status === 'accepted' ? 'border-purple-500 text-purple-600 bg-purple-50' :
-                            'bg-red-500 hover:bg-red-600'
-                          }
+                {activeJobs.length === 0 ? (
+                  <div className="text-center p-8 text-gray-500">No active jobs right now.</div>
+                ) : (
+                  activeJobs.map((job, index) => (
+                    <div key={job.id || (job as any)._id || index} className="flex items-center justify-between p-4 border rounded-xl hover:bg-worker-light/20 transition-all duration-300 hover-scale border-worker-primary/10 animate-fade-in" style={{animationDelay: `${index * 0.1}s`}}>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{job.category?.icon}</span>
+                          <h3 className="font-bold text-gray-900">{job.category?.name || 'Service'}</h3>
+                          <Badge 
+                            variant={
+                              job.status === 'completed' ? 'default' :
+                              job.status === 'pending' ? 'secondary' :
+                              job.status === 'in_progress' ? 'outline' :
+                              'destructive'
+                            }
+                            className={
+                              job.status === 'completed' ? 'bg-green-500 hover:bg-green-600' :
+                              job.status === 'pending' ? 'bg-yellow-500 hover:bg-yellow-600' :
+                              job.status === 'in_progress' ? 'border-blue-500 text-blue-600 bg-blue-50' :
+                              job.status === 'accepted' || job.status === 'arriving' || job.status === 'otp_verify' ? 'border-purple-500 text-purple-600 bg-purple-50' :
+                              'bg-red-500 hover:bg-red-600'
+                            }
+                          >
+                            {job.status.replace('_', ' ')}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                          <Clock className="h-4 w-4" />
+                          {new Date(job.created_at).toLocaleString()}
+                        </p>
+                        <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                          <MapPin className="h-4 w-4" />
+                          {job.address} {job.city ? `, ${job.city}` : ''}
+                        </p>
+                        <div className="mt-2 flex items-center gap-4">
+                          <span className="text-sm font-medium text-gray-700">{job.customer?.full_name || 'Customer'}</span>
+                          <span className="text-sm font-bold text-green-600">₹{job.worker_earning || job.total_price}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2 min-w-[140px]">
+                        {job.status === 'accepted' && (
+                          <Button 
+                            size="sm"
+                            className="w-full bg-blue-600 hover:bg-blue-700 font-bold"
+                            onClick={() => updateJobStatus(job.id, 'arriving')}
+                          >
+                            <Navigation className="w-4 h-4 mr-2" />
+                            On the Way
+                          </Button>
+                        )}
+                        {job.status === 'arriving' && (
+                          <Button 
+                            size="sm"
+                            className="w-full bg-amber-600 hover:bg-amber-700 font-bold"
+                            onClick={() => updateJobStatus(job.id, 'otp_verify')}
+                          >
+                            <MapPin className="w-4 h-4 mr-2" />
+                            Arrived
+                          </Button>
+                        )}
+                        {job.status === 'otp_verify' && (
+                          <Button 
+                            size="sm"
+                            className="w-full bg-blue-600 hover:bg-blue-700 font-bold"
+                            onClick={() => handleStartJob(job.id)}
+                          >
+                            <Play className="w-4 h-4 mr-2" />
+                            Enter OTP
+                          </Button>
+                        )}
+                        {job.status === 'in_progress' && (
+                          <Button 
+                            size="sm"
+                            className="w-full bg-green-600 hover:bg-green-700 font-bold"
+                            onClick={() => handleCompleteJob(job.id)}
+                          >
+                            <CheckCircle className="w-4 h-4 mr-2" />
+                            Complete
+                          </Button>
+                        )}
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          className="w-full text-xs"
+                          onClick={() => handleStartNavigation(job.address)}
                         >
-                          {job.status.replace('_', ' ')}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
-                        <Calendar className="h-3 w-3" />
-                        {job.scheduled_date} at {job.scheduled_time}
-                      </p>
-                      <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                        <MapPin className="h-3 w-3" />
-                        {job.address}
-                      </p>
-                      <div className="mt-2 flex items-center gap-4">
-                        <span className="text-sm font-medium text-gray-700">{job.customer_name}</span>
-                        <span className="text-sm font-bold text-green-600">₹{job.amount}</span>
+                          Navigate Map
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-2">
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        className="text-xs"
-                        onClick={() => handleCallCustomer(job.customer_phone)}
-                      >
-                        Call
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        className="text-xs"
-                        onClick={() => handleStartNavigation(job.address)}
-                      >
-                        Navigate
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
               <Button 
                 variant="outline" 
@@ -607,7 +600,7 @@ const WorkerDashboard = () => {
               <div className="space-y-3">
                 {notifications.slice(0, 4).map((notification, index) => (
                   <div 
-                    key={notification.id} 
+                    key={notification.id || notification._id || index} 
                     className={`p-4 rounded-xl border transition-all duration-300 hover-scale animate-fade-in cursor-pointer ${
                       notification.read 
                         ? 'bg-gray-50 border-gray-100' 
@@ -727,9 +720,9 @@ const WorkerDashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {reminders.map((reminder) => (
+                {reminders.map((reminder, index) => (
                   <div 
-                    key={reminder.id} 
+                    key={reminder.id || reminder._id || index} 
                     className={`p-4 rounded-xl border ${reminder.urgent ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}
                   >
                     <div className="flex items-start justify-between">
@@ -759,6 +752,39 @@ const WorkerDashboard = () => {
           </Card>
         </div>
       )}
+      {/* OTP Dialog */}
+      <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enter Customer OTP</DialogTitle>
+            <DialogDescription>
+              Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="otp">OTP Code</Label>
+              <Input
+                id="otp"
+                type="text"
+                placeholder="Enter 4-digit OTP"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                maxLength={4}
+                className="text-center text-2xl tracking-widest h-14"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
+              Verify & Start
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

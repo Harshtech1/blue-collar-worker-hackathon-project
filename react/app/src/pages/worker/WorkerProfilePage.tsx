@@ -14,6 +14,7 @@ import { uploadFile } from '@/lib/upload';
 import { z } from 'zod';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
 
 const profileSchema = z.object({
   full_name: z.string().min(2, "Name must be at least 2 characters"),
@@ -66,27 +67,27 @@ const WorkerProfilePage = () => {
     try {
       setLoading(true);
 
-      // Fetch worker profile
-      const { data: workerData, error: workerError } = await db
-        .collection('worker_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      
+      // Fetch worker profile via API
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      if (workerError) {
-        console.error('Error fetching worker profile:', workerError);
-      } else if (workerData) {
+      if (res.ok) {
+        const workerData = await res.json();
         setWorkerProfile(workerData);
         reset({
-          full_name: profile?.full_name || '',
-          phone: profile?.phone || '',
-          email: profile?.email || '',
+          full_name: profile?.full_name || workerData.full_name || '',
+          phone: profile?.phone || workerData.phone || '',
+          email: profile?.email || workerData.email || '',
           bio: workerData.bio || '',
           experience_years: workerData.experience_years || 0,
           base_price: workerData.base_price || 0,
-          address: profile?.address || '',
-          city: profile?.city || '',
-          state: profile?.state || '',
+          address: profile?.address || workerData.address || '',
+          city: profile?.city || workerData.city || '',
+          state: profile?.state || workerData.state || '',
           status: workerData.status as any || 'online'
         });
       }
@@ -101,45 +102,28 @@ const WorkerProfilePage = () => {
     if (!user) return;
 
     try {
-      // Update profile in profiles table
-      const { error: profileError } = await db
-        .collection('profiles')
-        .update({
-          full_name: data.full_name,
-          phone: data.phone,
-          email: data.email,
-          address: data.address,
-          city: data.city,
-          state: data.state
-        })
-        .eq('id', user.id);
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
 
-      if (profileError) {
-        console.error('Error updating profile:', profileError);
-        return;
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (res.ok) {
+        toast.success('Profile updated successfully!');
+        fetchWorkerProfile();
+        setIsEditing(false);
+      } else {
+        toast.error('Failed to update profile');
       }
-
-      // Update worker profile in worker_profiles table
-      const { error: workerProfileError } = await db
-        .collection('worker_profiles')
-        .update({
-          bio: data.bio,
-          experience_years: data.experience_years,
-          base_price: data.base_price,
-          status: data.status
-        })
-        .eq('user_id', user.id);
-
-      if (workerProfileError) {
-        console.error('Error updating worker profile:', workerProfileError);
-        return;
-      }
-
-      // Refresh the profile data
-      fetchWorkerProfile();
-      setIsEditing(false);
     } catch (error) {
       console.error('Error saving profile:', error);
+      toast.error('An error occurred while saving');
     }
   };
 
@@ -147,43 +131,31 @@ const WorkerProfilePage = () => {
     e.preventDefault();
     if (!e.target.files || e.target.files.length === 0) return;
     
-    if (!user) {
-      alert("Please login first to upload documents.");
-      return;
-    }
-    
     const file = e.target.files[0];
     setUploadingDoc(true);
     
     try {
-      const { url, error } = await uploadFile(file);
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', targetField);
+
+      const res = await fetch(`${API_BASE}/api/worker/documents`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
       
-      if (error) {
-        alert(error);
-        return;
-      }
-      
-      if (url) {
-        // Save the URL to the worker profile in the database
-        const updateData: any = {};
-        if (targetField === 'aadhaar') updateData.aadhaar_url = url;
-        if (targetField === 'pan') updateData.pan_url = url;
-
-        const { error: dbError } = await db
-          .collection('worker_profiles')
-          .update(updateData)
-          .eq('user_id', user.id);
-
-        if (dbError) {
-           alert("Uploaded but failed to save to profile.");
-           return;
-        }
-
-        alert('Document uploaded successfully!');
+      if (res.ok) {
+        toast.success(`${targetField.toUpperCase()} uploaded successfully!`);
         fetchWorkerProfile();
+      } else {
+        toast.error('Upload failed');
       }
     } catch (err: any) {
-      alert('Error uploading document');
+      toast.error('Error uploading document');
     } finally {
       setUploadingDoc(false);
     }

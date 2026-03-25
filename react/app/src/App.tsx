@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { LocationProvider } from "@/contexts/LocationContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { ReactNode } from 'react';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
@@ -161,105 +162,107 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>
-        <AuthProvider>
-          <NotificationProvider>
-            <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <BrowserRouter>
-                <Routes>
-                  <Route path="/" element={<RoleBasedHome />} />
+        <LocationProvider>
+          <AuthProvider>
+            <NotificationProvider>
+              <TooltipProvider>
+                <Toaster />
+                <Sonner />
+                <BrowserRouter>
+                  <Routes>
+                    <Route path="/" element={<RoleBasedHome />} />
 
-                  {/* Admin Portal - Hidden Route */}
-                  <Route path="/admin-portal-2026" element={<AdminDashboard />} />
+                    {/* Admin Portal - Hidden Route */}
+                    <Route path="/admin-portal-2026" element={<AdminDashboard />} />
 
-                  <Route path="/login" element={<EnhancedLogin />} />
-                  <Route path="/register" element={<Register />} />
+                    <Route path="/login" element={<EnhancedLogin />} />
+                    <Route path="/register" element={<Register />} />
 
-                  {/* ENABLED ROUTES */}
-                  <Route path="/test" element={<TestPage />} />
-                  <Route path="/services" element={<Services />} />
-                  <Route path="/book/:serviceId" element={<BookService />} />
-                  <Route path="/bookings" element={<MyBookings />} />
-                  <Route path="/help" element={<Help />} />
-                  <Route path="/profile" element={
-                    <ProtectedRoute>
-                      <EnhancedCustomerDashboard />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/enhanced-book/:serviceId" element={<Placeholder name="EnhancedBookService" />} />
-                  <Route path="/customer-dashboard" element={
-                    <ProtectedRoute>
-                      <EnhancedCustomerDashboard />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/workers" element={<Placeholder name="Workers" />} />
-                  <Route path="/enhanced-login" element={<Placeholder name="EnhancedLogin" />} />
-                  <Route path="/tracking/:bookingId" element={<Tracking />} />
-                  <Route path="/notifications/demo" element={<Placeholder name="NotificationDemo" />} />
-                  <Route path="/test-chatbot" element={<Placeholder name="Chatbot" />} />
-                  <Route path="/ac-services" element={<ACServicePage />} />
-                  <Route path="/live-tracking" element={<LiveTrackingPage />} />
-                  <Route path="/service-card-demo" element={<ServiceCardDemo />} />
-                  <Route path="/thekedar-direct" element={<Navigate to="/thekedar/dashboard" replace />} />
-                  <Route path="/thekedar-standalone" element={<Navigate to="/thekedar/dashboard" replace />} />
-                  <Route path="/payment" element={<PaymentPage />} />
+                    {/* ENABLED ROUTES */}
+                    <Route path="/test" element={<TestPage />} />
+                    <Route path="/services" element={<Services />} />
+                    <Route path="/book/:serviceId" element={<BookService />} />
+                    <Route path="/bookings" element={<MyBookings />} />
+                    <Route path="/help" element={<Help />} />
+                    <Route path="/profile" element={
+                      <ProtectedRoute>
+                        <EnhancedCustomerDashboard />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/enhanced-book/:serviceId" element={<Placeholder name="EnhancedBookService" />} />
+                    <Route path="/customer-dashboard" element={
+                      <ProtectedRoute>
+                        <EnhancedCustomerDashboard />
+                      </ProtectedRoute>
+                    } />
+                    <Route path="/workers" element={<Placeholder name="Workers" />} />
+                    <Route path="/enhanced-login" element={<Placeholder name="EnhancedLogin" />} />
+                    <Route path="/tracking/:bookingId" element={<Tracking />} />
+                    <Route path="/notifications/demo" element={<Placeholder name="NotificationDemo" />} />
+                    <Route path="/test-chatbot" element={<Placeholder name="Chatbot" />} />
+                    <Route path="/ac-services" element={<ACServicePage />} />
+                    <Route path="/live-tracking" element={<LiveTrackingPage />} />
+                    <Route path="/service-card-demo" element={<ServiceCardDemo />} />
+                    <Route path="/thekedar-direct" element={<Navigate to="/thekedar/dashboard" replace />} />
+                    <Route path="/thekedar-standalone" element={<Navigate to="/thekedar/dashboard" replace />} />
+                    <Route path="/payment" element={<PaymentPage />} />
 
-                  <Route path="/worker/onboarding" element={
-                    <WorkerProtectedRoute>
-                      <WorkerOnboardingPage />
-                    </WorkerProtectedRoute>
-                  } />
+                    <Route path="/worker/onboarding" element={
+                      <WorkerProtectedRoute>
+                        <WorkerOnboardingPage />
+                      </WorkerProtectedRoute>
+                    } />
 
-                  {/* Worker Routes */}
-                  <Route path="/worker" element={
-                    <WorkerProtectedRoute>
-                      <WorkerLayout />
-                    </WorkerProtectedRoute>
-                  }>
-                    <Route index element={<Navigate to="dashboard" replace />} />
-                    <Route path="dashboard" element={<WorkerDashboard />} />
-                    <Route path="jobs" element={<WorkerJobsPage />} />
-                    <Route path="earnings" element={<WorkerEarningsPage />} />
-                    <Route path="schedule" element={<WorkerSchedulePage />} />
-                    <Route path="profile" element={<WorkerProfilePage />} />
-                    <Route path="notifications" element={<WorkerNotificationsPage />} />
-                    <Route path="job-log" element={<JobLog />} />
-                    <Route path="map" element={<WorkerMapDashboard />} />
-                    <Route path="settings" element={<WorkerSettingsPage />} />
-                  </Route>
+                    {/* Worker Routes */}
+                    <Route path="/worker" element={
+                      <WorkerProtectedRoute>
+                        <WorkerLayout />
+                      </WorkerProtectedRoute>
+                    }>
+                      <Route index element={<Navigate to="dashboard" replace />} />
+                      <Route path="dashboard" element={<WorkerDashboard />} />
+                      <Route path="jobs" element={<WorkerJobsPage />} />
+                      <Route path="earnings" element={<WorkerEarningsPage />} />
+                      <Route path="schedule" element={<WorkerSchedulePage />} />
+                      <Route path="profile" element={<WorkerProfilePage />} />
+                      <Route path="notifications" element={<WorkerNotificationsPage />} />
+                      <Route path="job-log" element={<JobLog />} />
+                      <Route path="map" element={<WorkerMapDashboard />} />
+                      <Route path="settings" element={<WorkerSettingsPage />} />
+                    </Route>
 
-                  {/* Thekedar Routes */}
-                  <Route path="/thekedar/onboarding" element={
-                    <ThekedarProtectedRoute>
-                      <ThekedarOnboardingPage />
-                    </ThekedarProtectedRoute>
-                  } />
+                    {/* Thekedar Routes */}
+                    <Route path="/thekedar/onboarding" element={
+                      <ThekedarProtectedRoute>
+                        <ThekedarOnboardingPage />
+                      </ThekedarProtectedRoute>
+                    } />
 
-                  <Route path="/thekedar" element={
-                    <ThekedarProtectedRoute>
-                      <ThekedarLayout />
-                    </ThekedarProtectedRoute>
-                  }>
-                    <Route index element={<Navigate to="dashboard" replace />} />
-                    <Route path="dashboard" element={<ThekedarDashboard />} />
-                    <Route path="site-visits" element={<EnhancedSiteVisits />} />
-                    <Route path="team" element={<ThekedarTeamManagement />} />
-                    <Route path="projects" element={<ThekedarProjects />} />
-                    <Route path="analytics" element={<ThekedarAnalytics />} />
-                    <Route path="earnings" element={<ThekedarEarnings />} />
-                    <Route path="schedule" element={<ThekedarSchedule />} />
-                    <Route path="map" element={<ThekedarMapHub />} />
-                    <Route path="profile" element={<ThekedarProfile />} />
-                    <Route path="settings" element={<ThekedarSettings />} />
-                  </Route>
+                    <Route path="/thekedar" element={
+                      <ThekedarProtectedRoute>
+                        <ThekedarLayout />
+                      </ThekedarProtectedRoute>
+                    }>
+                      <Route index element={<Navigate to="dashboard" replace />} />
+                      <Route path="dashboard" element={<ThekedarDashboard />} />
+                      <Route path="site-visits" element={<EnhancedSiteVisits />} />
+                      <Route path="team" element={<ThekedarTeamManagement />} />
+                      <Route path="projects" element={<ThekedarProjects />} />
+                      <Route path="analytics" element={<ThekedarAnalytics />} />
+                      <Route path="earnings" element={<ThekedarEarnings />} />
+                      <Route path="schedule" element={<ThekedarSchedule />} />
+                      <Route path="map" element={<ThekedarMapHub />} />
+                      <Route path="profile" element={<ThekedarProfile />} />
+                      <Route path="settings" element={<ThekedarSettings />} />
+                    </Route>
 
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </BrowserRouter>
-            </TooltipProvider>
-          </NotificationProvider>
-        </AuthProvider>
+                    <Route path="*" element={<NotFound />} />
+                  </Routes>
+                </BrowserRouter>
+              </TooltipProvider>
+            </NotificationProvider>
+          </AuthProvider>
+        </LocationProvider>
       </LanguageProvider>
     </QueryClientProvider>
   );

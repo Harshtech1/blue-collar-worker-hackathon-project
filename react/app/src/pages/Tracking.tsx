@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useLocation as useAppLocation } from '@/contexts/LocationContext';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
@@ -44,10 +45,11 @@ export default function Tracking() {
   const { language } = useLanguage();
   const { subscribeToBooking } = useNotifications();
   const { socket } = useSocket();
+  const { location: appLocation } = useAppLocation();
 
   const [status, setStatus] = useState<BookingStatus>('pending');
   const [eta, setEta] = useState(25);
-  const [startOtp] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
+
   const [finishOtp] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
   const [loading, setLoading] = useState(true);
   const [bookingData, setBookingData] = useState<any>(null);
@@ -59,8 +61,15 @@ export default function Tracking() {
   });
 
   // Map state
-  const userLocation = useMemo<[number, number]>(() => [28.6139, 77.2090], []);
-  const [workerLocation, setWorkerLocation] = useState<[number, number]>([28.6300, 77.2200]);
+  const userLocation = useMemo<[number, number]>(() => {
+    if (bookingData?.customer_lat && bookingData?.customer_lng) {
+      return [bookingData.customer_lat, bookingData.customer_lng];
+    }
+    if (appLocation) return [appLocation.lat, appLocation.lng];
+    return [28.6139, 77.2090];
+  }, [appLocation, bookingData]);
+  
+  const [workerLocation, setWorkerLocation] = useState<[number, number] | null>(null);
 
   // ── Fetch booking data from API ────────────────────────────────────────
   useEffect(() => {
@@ -91,6 +100,10 @@ export default function Tracking() {
             setStatus('matched');
           } else if (data.status === 'pending') {
             setStatus('pending');
+          } else if (data.status === 'arriving') {
+            setStatus('arriving');
+          } else if (data.status === 'otp_verify') {
+            setStatus('otp_verify');
           } else if (data.status === 'in_progress') {
             setStatus('in_progress');
           } else if (data.status === 'completed') {
@@ -116,7 +129,7 @@ export default function Tracking() {
     const handleBookingUpdated = (data: any) => {
       if (data.bookingId !== bookingId) return;
 
-      if (data.status === 'accepted') {
+      if (data.status === 'accepted' || data.status === 'matched') {
         setStatus('matched');
         if (data.workerName) {
           const name = data.workerName;
@@ -132,40 +145,57 @@ export default function Tracking() {
             ? `✅ ${data.workerName || 'कारीगर'} ने स्वीकार किया!`
             : `✅ ${data.workerName || 'Worker'} accepted!`
         );
+      } else if (data.status === 'arriving') {
+        setStatus('arriving');
+      } else if (data.status === 'otp_verify') {
+        setStatus('otp_verify');
+      } else if (data.status === 'in_progress') {
+        setStatus('in_progress');
+        toast.success(
+          language === 'hi'
+            ? `✅ काम शुरू हो गया है!`
+            : `✅ Work started successfully!`
+        );
+      } else if (data.status === 'completed') {
+        setStatus('completed');
+        toast.success(
+          language === 'hi'
+            ? `✅ काम पूरा हो गया!`
+            : `✅ Work completed successfully!`
+        );
       }
     };
 
     socket.on('booking_updated', handleBookingUpdated);
-    return () => { socket.off('booking_updated', handleBookingUpdated); };
-  }, [socket, bookingId, bookingData, language]);
 
-  // Simulate movement when arriving
-  useEffect(() => {
-    if (status === 'arriving') {
-      const interval = setInterval(() => {
-        setWorkerLocation(prev => {
-          const latDiff = userLocation[0] - prev[0];
-          const lngDiff = userLocation[1] - prev[1];
-          if (Math.abs(latDiff) < 0.0001 && Math.abs(lngDiff) < 0.0001) return prev;
-          return [prev[0] + latDiff * 0.05, prev[1] + lngDiff * 0.05];
-        });
-      }, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [status, userLocation]);
+    // ── Listen for live worker location updates ──────────────────────────
+    const handleWorkerLocationUpdate = (data: any) => {
+      if (data.bookingId !== bookingId) return;
+      
+      console.log('📍 Received worker location update:', data);
+      setWorkerLocation([data.lat, data.lng]);
+      
+      // Update ETA based on distance (rough estimate)
+      // distance = sqrt((lat1-lat2)^2 + (lng1-lng2)^2) * 111 (km per degree)
+      const distance = Math.sqrt(
+        Math.pow(data.lat - userLocation[0], 2) + 
+        Math.pow(data.lng - userLocation[1], 2)
+      ) * 111;
+      
+      // Assume 20km/h average speed in city
+      const estimatedMinutes = Math.round((distance / 20) * 60);
+      setEta(Math.max(2, estimatedMinutes)); // Minimum 2 mins
+    };
 
-  // Auto-progress simulation (once matched → arriving → otp)
-  useEffect(() => {
-    if (status === 'matched') {
-      const timer1 = setTimeout(() => setStatus('arriving'), 3000);
-      return () => clearTimeout(timer1);
-    }
-    if (status === 'arriving') {
-      const timer2 = setTimeout(() => setEta(5), 4000);
-      const timer3 = setTimeout(() => setStatus('otp_verify'), 8000);
-      return () => { clearTimeout(timer2); clearTimeout(timer3); };
-    }
-  }, [status]);
+    socket.on('worker_location_update', handleWorkerLocationUpdate);
+
+    return () => { 
+      socket.off('booking_updated', handleBookingUpdated); 
+      socket.off('worker_location_update', handleWorkerLocationUpdate);
+    };
+  }, [socket, bookingId, bookingData, language, userLocation]);
+
+
 
   const handleStartWork = () => {
     setStatus('in_progress');
@@ -372,16 +402,16 @@ export default function Tracking() {
                               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-4 p-4 bg-amber-50 rounded-2xl border border-amber-100">
                                 <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">Your OTP (to Start)</p>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-2xl font-black tracking-widest text-slate-800">{startOtp}</span>
+                                  <span className="text-2xl font-black tracking-widest text-slate-800">{bookingData?.otp_start || '----'}</span>
                                   <Button size="icon" variant="ghost" className="h-8 w-8 text-amber-600" onClick={() => {
-                                    navigator.clipboard.writeText(startOtp);
+                                    navigator.clipboard.writeText(bookingData?.otp_start || '');
                                     toast.success("OTP Copied");
                                   }}>
                                     <Copy className="h-4 w-4" />
                                   </Button>
                                 </div>
                                 <Button onClick={handleStartWork} className="w-full mt-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-10 font-bold">
-                                  Verify {startOtp} & Start
+                                  Verify {bookingData?.otp_start || ''} & Start
                                 </Button>
                               </motion.div>
                             )}

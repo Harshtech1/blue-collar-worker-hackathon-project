@@ -40,6 +40,7 @@ import { uploadFile } from '@/lib/upload';
 import { z } from 'zod';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
 
 const settingsSchema = z.object({
   full_name: z.string().min(2, "Name must be at least 2 characters"),
@@ -118,44 +119,38 @@ const WorkerSettingsPage = () => {
     if (!user) return;
 
     try {
-      // Load profile data
-      setProfileData({ avatar_url: profile?.avatar_url || null });
+      setLoading(true);
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      
+      // Fetch worker profile via API
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      let wData = null;
-      if (profile?.role === 'worker') {
-        const { data: workerProfile } = await db
-          .collection('worker_profiles')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
-        wData = workerProfile;
+      if (res.ok) {
+        const workerData = await res.json();
+        setProfileData({ avatar_url: profile?.avatar_url || workerData.avatar_url || null });
+
+        reset({
+          full_name: profile?.full_name || workerData.full_name || '',
+          email: profile?.email || workerData.email || '',
+          phone: profile?.phone || workerData.phone || '',
+          city: profile?.city || workerData.city || '',
+          state: profile?.state || workerData.state || '',
+          pincode: profile?.pincode || workerData.pincode || '',
+          preferred_language: profile?.preferred_language || workerData.preferred_language || 'en',
+          bio: workerData.bio || '',
+          experience_years: workerData.experience_years || 0,
+          base_price: workerData.base_price || 0,
+          service_radius_km: workerData.service_radius_km || 10
+        });
+
+        // Load notification preferences if available
+        if (workerData.notification_preferences) {
+          setNotifications(workerData.notification_preferences);
+        }
       }
-      
-      reset({
-        full_name: profile?.full_name || '',
-        email: profile?.email || '',
-        phone: profile?.phone || '',
-        city: profile?.city || '',
-        state: profile?.state || '',
-        pincode: profile?.pincode || '',
-        preferred_language: profile?.preferred_language || 'en',
-        bio: wData?.bio || '',
-        experience_years: wData?.experience_years || 0,
-        base_price: wData?.base_price || 0,
-        service_radius_km: wData?.service_radius_km || 10
-      });
-      
-      // Load notification preferences (would come from a settings table)
-      // For now, using default values
-      setNotifications({
-        email_notifications: true,
-        sms_notifications: true,
-        push_notifications: true,
-        job_alerts: true,
-        payment_notifications: true,
-        system_updates: false
-      });
-      
     } catch (error) {
       console.error('Error loading settings:', error);
     } finally {
@@ -171,19 +166,28 @@ const WorkerSettingsPage = () => {
     setUploadingAvatar(true);
     
     try {
-      const { url, error } = await uploadFile(file);
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
       
-      if (error) {
-        alert(error);
-        return;
-      }
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', 'avatar');
+
+      const res = await fetch(`${API_BASE}/api/worker/profile/avatar`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
       
-      if (url) {
-        setProfileData((prev: any) => ({ ...prev, avatar_url: url }));
-        alert('Image uploaded successfully. Remember to save changes to apply.');
+      if (res.ok) {
+        const data = await res.json();
+        setProfileData((prev: any) => ({ ...prev, avatar_url: data.url }));
+        toast.success('Profile picture updated!');
+      } else {
+        toast.error('Upload failed');
       }
     } catch (err: any) {
-      alert('Error uploading image');
+      toast.error('Error uploading image');
     } finally {
       setUploadingAvatar(false);
     }
@@ -194,41 +198,26 @@ const WorkerSettingsPage = () => {
     
     setSaving(true);
     try {
-      // Update profiles table
-      const { error: profileError } = await db
-        .collection('profiles')
-        .update({
-          full_name: data.full_name,
-          email: data.email,
-          phone: data.phone,
-          city: data.city,
-          state: data.state,
-          pincode: data.pincode,
-          preferred_language: data.preferred_language,
-        })
-        .eq('id', user.id);
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(data)
+      });
       
-      if (profileError) throw profileError;
-      
-      // Update worker_profiles table if worker
-      if (profile?.role === 'worker') {
-        const { error: workerError } = await db
-          .collection('worker_profiles')
-          .update({
-            bio: data.bio,
-            experience_years: data.experience_years,
-            base_price: data.base_price,
-            service_radius_km: data.service_radius_km
-          })
-          .eq('user_id', user.id);
-        
-        if (workerError) throw workerError;
+      if (res.ok) {
+        toast.success('Profile updated successfully!');
+      } else {
+        toast.error('Failed to update profile');
       }
-      
-      alert('Profile updated successfully!');
     } catch (error) {
       console.error('Error updating profile:', error);
-      alert('Error updating profile. Please try again.');
+      toast.error('Error updating profile. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -237,12 +226,26 @@ const WorkerSettingsPage = () => {
   const handleNotificationUpdate = async () => {
     setSaving(true);
     try {
-      // Save notification preferences (would go to a settings table)
-      console.log('Notification preferences updated:', notifications);
-      alert('Notification preferences updated!');
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
+      const res = await fetch(`${API_BASE}/api/worker/settings/notifications`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(notifications)
+      });
+
+      if (res.ok) {
+        toast.success('Notification preferences updated!');
+      } else {
+        toast.error('Failed to update preferences');
+      }
     } catch (error) {
       console.error('Error updating notifications:', error);
-      alert('Error updating notification preferences.');
+      toast.error('Error updating notification preferences.');
     } finally {
       setSaving(false);
     }
@@ -251,12 +254,26 @@ const WorkerSettingsPage = () => {
   const handleSecurityUpdate = async () => {
     setSaving(true);
     try {
-      // Save security settings (would go to a settings table)
-      console.log('Security settings updated:', security);
-      alert('Security settings updated!');
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
+      const res = await fetch(`${API_BASE}/api/worker/settings/security`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(security)
+      });
+
+      if (res.ok) {
+        toast.success('Security settings updated!');
+      } else {
+        toast.error('Failed to update security');
+      }
     } catch (error) {
       console.error('Error updating security:', error);
-      alert('Error updating security settings.');
+      toast.error('Error updating security settings.');
     } finally {
       setSaving(false);
     }
@@ -265,12 +282,26 @@ const WorkerSettingsPage = () => {
   const handlePreferencesUpdate = async () => {
     setSaving(true);
     try {
-      // Save preferences (would go to a settings table)
-      console.log('Preferences updated:', preferences);
-      alert('Preferences updated!');
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
+      const res = await fetch(`${API_BASE}/api/worker/settings/preferences`, {
+        method: 'PATCH',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(preferences)
+      });
+
+      if (res.ok) {
+        toast.success('Preferences updated!');
+      } else {
+        toast.error('Failed to update preferences');
+      }
     } catch (error) {
       console.error('Error updating preferences:', error);
-      alert('Error updating preferences.');
+      toast.error('Error updating preferences.');
     } finally {
       setSaving(false);
     }

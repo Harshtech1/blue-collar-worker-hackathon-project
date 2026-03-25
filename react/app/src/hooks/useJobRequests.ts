@@ -18,9 +18,11 @@ interface JobRequest {
   is_instant: boolean;
   scheduled_at: string | null;
   created_at: string;
+  updated_at?: string;
+  paymentStatus?: string;
   latitude: number | null;
   longitude: number | null;
-  status: 'pending' | 'matched' | 'accepted' | 'in_progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'matched' | 'accepted' | 'arriving' | 'otp_verify' | 'in_progress' | 'completed' | 'cancelled';
   customer?: {
     full_name: string;
     phone: string;
@@ -38,6 +40,7 @@ export function useJobRequests() {
   const { toast } = useToast();
   const [pendingJobs, setPendingJobs] = useState<JobRequest[]>([]);
   const [activeJobs, setActiveJobs] = useState<JobRequest[]>([]);
+  const [allJobs, setAllJobs] = useState<JobRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -55,17 +58,24 @@ export function useJobRequests() {
       // Fetch pending jobs that need workers
       const pendingRes = await fetch(`${API}/bookings?status=pending&is_worker_null=1&limit=10`);
       if (!pendingRes.ok) throw new Error('Failed to fetch pending jobs');
-      const pending = await pendingRes.json();
+      let pending = await pendingRes.json();
+      if (Array.isArray(pending)) {
+        pending = pending.map((j: any) => ({ ...j, id: j.id || j._id }));
+      }
 
       // Fetch active jobs assigned to this worker by resolving worker profile
-      const activeRes = await fetch(`${API}/bookings?worker_user_id=${user.id}`);
+      const activeRes = await fetch(`${API}/bookings?worker_user_id=${user.id || (user as any)._id}`);
       if (!activeRes.ok) throw new Error('Failed to fetch active jobs');
-      const activeData = await activeRes.json();
+      let activeData = await activeRes.json();
+      if (Array.isArray(activeData)) {
+        activeData = activeData.map((j: any) => ({ ...j, id: j.id || j._id }));
+      }
 
-      const activeFiltered = (activeData || []).filter((b: JobRequest) => ['accepted', 'in_progress'].includes(b.status));
+      const activeFiltered = (activeData || []).filter((b: JobRequest) => ['pending', 'confirmed', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(b.status));
 
       setPendingJobs((pending || []) as JobRequest[]);
       setActiveJobs((activeFiltered || []) as JobRequest[]);
+      setAllJobs((activeData || []) as JobRequest[]);
     } catch (error) {
       console.error('Error fetching jobs:', error);
     } finally {
@@ -119,31 +129,50 @@ export function useJobRequests() {
     return { error: null };
   };
 
+  const updateJobStatus = async (jobId: string, status: string) => {
+    if (!user) return { error: new Error('Not authenticated') };
+
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API}/bookings/${jobId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status, updated_at: new Date().toISOString() })
+      });
+      if (!res.ok) throw new Error('Failed to update job status');
+
+      fetchJobs();
+      return { error: null };
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to update status',
+        variant: 'destructive',
+      });
+      return { error: error as Error };
+    }
+  };
+
   const startJob = async (jobId: string, otp: string) => {
     if (!user) return { error: new Error('Not authenticated') };
 
     try {
-      // Verify OTP and start job
-      const otpRes = await fetch(`${API}/bookings/${jobId}`);
-      if (!otpRes.ok) throw new Error('Unable to fetch booking');
-      const booking = await otpRes.json();
-
-      if (booking.otp_start !== otp) {
-        toast({
-          title: 'Invalid OTP',
-          description: 'Please ask the customer for the correct OTP.',
-          variant: 'destructive',
-        });
-        return { error: new Error('Invalid OTP') };
-      }
-
       const token = localStorage.getItem('token');
       const res = await fetch(`${API}/bookings/${jobId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'in_progress', otp_verified: true, started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        body: JSON.stringify({ status: 'in_progress', otp, otp_verified: true, started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       });
 
-      if (!res.ok) throw new Error('Failed to start job');
+      if (!res.ok) {
+        if (res.status === 400) {
+          toast({
+            title: 'Invalid OTP',
+            description: 'Please ask the customer for the correct OTP.',
+            variant: 'destructive',
+          });
+          return { error: new Error('Invalid OTP') };
+        }
+        throw new Error('Failed to start job');
+      }
 
       toast({
         title: 'Job Started!',
@@ -193,9 +222,11 @@ export function useJobRequests() {
   return {
     pendingJobs,
     activeJobs,
+    allJobs,
     loading,
     acceptJob,
     rejectJob,
+    updateJobStatus,
     startJob,
     completeJob,
     refreshJobs: fetchJobs,

@@ -3,16 +3,50 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Calendar, MapPin, Package, Clock, CheckCircle, AlertCircle, FileText, Phone, MessageCircle, DollarSign } from 'lucide-react';
+import { Calendar, MapPin, Package, Clock, CheckCircle, AlertCircle, FileText, Phone, MessageCircle, DollarSign, Play, Navigation } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useJobRequests } from '@/hooks/useJobRequests';
 import { db } from '@/lib/db';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 
 const WorkerJobsPage = () => {
   const { user, profile } = useAuth();
+  const { startJob } = useJobRequests();
   const [jobs, setJobs] = useState<any[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('all');
   const [loading, setLoading] = useState(true);
+
+  // OTP State
+  const [otpDialogOpen, setOtpDialogOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [otp, setOtp] = useState('');
+
+  const handleStartJob = (jobId: string) => {
+    setSelectedJobId(jobId);
+    setOtpDialogOpen(true);
+  };
+
+  const handleVerifyOTP = async () => {
+    if (!selectedJobId) return;
+    const result = await startJob(selectedJobId, otp);
+    if (!result.error) {
+      setOtpDialogOpen(false);
+      setOtp('');
+      setSelectedJobId(null);
+      fetchJobs(); // Refresh list
+    }
+  };
 
   useEffect(() => {
     if (user && profile?.role === 'worker') {
@@ -26,44 +60,24 @@ const WorkerJobsPage = () => {
     try {
       setLoading(true);
       
-      // Fetch worker profile to get worker ID
-      const { data: workerProfile, error: profileError } = await db
-        .collection('worker_profiles')
-        .select('id')
-        .eq('user_id', user.id || user._id)
-        .single();
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      
+      // Fetch all bookings for this worker via API
+      const res = await fetch(`${API_BASE}/api/bookings?worker_user_id=${user.id || user._id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      if (!workerProfile || profileError) {
-        console.error('Error fetching worker profile:', profileError);
-        setLoading(false);
-        return;
+      if (!res.ok) {
+        throw new Error('Failed to fetch jobs');
       }
 
-      // Fetch all bookings for this worker
-      const { data: jobsData, error: jobsError } = await db
-        .collection('bookings')
-        .select(`
-          id,
-          service_id,
-          customer_id,
-          status,
-          scheduled_date,
-          scheduled_time,
-          total_amount,
-          address,
-          services (name, description),
-          customers (full_name, phone, email)
-        `)
-        .eq('worker_id', workerProfile.id)
-        .order('scheduled_date', { ascending: true })
-        .order('scheduled_time', { ascending: true });
-
-      if (jobsError) {
-        console.error('Error fetching jobs:', jobsError);
-      } else {
-        setJobs(jobsData || []);
-        setFilteredJobs(jobsData || []);
+      let jobsData = await res.json();
+      if (Array.isArray(jobsData)) {
+        jobsData = jobsData.map((j: any) => ({ ...j, id: j.id || j._id }));
       }
+      setJobs(jobsData || []);
+      setFilteredJobs(jobsData || []);
     } catch (error) {
       console.error('Error fetching jobs:', error);
     } finally {
@@ -112,11 +126,20 @@ const WorkerJobsPage = () => {
     try {
       if (!user) return;
 
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+
       // Update job status based on action
       let newStatus = '';
       switch (action) {
         case 'accept':
           newStatus = 'accepted';
+          break;
+        case 'arriving':
+          newStatus = 'arriving';
+          break;
+        case 'otp_verify':
+          newStatus = 'otp_verify';
           break;
         case 'start':
           newStatus = 'in_progress';
@@ -131,14 +154,17 @@ const WorkerJobsPage = () => {
           return;
       }
 
-      const { error } = await db
-        .collection('bookings')
-        .update({ status: newStatus })
-        .eq('id', jobId);
+      const res = await fetch(`${API_BASE}/api/bookings/${jobId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
 
-      if (error) {
-        console.error('Error updating job status:', error);
-        return;
+      if (!res.ok) {
+        throw new Error('Error updating job status');
       }
 
       // Refresh jobs
@@ -182,21 +208,21 @@ const WorkerJobsPage = () => {
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              <h3 className="font-bold text-lg">{job.services?.name || 'Service'}</h3>
+                              <h3 className="font-bold text-lg">{job.serviceName || job.services?.name || 'Service'}</h3>
                               <Badge className={getStatusColor(job.status)}>
                                 {job.status.replace('_', ' ')}
                               </Badge>
                             </div>
-                            <p className="text-gray-600 mb-1">{job.services?.description || 'Service description'}</p>
+                            <p className="text-gray-600 mb-1">{job.description || job.services?.description || 'Service description'}</p>
                             
                             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
                               <div className="flex items-center gap-1">
                                 <Calendar className="h-4 w-4" />
-                                <span>{new Date(job.scheduled_date).toLocaleDateString()}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleDateString() : 'Instant'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <Clock className="h-4 w-4" />
-                                <span>{job.scheduled_time}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'ASAP'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <MapPin className="h-4 w-4" />
@@ -204,13 +230,13 @@ const WorkerJobsPage = () => {
                               </div>
                               <div className="flex items-center gap-1">
                                 <DollarSign className="h-4 w-4" />
-                                <span>₹{job.total_amount}</span>
+                                <span>₹{job.total_amount || job.amount}</span>
                               </div>
                             </div>
 
                             <div className="mt-2">
-                              <p className="text-sm font-medium">Customer: {job.customers?.full_name || 'N/A'}</p>
-                              <p className="text-sm text-gray-500">Contact: {job.customers?.phone || 'N/A'}</p>
+                              <p className="text-sm font-medium">Customer: {job.customerName || job.customers?.full_name || 'N/A'}</p>
+                              <p className="text-sm text-gray-500">Contact: {job.customerPhone || job.customers?.phone || 'N/A'}</p>
                             </div>
                           </div>
 
@@ -235,21 +261,45 @@ const WorkerJobsPage = () => {
                             {job.status === 'accepted' && (
                               <Button 
                                 size="sm" 
-                                onClick={() => handleJobAction(job.id, 'start')}
+                                className="bg-blue-600 hover:bg-blue-700"
+                                onClick={() => handleJobAction(job.id, 'arriving')}
                               >
-                                Start Job
+                                <Navigation className="h-4 w-4 mr-2" />
+                                On the Way
+                              </Button>
+                            )}
+                            {job.status === 'arriving' && (
+                              <Button 
+                                size="sm" 
+                                className="bg-amber-600 hover:bg-amber-700"
+                                onClick={() => handleJobAction(job.id, 'otp_verify')}
+                              >
+                                <MapPin className="h-4 w-4 mr-2" />
+                                Arrived
+                              </Button>
+                            )}
+                            {job.status === 'otp_verify' && (
+                              <Button 
+                                size="sm" 
+                                className="bg-blue-600 hover:bg-blue-700"
+                                onClick={() => handleStartJob(job.id)}
+                              >
+                                <Play className="h-4 w-4 mr-2" />
+                                Enter OTP
                               </Button>
                             )}
                             {job.status === 'in_progress' && (
                               <Button 
                                 size="sm" 
+                                className="bg-green-600 hover:bg-green-700"
                                 onClick={() => handleJobAction(job.id, 'complete')}
                               >
+                                <CheckCircle className="h-4 w-4 mr-2" />
                                 Mark Complete
                               </Button>
                             )}
                             <div className="flex gap-2 pt-2">
-                              <Button size="sm" variant="outline" className="flex-1">
+                              <Button size="sm" variant="outline" className="flex-1" onClick={() => window.open(`tel:${job.customers?.phone || job.customerPhone}`, '_self')}>
                                 <Phone className="h-4 w-4 mr-1" />
                                 Call
                               </Button>
@@ -294,21 +344,21 @@ const WorkerJobsPage = () => {
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              <h3 className="font-bold text-lg">{job.services?.name || 'Service'}</h3>
+                              <h3 className="font-bold text-lg">{job.serviceName || job.services?.name || 'Service'}</h3>
                               <Badge className={getStatusColor(job.status)}>
                                 {job.status.replace('_', ' ')}
                               </Badge>
                             </div>
-                            <p className="text-gray-600 mb-1">{job.services?.description || 'Service description'}</p>
+                            <p className="text-gray-600 mb-1">{job.description || job.services?.description || 'Service description'}</p>
                             
                             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
                               <div className="flex items-center gap-1">
                                 <Calendar className="h-4 w-4" />
-                                <span>{new Date(job.scheduled_date).toLocaleDateString()}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleDateString() : 'Instant'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <Clock className="h-4 w-4" />
-                                <span>{job.scheduled_time}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'ASAP'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <MapPin className="h-4 w-4" />
@@ -316,13 +366,13 @@ const WorkerJobsPage = () => {
                               </div>
                               <div className="flex items-center gap-1">
                                 <DollarSign className="h-4 w-4" />
-                                <span>₹{job.total_amount}</span>
+                                <span>₹{job.total_amount || job.amount}</span>
                               </div>
                             </div>
 
                             <div className="mt-2">
-                              <p className="text-sm font-medium">Customer: {job.customers?.full_name || 'N/A'}</p>
-                              <p className="text-sm text-gray-500">Contact: {job.customers?.phone || 'N/A'}</p>
+                              <p className="text-sm font-medium">Customer: {job.customerName || job.customers?.full_name || 'N/A'}</p>
+                              <p className="text-sm text-gray-500">Contact: {job.customerPhone || job.customers?.phone || 'N/A'}</p>
                             </div>
                           </div>
 
@@ -398,21 +448,21 @@ const WorkerJobsPage = () => {
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              <h3 className="font-bold text-lg">{job.services?.name || 'Service'}</h3>
+                              <h3 className="font-bold text-lg">{job.serviceName || job.services?.name || 'Service'}</h3>
                               <Badge className={getStatusColor(job.status)}>
                                 {job.status.replace('_', ' ')}
                               </Badge>
                             </div>
-                            <p className="text-gray-600 mb-1">{job.services?.description || 'Service description'}</p>
+                            <p className="text-gray-600 mb-1">{job.description || job.services?.description || 'Service description'}</p>
                             
                             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
                               <div className="flex items-center gap-1">
                                 <Calendar className="h-4 w-4" />
-                                <span>{new Date(job.scheduled_date).toLocaleDateString()}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleDateString() : 'Instant'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <Clock className="h-4 w-4" />
-                                <span>{job.scheduled_time}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'ASAP'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <MapPin className="h-4 w-4" />
@@ -420,13 +470,13 @@ const WorkerJobsPage = () => {
                               </div>
                               <div className="flex items-center gap-1">
                                 <DollarSign className="h-4 w-4" />
-                                <span>₹{job.total_amount}</span>
+                                <span>₹{job.total_amount || job.amount}</span>
                               </div>
                             </div>
 
                             <div className="mt-2">
-                              <p className="text-sm font-medium">Customer: {job.customers?.full_name || 'N/A'}</p>
-                              <p className="text-sm text-gray-500">Contact: {job.customers?.phone || 'N/A'}</p>
+                              <p className="text-sm font-medium">Customer: {job.customerName || job.customers?.full_name || 'N/A'}</p>
+                              <p className="text-sm text-gray-500">Contact: {job.customerPhone || job.customers?.phone || 'N/A'}</p>
                             </div>
                           </div>
 
@@ -475,21 +525,21 @@ const WorkerJobsPage = () => {
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              <h3 className="font-bold text-lg">{job.services?.name || 'Service'}</h3>
+                              <h3 className="font-bold text-lg">{job.serviceName || job.services?.name || 'Service'}</h3>
                               <Badge className={getStatusColor(job.status)}>
                                 {job.status.replace('_', ' ')}
                               </Badge>
                             </div>
-                            <p className="text-gray-600 mb-1">{job.services?.description || 'Service description'}</p>
+                            <p className="text-gray-600 mb-1">{job.description || job.services?.description || 'Service description'}</p>
                             
                             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500">
                               <div className="flex items-center gap-1">
                                 <Calendar className="h-4 w-4" />
-                                <span>{new Date(job.scheduled_date).toLocaleDateString()}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleDateString() : 'Instant'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <Clock className="h-4 w-4" />
-                                <span>{job.scheduled_time}</span>
+                                <span>{job.scheduled_at ? new Date(job.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'ASAP'}</span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <MapPin className="h-4 w-4" />
@@ -497,13 +547,13 @@ const WorkerJobsPage = () => {
                               </div>
                               <div className="flex items-center gap-1">
                                 <DollarSign className="h-4 w-4" />
-                                <span>₹{job.total_amount}</span>
+                                <span>₹{job.total_amount || job.amount}</span>
                               </div>
                             </div>
 
                             <div className="mt-2">
-                              <p className="text-sm font-medium">Customer: {job.customers?.full_name || 'N/A'}</p>
-                              <p className="text-sm text-gray-500">Contact: {job.customers?.phone || 'N/A'}</p>
+                              <p className="text-sm font-medium">Customer: {job.customerName || job.customers?.full_name || 'N/A'}</p>
+                              <p className="text-sm text-gray-500">Contact: {job.customerPhone || job.customers?.phone || 'N/A'}</p>
                             </div>
                           </div>
 
@@ -564,6 +614,39 @@ const WorkerJobsPage = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enter Customer OTP</DialogTitle>
+            <DialogDescription>
+              Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="otp">OTP Code</Label>
+              <Input
+                id="otp"
+                type="text"
+                placeholder="Enter 4-digit OTP"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                maxLength={4}
+                className="text-center text-2xl tracking-widest h-14"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
+              Verify & Start
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

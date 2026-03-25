@@ -43,6 +43,8 @@ export const createBooking = async (req, res) => {
       customerPhone,
       bookingType,       // 'instant' | 'scheduled' | 'emergency'
       description,
+      customer_lat,
+      customer_lng,
     } = req.body;
 
     if (!serviceName || !customer_user_id) {
@@ -66,6 +68,9 @@ export const createBooking = async (req, res) => {
       customerPhone: customerPhone || null,
       bookingType: bookingType || 'instant',
       description: description || null,
+      customer_lat: customer_lat || null,
+      customer_lng: customer_lng || null,
+      otp_start: Math.floor(1000 + Math.random() * 9000).toString(),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -347,6 +352,16 @@ export const updateBooking = async (req, res) => {
     const objId = toObjectId(id);
     if (!objId) return res.status(400).json({ message: 'Invalid id' });
 
+    const existing = await Booking.collection().findOne({ _id: objId });
+    if (!existing) return res.status(404).json({ message: 'Not found' });
+
+    // Validate OTP if status is changing to in_progress
+    if (updates.status === 'in_progress') {
+      if (existing.otp_start !== updates.otp) {
+        return res.status(400).json({ message: 'Invalid OTP' });
+      }
+    }
+
     if (updates.service) updates.service = toObjectId(updates.service) || updates.service;
     if (updates.customer) updates.customer = toObjectId(updates.customer) || updates.customer;
     if (updates.worker) updates.worker = toObjectId(updates.worker) || updates.worker;
@@ -357,6 +372,18 @@ export const updateBooking = async (req, res) => {
 
     const pipeline = [{ $match: { _id: objId } }, ...buildPopulatePipeline()];
     const updated = await Booking.collection().aggregate(pipeline).next();
+
+    // ── Emit booking_updated to customer's socket room ────────────────────
+    // Since we brought in `getIO()` in booking.controller.js, we can emit state changes securely.
+    const io = getIO();
+    if (io && updated && updated.customer_user_id) {
+      io.to(updated.customer_user_id.toString()).emit('booking_updated', {
+        bookingId: id,
+        status: updated.status,
+        updatedAt: updated.updatedAt,
+      });
+    }
+
     res.json(updated);
   } catch (err) {
     console.error(err);

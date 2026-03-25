@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useServices } from '@/hooks/useServices';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useLocation as useAppLocation } from '@/contexts/LocationContext';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
@@ -64,13 +65,21 @@ export default function BookService() {
   const { user, profile } = useAuth();
   const { data: services } = useServices();
   const { t, language } = useLanguage();
+  const { location: appLocation } = useAppLocation();
   const { subscribeToBooking } = useNotifications();
   const { socket } = useSocket();
 
   const [step, setStep] = useState(1);
   const [bookingType, setBookingType] = useState<BookingType>('instant');
-  const [address, setAddress] = useState('');
+  const [address, setAddress] = useState(appLocation?.address || '');
   const [description, setDescription] = useState('');
+
+  // Sync address with appLocation when it's detected
+  useEffect(() => {
+    if (appLocation?.address && !address) {
+      setAddress(appLocation.address);
+    }
+  }, [appLocation, address]);
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
   const [loading, setLoading] = useState(false);
@@ -215,6 +224,8 @@ export default function BookService() {
         amount: priceDetails.total,
         bookingType: bookingType,
         description: description || selectedItem?.name || '',
+        customer_lat: selectedLocation?.lat || appLocation?.lat,
+        customer_lng: selectedLocation?.lng || appLocation?.lng,
         scheduled_at: bookingType === 'scheduled'
           ? `${scheduledDate}T${scheduledTime}:00`
           : null,
@@ -743,6 +754,7 @@ export default function BookService() {
             <LocationPicker
               onConfirm={(loc) => {
                 setAddress(loc.address);
+                setSelectedLocation({ lat: loc.lat, lng: loc.lng });
                 setShowMapPicker(false);
                 toast.success("Location updated!");
               }}

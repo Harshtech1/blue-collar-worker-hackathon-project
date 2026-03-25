@@ -49,6 +49,25 @@ export function initSocket(httpServer) {
       console.log(`👤 User ${userId} (${role || 'unknown'}) joined room | Total connected: ${connectedUsers.size}`);
     });
 
+    // ── Handle live location updates from workers ──────────────────────────
+    socket.on('location_update', (data) => {
+      const { userId, lat, lng, bookingId, customerId } = data;
+      if (!userId || !lat || !lng) return;
+
+      console.log(`📍 Location update from worker ${userId}: ${lat}, ${lng} | Booking: ${bookingId}`);
+
+      // Broadcast the update to the customer if customerId is provided
+      if (customerId) {
+        io.to(customerId.toString()).emit('worker_location_update', {
+          workerId: userId,
+          bookingId,
+          lat,
+          lng,
+          timestamp: new Date()
+        });
+      }
+    });
+
     socket.on('disconnect', () => {
       const userId = socket.data.userId;
       if (userId && connectedUsers.has(userId)) {

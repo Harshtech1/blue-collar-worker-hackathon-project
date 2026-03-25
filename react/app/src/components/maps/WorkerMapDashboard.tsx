@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { db } from '@/lib/db';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSocket } from '@/hooks/useSocket';
 // import type { Database } from '@/integrations/supabase/types';
 
 // Extend Leaflet to fix default icon issues
@@ -32,7 +33,8 @@ interface Job {
   id: string;
   category_id: string;
   customer_id: string;
-  status: 'pending' | 'matched' | 'accepted' | 'in_progress' | 'completed' | 'cancelled' | null;
+  customer_user_id: string;
+  status: 'pending' | 'matched' | 'accepted' | 'arriving' | 'otp_verify' | 'in_progress' | 'completed' | 'cancelled' | null;
   address: string;
   latitude: number | null;
   longitude: number | null;
@@ -50,6 +52,7 @@ interface WorkerLocation {
 
 export default function WorkerMapDashboard() {
   const { user, profile } = useAuth();
+  const { socket } = useSocket();
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const workerMarkerRef = useRef<L.Marker | null>(null);
@@ -82,7 +85,7 @@ export default function WorkerMapDashboard() {
       const { data: workerProfile, error: profileError } = await db
         .collection('worker_profiles')
         .select('id')
-        .eq('user_id', user.id)
+        .eq('user_id', user.id || (user as any)._id)
         .single();
 
       if (profileError) {
@@ -103,6 +106,7 @@ export default function WorkerMapDashboard() {
           longitude,
           scheduled_at,
           created_at,
+          customer_user_id,
           service_categories!inner(name),
           customer_profiles!inner(full_name, phone)
         `)
@@ -158,6 +162,17 @@ export default function WorkerMapDashboard() {
           };
           setCurrentLocation(location);
           updateWorkerMarker(location);
+
+          // Emit location update via socket if we have a selected job
+          if (socket && isTracking && selectedJob) {
+            socket.emit('location_update', {
+              userId: user.id || user._id,
+              lat: location.lat,
+              lng: location.lng,
+              bookingId: selectedJob.id,
+              customerId: selectedJob.customer_user_id
+            });
+          }
         },
         (error) => console.error('Watch position error:', error),
         { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
@@ -306,6 +321,32 @@ export default function WorkerMapDashboard() {
     }
   };
 
+  const updateBookingStatus = async (jobId: string, newStatus: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+      
+      const res = await fetch(`${API_URL}/bookings/${jobId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+
+      if (res.ok) {
+        // Update local state
+        setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: newStatus as any } : j));
+        if (selectedJob?.id === jobId) {
+          setSelectedJob({ ...selectedJob, status: newStatus as any });
+        }
+      }
+    } catch (err) {
+      console.error('Error updating booking status:', err);
+    }
+  };
+
   const handleJobSelect = (job: Job) => {
     setSelectedJob(job);
     calculateRoute(job);
@@ -444,14 +485,45 @@ export default function WorkerMapDashboard() {
                     
                     {selectedJob?.id === job.id && activeRoute && (
                       <div className="mt-3 pt-3 border-t">
-                        <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center justify-between text-sm mb-3">
                           <span>Distance: {activeRoute.distance} km</span>
                           <span>ETA: {activeRoute.eta} min</span>
                         </div>
-                        <Button className="w-full mt-2" size="sm">
-                          <Navigation className="h-4 w-4 mr-2" />
-                          Start Navigation
-                        </Button>
+                        
+                        {job.status === 'accepted' || job.status === 'matched' ? (
+                          <Button 
+                            className="w-full bg-blue-600 hover:bg-blue-700" 
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateBookingStatus(job.id, 'arriving');
+                            }}
+                          >
+                            <Navigation className="h-4 w-4 mr-2" />
+                            Start Heading to Customer
+                          </Button>
+                        ) : job.status === 'arriving' ? (
+                          <Button 
+                            className="w-full bg-amber-600 hover:bg-amber-700 text-white" 
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateBookingStatus(job.id, 'otp_verify');
+                            }}
+                          >
+                            <MapPin className="h-4 w-4 mr-2" />
+                            I Have Arrived
+                          </Button>
+                        ) : job.status === 'otp_verify' ? (
+                          <div className="text-xs text-center p-2 bg-amber-50 text-amber-700 rounded border border-amber-200">
+                            Waiting for customer to provide OTP
+                          </div>
+                        ) : (
+                          <Button className="w-full" size="sm" variant="outline" disabled>
+                            <Clock className="h-4 w-4 mr-2" />
+                            Status: {job.status?.replace('_', ' ')}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </motion.div>

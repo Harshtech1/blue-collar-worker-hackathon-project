@@ -21,7 +21,8 @@ const WorkerEarningsPage = () => {
     total: 0,
     commissionRate: 0.15, // 15% commission
     insuranceFee: 0,
-    platformFee: 0
+    platformFee: 0,
+    completedCount: 0
   });
   
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -40,95 +41,48 @@ const WorkerEarningsPage = () => {
     try {
       setLoading(true);
 
-      // Fetch worker profile to get worker ID
-      const { data: workerProfile, error: profileError } = await db
-        .collection('worker_profiles')
-        .select('id')
-        .eq('user_id', user.id)
-        .single();
+      const token = localStorage.getItem('token');
+      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      
+      // Fetch all bookings for this worker via API
+      const res = await fetch(`${API_BASE}/api/bookings?worker_user_id=${user.id || (user as any)._id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-      if (!workerProfile || profileError) {
-        console.error('Error fetching worker profile:', profileError);
-        setLoading(false);
-        return;
+      if (!res.ok) {
+        throw new Error('Failed to fetch jobs for earnings');
       }
+
+      let allJobs = await res.json();
+      if (Array.isArray(allJobs)) {
+        allJobs = allJobs.map((j: any) => ({ ...j, id: j.id || j._id }));
+      }
+      
+      // Filter jobs by status
+      const completedJobs = allJobs.filter((j: any) => j.status === 'completed' || j.paymentStatus === 'paid');
+      const activeJobs = allJobs.filter((j: any) => ['pending', 'confirmed', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status) && j.paymentStatus !== 'paid');
 
       // Get today's date
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date().toDateString();
       const startOfWeek = new Date();
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay()); // Start of week (Sunday)
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
       const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
       
-      // Fetch today's completed jobs
-      const { data: todayJobs, error: todayError } = await db
-        .collection('bookings')
-        .select('total_price')
-        .eq('worker_id', workerProfile.id)
-        .eq('status', 'completed')
-        .gte('updated_at', `${today}T00:00:00`)
-        .lte('updated_at', `${today}T23:59:59`);
-
-      if (todayError) {
-        console.error('Error fetching today jobs:', todayError);
-      }
-
-      // Fetch weekly completed jobs
-      const { data: weeklyJobs, error: weeklyError } = await db
-        .collection('bookings')
-        .select('total_price')
-        .eq('worker_id', workerProfile.id)
-        .eq('status', 'completed')
-        .gte('updated_at', startOfWeek.toISOString());
-
-      if (weeklyError) {
-        console.error('Error fetching weekly jobs:', weeklyError);
-      }
-
-      // Fetch monthly completed jobs
-      const { data: monthlyJobs, error: monthlyError } = await db
-        .collection('bookings')
-        .select('total_price')
-        .eq('worker_id', workerProfile.id)
-        .eq('status', 'completed')
-        .gte('updated_at', startOfMonth.toISOString());
-
-      if (monthlyError) {
-        console.error('Error fetching monthly jobs:', monthlyError);
-      }
-
-      // Fetch all completed jobs for total earnings
-      const { data: totalJobs, error: totalError } = await db
-        .collection('bookings')
-        .select('total_price')
-        .eq('worker_id', workerProfile.id)
-        .eq('status', 'completed');
-
-      if (totalError) {
-        console.error('Error fetching total jobs:', totalError);
-      }
-
-      // Calculate projected earnings for today (based on pending/in-progress jobs)
-      const { data: projectedJobs, error: projectedError } = await db
-        .collection('bookings')
-        .select('total_price')
-        .eq('worker_id', workerProfile.id)
-        .in('status', ['pending', 'accepted', 'in_progress']);
-
-      if (projectedError) {
-        console.error('Error fetching projected jobs:', projectedError);
-      }
+      const todayCompleted = completedJobs.filter((j: any) => new Date(j.updatedAt || j.completed_at || j.created_at).toDateString() === today);
+      const weeklyCompleted = completedJobs.filter((j: any) => new Date(j.updatedAt || j.completed_at || j.created_at) >= startOfWeek);
+      const monthlyCompleted = completedJobs.filter((j: any) => new Date(j.updatedAt || j.completed_at || j.created_at) >= startOfMonth);
 
       // Calculate earnings
-      const todayEarnings = todayJobs?.reduce((sum: number, job: any) => sum + (job.total_price || 0), 0) || 0;
-      const weeklyEarnings = weeklyJobs?.reduce((sum: number, job: any) => sum + (job.total_price || 0), 0) || 0;
-      const monthlyEarnings = monthlyJobs?.reduce((sum: number, job: any) => sum + (job.total_price || 0), 0) || 0;
-      const totalEarnings = totalJobs?.reduce((sum: number, job: any) => sum + (job.total_price || 0), 0) || 0;
-      const projectedToday = projectedJobs?.reduce((sum: number, job: any) => sum + (job.total_price || 0), 0) || 0;
+      const todayEarnings = todayCompleted.reduce((sum: number, job: any) => sum + (job.worker_earning || job.total_price || 0), 0);
+      const weeklyEarnings = weeklyCompleted.reduce((sum: number, job: any) => sum + (job.worker_earning || job.total_price || 0), 0);
+      const monthlyEarnings = monthlyCompleted.reduce((sum: number, job: any) => sum + (job.worker_earning || job.total_price || 0), 0);
+      const totalEarnings = completedJobs.reduce((sum: number, job: any) => sum + (job.worker_earning || job.total_price || 0), 0);
+      const projectedToday = activeJobs.reduce((sum: number, job: any) => sum + (job.worker_earning || job.total_price || 0), 0);
 
-      // Calculate fees (assuming 15% commission and some insurance fee)
-      const commission = totalEarnings * 0.15;
-      const insuranceFee = totalEarnings * 0.02; // 2% insurance fee
-      const platformFee = totalEarnings * 0.03; // 3% platform fee
+      // Calculate fees
+      const commissionRate = 0.15;
+      const insuranceFee = totalEarnings * 0.02;
+      const platformFee = totalEarnings * 0.03;
 
       setEarningsData({
         today: todayEarnings,
@@ -136,45 +90,28 @@ const WorkerEarningsPage = () => {
         weekly: weeklyEarnings,
         monthly: monthlyEarnings,
         total: totalEarnings,
-        commissionRate: 0.15,
+        commissionRate,
         insuranceFee,
-        platformFee
+        platformFee,
+        completedCount: completedJobs.length
       });
 
-      // Fetch transactions (completed jobs)
-      const { data: transactionData, error: transactionError } = await db
-        .collection('bookings')
-        .select(`
-          id,
-          total_price,
-          status,
-          updated_at,
-          services (name)
-        `)
-        .eq('worker_id', workerProfile.id)
-        .eq('status', 'completed')
-        .order('updated_at', { ascending: false })
-        .limit(10);
+      // Transactions (completed jobs)
+      setTransactions(completedJobs.slice(0, 10));
 
-      if (transactionError) {
-        console.error('Error fetching transactions:', transactionError);
-      } else {
-        setTransactions(transactionData || []);
+      // Fetch payout history (if API exists, else mock for now)
+      try {
+        const payoutRes = await fetch(`${API_BASE}/api/payouts`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (payoutRes.ok) {
+          const payoutData = await payoutRes.json();
+          setPayouts(payoutData || []);
+        }
+      } catch (e) {
+        console.warn('Payouts API not available yet');
       }
-
-      // Fetch payout history
-      const { data: payoutData, error: payoutError } = await db
-        .collection('payouts')
-        .select('*')
-        .eq('worker_id', workerProfile.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (payoutError) {
-        console.error('Error fetching payouts:', payoutError);
-      } else {
-        setPayouts(payoutData || []);
-      }
+      
     } catch (error) {
       console.error('Error fetching earnings data:', error);
     } finally {
@@ -377,14 +314,14 @@ const WorkerEarningsPage = () => {
               
               <div className="flex justify-between items-center">
                 <span>Jobs Completed</span>
-                <span className="font-medium">0</span>
+                <span className="font-medium">{earningsData.completedCount}</span>
               </div>
               
               <div className="flex justify-between items-center">
                 <span>Avg. Earning/Job</span>
                 <span className="font-medium">
                   <IndianRupee className="h-3 w-3 inline" />
-                  {earningsData.total > 0 ? (earningsData.total / 0).toFixed(2) : '0.00'}
+                  {earningsData.completedCount > 0 ? (earningsData.total / earningsData.completedCount).toFixed(2) : '0.00'}
                 </span>
               </div>
               
@@ -445,8 +382,8 @@ const WorkerEarningsPage = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {transactions.map((transaction) => (
-                      <TableRow key={transaction.id}>
+                    {transactions.map((transaction, index) => (
+                      <TableRow key={transaction.id || transaction._id || index}>
                         <TableCell className="font-medium">
                           {transaction.services?.name || 'Service'}
                         </TableCell>
@@ -501,8 +438,8 @@ const WorkerEarningsPage = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {payouts.map((payout) => (
-                      <TableRow key={payout.id}>
+                    {payouts.map((payout, index) => (
+                      <TableRow key={payout.id || payout._id || index}>
                         <TableCell>
                           {new Date(payout.created_at).toLocaleDateString()}
                         </TableCell>

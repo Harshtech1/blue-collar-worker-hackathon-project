@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage, languageOptions, Language } from '@/contexts/LanguageContext';
+import { useLocation as useAppLocation } from '@/contexts/LocationContext';
 import { NotificationBell } from '@/components/NotificationBell';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -24,6 +25,7 @@ export function Header() {
   const [isScrolled, setIsScrolled] = useState(false);
   const { user, profile, signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
+  const { location: appLocation, detectLocation, loading: locationLoading } = useAppLocation();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -113,9 +115,15 @@ export function Header() {
         <div className="flex items-center gap-3">
 
           {/* Location Picker - Hidden on very small screens */}
-          <button className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white/50 hover:bg-white hover:border-primary/30 transition-all duration-300 text-sm font-bold text-slate-600">
-            <MapPin className="h-4 w-4 text-primary" />
-            <span className="max-w-[100px] truncate text-xs">New Delhi, DL</span>
+          <button 
+            onClick={() => detectLocation()}
+            disabled={locationLoading}
+            className="hidden sm:flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-white/50 hover:bg-white hover:border-primary/30 transition-all duration-300 text-sm font-bold text-slate-600"
+          >
+            <MapPin className={cn("h-4 w-4 text-primary", locationLoading && "animate-bounce")} />
+            <span className="max-w-[100px] truncate text-xs">
+              {locationLoading ? 'Detecting...' : appLocation?.city || 'Set Location'}
+            </span>
             <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
           </button>
 
@@ -221,12 +229,20 @@ export function Header() {
                   <div className="h-px bg-slate-100" />
 
                   <div className="space-y-4">
-                    <button className="w-full flex items-center justify-between p-4 rounded-2xl bg-slate-50">
-                      <div className="flex items-center gap-3">
-                        <MapPin className="h-5 w-5 text-primary" />
-                        <div className="text-left">
-                          <p className="text-sm font-bold text-slate-800">Your Location</p>
-                          <p className="text-xs text-slate-500">New Delhi, Delhi</p>
+                    <button 
+                      onClick={() => detectLocation()}
+                      disabled={locationLoading}
+                      className="w-full flex items-center justify-between p-4 rounded-2xl bg-slate-50 hover:bg-slate-100 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 text-left">
+                        <MapPin className={cn("h-5 w-5 text-primary", locationLoading && "animate-bounce")} />
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">
+                            {locationLoading ? 'Detecting Location...' : 'Your Location'}
+                          </p>
+                          <p className="text-xs text-slate-500 truncate max-w-[200px]">
+                            {appLocation?.address || 'Tap to detect location'}
+                          </p>
                         </div>
                       </div>
                       <ChevronDown className="h-4 w-4 text-slate-400" />
