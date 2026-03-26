@@ -31,19 +31,11 @@ interface OverviewProps {
   stats: any;
   loading: boolean;
   setActiveTab: (tab: AdminTab) => void;
+  chartData?: any[];
+  activities?: any[];
 }
 
-const dummyChartData = [
-  { name: 'Mon', bookings: 4, revenue: 1200 },
-  { name: 'Tue', bookings: 7, revenue: 2100 },
-  { name: 'Wed', bookings: 5, revenue: 1500 },
-  { name: 'Thu', bookings: 8, revenue: 2400 },
-  { name: 'Fri', bookings: 12, revenue: 3600 },
-  { name: 'Sat', bookings: 15, revenue: 4500 },
-  { name: 'Sun', bookings: 10, revenue: 3000 },
-];
-
-export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActiveTab }) => {
+export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActiveTab, chartData = [], activities = [] }) => {
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-6 duration-700 ease-out">
       {/* Premium Metric Cards - Bento Style */}
@@ -176,7 +168,7 @@ export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActive
           <CardContent className="pt-10 px-8 pb-8">
             <div className="h-[320px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={dummyChartData}>
+                <AreaChart data={chartData.length ? chartData : [{name:'', bookings:0}]}>
                   <defs>
                     <linearGradient id="colorBookingsMaster" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
@@ -229,7 +221,7 @@ export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActive
           <CardContent className="pt-10 px-8 pb-8">
             <div className="h-[320px] w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dummyChartData}>
+                <BarChart data={chartData.length ? chartData : [{name:'', revenue:0}]}>
                   <XAxis 
                     dataKey="name" 
                     axisLine={false} 
@@ -247,10 +239,10 @@ export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActive
                     contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)', background: '#fff'}}
                   />
                   <Bar dataKey="revenue" radius={[10, 10, 0, 0]}>
-                    {dummyChartData.map((entry, index) => (
+                    {(chartData.length ? chartData : [{name:''}]).map((entry, index) => (
                       <Cell 
                         key={`cell-${index}`} 
-                        fill={index === dummyChartData.length - 1 ? '#4f46e5' : '#e2e8f0'} 
+                        fill={index === (chartData.length || 1) - 1 ? '#4f46e5' : '#e2e8f0'} 
                         className="transition-all duration-300 hover:fill-indigo-500"
                       />
                     ))}
@@ -278,12 +270,7 @@ export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActive
           </CardHeader>
           <CardContent className="p-0 bg-white">
             <div className="divide-y divide-slate-50">
-              {[
-                { type: 'booking', msg: 'New Electrician matched for Sector 42', time: '1m ago', role: 'Worker Found' },
-                { type: 'security', msg: 'System check: DB Load within normal limits', time: '4m ago', role: 'Security' },
-                { type: 'finance', msg: 'Payout of ₹4,200 initiated for Worker #22', time: '12m ago', role: 'Finance' },
-                { type: 'user', msg: 'New User Onboarded: Amit V.', time: '18m ago', role: 'Growth' },
-              ].map((activity, idx) => (
+              {activities.length > 0 ? activities.map((activity, idx) => (
                 <div key={idx} className="flex items-center gap-6 p-6 hover:bg-slate-50/50 transition-all cursor-default group">
                   <div className={cn(
                     "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm transition-transform group-hover:scale-110",
@@ -303,7 +290,9 @@ export const OverviewTab: React.FC<OverviewProps> = ({ stats, loading, setActive
                   </div>
                   <ChevronRight size={16} className="text-slate-300 transition-transform group-hover:translate-x-1" />
                 </div>
-              ))}
+              )) : (
+                <div className="p-6 text-sm text-slate-500 text-center italic">No recent activities available. Waiting for data...</div>
+              )}
             </div>
           </CardContent>
           <div className="p-5 bg-slate-50 border-t border-slate-100 flex justify-center">

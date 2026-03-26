@@ -25,14 +25,41 @@ import {
 import { DataTable } from './DataTable';
 import { cn } from '@/lib/utils';
 
-const serviceData = [
-  { name: 'AC Service', value: 45000, color: '#f97316' },
-  { name: 'Electrical', value: 28000, color: '#6366f1' },
-  { name: 'Plumbing', value: 32000, color: '#22c55e' },
-  { name: 'Cleaning', value: 18000, color: '#06b6d4' },
-];
+interface FinanceTabProps {
+  revenue?: number;
+  bookings?: any[];
+}
 
-export const FinanceTab: React.FC = () => {
+export const FinanceTab: React.FC<FinanceTabProps> = ({ revenue = 0, bookings = [] }) => {
+  // Compute chart from real data
+  const completed = bookings.filter(b => b.status === "completed" && b.total_price);
+  
+  const aggregatedServices = completed.reduce((acc, b) => {
+    const sName = b.service || "Other";
+    if (!acc[sName]) acc[sName] = 0;
+    acc[sName] += Number(b.total_price);
+    return acc;
+  }, {});
+
+  const colors = ['#f97316', '#6366f1', '#22c55e', '#06b6d4', '#8b5cf6', '#ef4444'];
+  const serviceData = Object.keys(aggregatedServices).map((key, i) => ({
+    name: key,
+    value: aggregatedServices[key],
+    color: colors[i % colors.length]
+  }));
+
+  const transactionData = completed.slice(0, 10).map((b) => ({
+    id: b._id,
+    method: 'Platform Gateway',
+    amount: b.total_price,
+    type: 'settlement',
+    status: 'success'
+  }));
+
+  const commission = revenue * 0.08;
+  const pendingPayouts = bookings.filter(b => b.status === 'in_progress').reduce((sum, b) => sum + (Number(b.total_price) || 0), 0);
+  const avgTicket = completed.length > 0 ? revenue / completed.length : 0;
+
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -43,9 +70,9 @@ export const FinanceTab: React.FC = () => {
               </CardTitle>
            </CardHeader>
            <CardContent>
-              <div className="text-3xl font-black">₹4,82,900</div>
+              <div className="text-3xl font-black">₹{revenue.toLocaleString()}</div>
               <div className="flex items-center gap-1 text-[10px] font-bold mt-2 bg-white/20 w-fit px-2 py-0.5 rounded-full">
-                 <TrendingUp size={10} /> +24% vs Prev Month
+                 <TrendingUp size={10} /> +Live Updated
               </div>
            </CardContent>
         </Card>
@@ -57,7 +84,7 @@ export const FinanceTab: React.FC = () => {
               </CardTitle>
            </CardHeader>
            <CardContent>
-              <div className="text-3xl font-black text-slate-900">₹38,632</div>
+              <div className="text-3xl font-black text-slate-900">₹{commission.toLocaleString()}</div>
               <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Net Platform Earnings</p>
            </CardContent>
         </Card>
@@ -69,7 +96,7 @@ export const FinanceTab: React.FC = () => {
               </CardTitle>
            </CardHeader>
            <CardContent>
-              <div className="text-3xl font-black text-slate-900">₹12,450</div>
+              <div className="text-3xl font-black text-slate-900">₹{pendingPayouts.toLocaleString()}</div>
               <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-tighter">Settlement in progress</p>
            </CardContent>
         </Card>
@@ -81,7 +108,7 @@ export const FinanceTab: React.FC = () => {
               </CardTitle>
            </CardHeader>
            <CardContent>
-              <div className="text-3xl font-black text-slate-900">₹1,248</div>
+              <div className="text-3xl font-black text-slate-900">₹{Math.round(avgTicket).toLocaleString()}</div>
               <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Across all services</p>
            </CardContent>
         </Card>
@@ -180,11 +207,8 @@ export const FinanceTab: React.FC = () => {
            { key: 'type', label: 'Type', render: (val) => <span className={cn("px-2 py-0.5 rounded text-[10px] font-black uppercase", val === 'payout' ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700")}>{val}</span> },
            { key: 'status', label: 'Status', render: (val) => <span className="text-green-600 font-bold uppercase text-[10px]">{val}</span> }
         ]}
-        data={[
+        data={transactionData.length > 0 ? transactionData : [
            { id: 'TXN-9281', method: 'UPI (PhonePe)', amount: 1200, type: 'settlement', status: 'success' },
-           { id: 'TXN-9282', method: 'Credit Card', amount: 4500, type: 'settlement', status: 'success' },
-           { id: 'TXN-9283', method: 'Bank Transfer', amount: 8000, type: 'payout', status: 'success' },
-           { id: 'TXN-9284', method: 'UPI (GPay)', amount: 650, type: 'settlement', status: 'success' },
         ]}
       />
     </div>

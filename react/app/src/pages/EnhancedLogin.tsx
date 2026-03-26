@@ -73,6 +73,12 @@ export default function EnhancedLogin() {
           toast.info("OTP sent to your email!");
         } else {
           // Standard login (token received)
+          if (data.role === 'admin') {
+            localStorage.setItem('adminToken', data.token);
+            // AdminDashboard checks for 'adminToken'
+            window.location.href = "/admin-portal-2026";
+            return;
+          }
           localStorage.setItem('token', data.token);
           // Reload to sync context
           window.location.reload();

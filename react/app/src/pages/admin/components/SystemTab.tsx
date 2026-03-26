@@ -14,12 +14,12 @@ import { cn } from '@/lib/utils';
 
 export const SystemTab: React.FC = () => {
   const services = [
-    { name: 'Core API Gateway', status: 'healthy', latency: '24ms', uptime: '99.99%' },
-    { name: 'Supabase Database', status: 'healthy', latency: '12ms', uptime: '100%' },
-    { name: 'Voice AI Engine (ElevenLabs)', status: 'healthy', latency: '420ms', uptime: '99.95%' },
-    { name: 'LLM Reasoning (Groq)', status: 'warning', latency: '850ms', uptime: '99.80%' },
-    { name: 'Real-time WebSocket', status: 'healthy', latency: '5ms', uptime: '99.99%' },
-    { name: 'Static Assets (Vercel)', status: 'healthy', latency: '8ms', uptime: '100%' },
+    { name: 'Core API Gateway (Express)', status: 'healthy', latency: '24ms', uptime: '99.99%' },
+    { name: 'MongoDB Database Cluster', status: 'healthy', latency: '12ms', uptime: '100%' },
+    { name: 'Real-time WebSocket (Socket.io)', status: 'healthy', latency: '8ms', uptime: '99.95%' },
+    { name: 'Authentication Store (JWT)', status: 'healthy', latency: '18ms', uptime: '99.99%' },
+    { name: 'Image Handling (Cloudinary)', status: 'healthy', latency: '145ms', uptime: '99.90%' },
+    { name: 'Notification Service (SMTP)', status: 'healthy', latency: '85ms', uptime: '99.80%' },
   ];
 
   return (
@@ -32,8 +32,8 @@ export const SystemTab: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-slate-900">Vercel Edge</div>
-            <p className="text-xs font-bold text-green-600 mt-1">REGION: BOM1 (MUMBAI)</p>
+            <div className="text-2xl font-black text-slate-900">Node.js Engine</div>
+            <p className="text-xs font-bold text-green-600 mt-1">FRAMEWORK: EXPRESS</p>
           </CardContent>
         </Card>
         
@@ -44,8 +44,8 @@ export const SystemTab: React.FC = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-black text-slate-900">PostgreSQL 15</div>
-            <p className="text-xs font-bold text-blue-600 mt-1">64.2 MB / 500 MB (12%)</p>
+            <div className="text-2xl font-black text-slate-900">MongoDB Atlas</div>
+            <p className="text-xs font-bold text-blue-600 mt-1">NATIVE DRIVER • REPLICA SET</p>
           </CardContent>
         </Card>
 
@@ -57,7 +57,7 @@ export const SystemTab: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-black text-green-600">ENFORCED</div>
-            <p className="text-xs font-bold text-slate-500 mt-1">RLS ACTIVE • SSL ENABLED</p>
+            <p className="text-xs font-bold text-slate-500 mt-1">JWT AUTH • BCRYPT HASHING</p>
           </CardContent>
         </Card>
       </div>
@@ -117,15 +117,15 @@ export const SystemTab: React.FC = () => {
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-               <Cpu size={16} /> Edge Runtime Logs
+               <Cpu size={16} /> Server Runtime Logs
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
              <div className="bg-slate-900 rounded-lg p-4 font-mono text-[10px] text-green-400 space-y-1">
-                <p><span className="text-slate-500">[12:37:01]</span> <span className="text-blue-400">INFO:</span> Server initialized in region BOM1</p>
-                <p><span className="text-slate-500">[12:37:05]</span> <span className="text-blue-400">INFO:</span> Cache warmed for /services/catalog</p>
-                <p><span className="text-slate-500">[12:38:12]</span> <span className="text-blue-400">INFO:</span> DB Connection pool established (max: 20)</p>
-                <p><span className="text-slate-500">[12:40:02]</span> <span className="text-yellow-400">WARN:</span> ElevenLabs API took 1.2s for TTS request</p>
+                <p><span className="text-slate-500">[12:37:01]</span> <span className="text-blue-400">INFO:</span> Express Server initialized on PORT 5000</p>
+                <p><span className="text-slate-500">[12:37:05]</span> <span className="text-blue-400">INFO:</span> MongoDB Cluster connected successfully</p>
+                <p><span className="text-slate-500">[12:38:12]</span> <span className="text-blue-400">INFO:</span> Socket.io namespaces and handlers mounted</p>
+                <p><span className="text-slate-500">[12:40:02]</span> <span className="text-yellow-400">WARN:</span> SMTP service taking 1.2s for email dispatch</p>
              </div>
           </CardContent>
         </Card>

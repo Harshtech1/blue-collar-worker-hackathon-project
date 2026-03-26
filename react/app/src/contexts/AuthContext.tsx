@@ -116,6 +116,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Normal login (if 2FA disabled or handled otherwise)
       if (data.token) {
+        if (data.role === 'admin') {
+          localStorage.setItem('adminToken', data.token);
+          window.location.href = '/admin-portal-2026';
+          // Return early so we don't proceed with normal state sets
+          return { data, error: null };
+        }
+
         localStorage.setItem('token', data.token);
         setUser(data.user ? { ...data.user, id: data.user.id || data.user._id } : data.user);
         const userId = data.user?.id || data.user?._id;

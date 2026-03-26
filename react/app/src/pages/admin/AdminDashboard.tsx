@@ -22,6 +22,8 @@ interface Booking {
   customer?: string;
   total_price?: number | string;
   status?: "pending" | "matched" | "in_progress" | "completed";
+  createdAt?: string | Date;
+  date?: string | Date;
 }
 
 interface DashboardStats {
@@ -38,7 +40,7 @@ interface DashboardStats {
 /* ================= COMPONENT ================= */
 
 export default function AdminDashboard() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("adminToken"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
@@ -54,6 +56,13 @@ export default function AdminDashboard() {
     systemHealth: "healthy",
   });
 
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
+
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [workersList, setWorkersList] = useState<any[]>([]);
+  const [bookingsList, setBookingsList] = useState<Booking[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -67,6 +76,12 @@ export default function AdminDashboard() {
     if (token) {
       setIsAuthenticated(true);
       fetchDashboardData();
+      
+      // Fast polling every 5 seconds for real-time dashboard feel
+      const intervalId = setInterval(() => {
+        fetchDashboardData(true);
+      }, 5000);
+      return () => clearInterval(intervalId);
     } else {
       setLoading(false);
     }
@@ -106,8 +121,8 @@ export default function AdminDashboard() {
 
   /* ================= DATA FETCH ================= */
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  const fetchDashboardData = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     const token = localStorage.getItem("adminToken");
     const headers = { Authorization: `Bearer ${token}` } as HeadersInit;
     try {
@@ -120,6 +135,10 @@ export default function AdminDashboard() {
       const users = await usersRes.json();
       const bookings: Booking[] = await bookingsRes.json();
       const workers = await workersRes.json();
+      
+      setUsersList(Array.isArray(users) ? users : []);
+      setBookingsList(Array.isArray(bookings) ? bookings : []);
+      setWorkersList(Array.isArray(workers) ? workers : []);
 
       const completed = bookings.filter(b => b.status === "completed");
       const active = bookings.filter(
@@ -130,6 +149,53 @@ export default function AdminDashboard() {
         (sum, b) => sum + Number(b.total_price ?? 0),
         0
       );
+
+      // Generate Chart Data (Last 7 Days)
+      const last7Days = Array.from({length: 7}).map((_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (6 - i));
+        return {
+          name: d.toLocaleDateString('en-US', { weekday: 'short' }),
+          date: d.toDateString(),
+          bookings: 0,
+          revenue: 0
+        };
+      });
+
+      bookings.forEach(b => {
+        if (!b.createdAt && !b.date) return;
+        const bDate = new Date((b.createdAt || b.date) as string).toDateString();
+        const dayMatch = last7Days.find(d => d.date === bDate);
+        if (dayMatch) {
+          dayMatch.bookings++;
+          if (b.status === 'completed' && b.total_price) {
+            dayMatch.revenue += Number(b.total_price);
+          }
+        }
+      });
+      setChartData(last7Days);
+
+      // Generate Live Operations Log
+      const recentActivities: any[] = [];
+      const sortedBookings = [...bookings].sort((a: any, b: any) => new Date(b.createdAt||0).getTime() - new Date(a.createdAt||0).getTime()).slice(0, 3);
+      sortedBookings.forEach((b: any) => {
+        recentActivities.push({
+          type: 'booking',
+          msg: `Booking ${b.service || 'Service'} is ${b.status}`,
+          time: new Date(b.createdAt || Date.now()).toLocaleTimeString(),
+          role: 'Operations'
+        });
+      });
+      const sortedUsers = [...users].sort((a: any, b: any) => new Date(b.createdAt||0).getTime() - new Date(a.createdAt||0).getTime()).slice(0, 2);
+      sortedUsers.forEach((u: any) => {
+        recentActivities.push({
+          type: 'user',
+          msg: `New user joined: ${u.name || u.phone}`,
+          time: new Date(u.createdAt || Date.now()).toLocaleTimeString(),
+          role: 'Growth'
+        });
+      });
+      setActivities(recentActivities.sort((a,b) => b.time.localeCompare(a.time)));
 
       setStats({
         totalUsers: users.length,
@@ -146,7 +212,7 @@ export default function AdminDashboard() {
       console.error(err);
       setStats(prev => ({ ...prev, systemHealth: "critical" }));
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
@@ -224,11 +290,64 @@ export default function AdminDashboard() {
 
         <div className="p-8">
           {activeTab === "overview" && (
-            <OverviewTab stats={stats} loading={loading} setActiveTab={setActiveTab} />
+            <OverviewTab stats={stats} loading={loading} setActiveTab={setActiveTab} chartData={chartData} activities={activities} />
           )}
-          {activeTab === "finance" && <FinanceTab />}
+          {activeTab === "users" && (
+            <DataTable 
+              title="User Directory" 
+              description="Manage platform customers"
+              data={usersList}
+              columns={[
+                { key: '_id', label: 'ID', render: (val) => val?.substring(0, 8) + "..." },
+                { key: 'name', label: 'Name' },
+                { key: 'email', label: 'Email' },
+                { key: 'phone', label: 'Phone' },
+                { key: 'role', label: 'Role', render: (val) => <span className="uppercase text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">{val || 'customer'}</span> },
+              ]}
+              loading={loading}
+            />
+          )}
+          {activeTab === "workers" && (
+            <DataTable 
+              title="Worker Fleet" 
+              description="Manage registered workers"
+              data={workersList}
+              columns={[
+                { key: '_id', label: 'ID', render: (val) => val?.substring(0, 8) + "..." },
+                { key: 'name', label: 'Name' },
+                { key: 'profession', label: 'Profession' },
+                { key: 'phone', label: 'Phone' },
+                { key: 'status', label: 'Status', render: (val) => <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${val === 'verified' ? 'text-green-600 bg-green-50' : 'text-orange-600 bg-orange-50'}`}>{val}</span> },
+                { key: 'isAvailable', label: 'Availability', render: (val) => <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${val ? 'text-green-600 bg-green-50' : 'text-rose-600 bg-rose-50'}`}>{val ? 'Available' : 'Busy'}</span> },
+              ]}
+              loading={loading}
+            />
+          )}
+          {activeTab === "bookings" && (
+            <DataTable 
+              title="Order Stream" 
+              description="Monitor active and past bookings"
+              data={bookingsList}
+              columns={[
+                { key: '_id', label: 'Booking ID', render: (val) => val?.substring(0, 8) + "..." },
+                { key: 'service', label: 'Service' },
+                { key: 'total_price', label: 'Price (₹)', render: (val) => val ? `₹${val}` : 'N/A' },
+                { key: 'status', label: 'Status', render: (val) => {
+                  let color = 'text-slate-600 bg-slate-50';
+                  if (val === 'completed') color = 'text-green-600 bg-green-50';
+                  if (val === 'pending') color = 'text-orange-600 bg-orange-50';
+                  if (val === 'matched' || val === 'in_progress') color = 'text-indigo-600 bg-indigo-50';
+                  return <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${color}`}>{val}</span>;
+                }},
+                { key: 'createdAt', label: 'Date', render: (val) => new Date(val).toLocaleDateString() },
+              ]}
+              loading={loading}
+            />
+          )}
+          {activeTab === "finance" && <FinanceTab revenue={stats.totalRevenue} bookings={bookingsList} />}
           {activeTab === "system" && <SystemTab />}
           {activeTab === "bugs" && <BugsTab />}
+
 
           {(activeTab === "audit" || activeTab === "settings") && (
             <div className="py-20 bg-white rounded-2xl border border-dashed text-center">

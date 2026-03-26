@@ -142,6 +142,20 @@ export const verifyOtp = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    
+    // Check if it's the admin
+    const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+    if (ADMIN_EMAIL && ADMIN_PASSWORD && email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+      const token = jwt.sign(
+        { role: "admin", email },
+        process.env.JWT_SECRET || "changeme",
+        { expiresIn: "4h" }
+      );
+      return res.json({ token, role: "admin", user: { email, role: "admin", full_name: "Admin Backend" }, requireOtp: false });
+    }
+
     const db = getDb();
     const user = await db.collection('users').findOne({ email });
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
@@ -177,6 +191,11 @@ export const getMe = async (req, res) => {
 
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+
+    // Check if the decoded token represents an admin
+    if (decoded.role === 'admin') {
+      return res.json({ user: { email: decoded.email, role: 'admin', full_name: 'RAHI Admin' } });
+    }
 
     const db = getDb();
     const user = await db.collection('users').findOne({ _id: new ObjectId(decoded.id) });
