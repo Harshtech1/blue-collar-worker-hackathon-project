@@ -9,8 +9,20 @@ export const protect = async (req, res, next) => {
       token = req.headers.authorization.split(' ')[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
 
+      if (decoded.role === 'admin') {
+        req.user = { role: 'admin', email: decoded.email };
+        return next();
+      }
+
       const db = getDb();
-      const user = await db.collection('users').findOne({ _id: new ObjectId(decoded.id) });
+      let queryId;
+      try {
+        queryId = new ObjectId(decoded.id);
+      } catch (e) {
+        return res.status(401).json({ message: 'Not authorized, invalid token id' });
+      }
+
+      const user = await db.collection('users').findOne({ _id: queryId });
 
       if (!user) {
         return res.status(401).json({ message: 'Not authorized, user not found' });

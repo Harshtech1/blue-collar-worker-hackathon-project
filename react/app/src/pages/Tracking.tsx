@@ -50,7 +50,6 @@ export default function Tracking() {
   const [status, setStatus] = useState<BookingStatus>('pending');
   const [eta, setEta] = useState(25);
 
-  const [finishOtp] = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
   const [loading, setLoading] = useState(true);
   const [bookingData, setBookingData] = useState<any>(null);
   const [workerDetails, setWorkerDetails] = useState<WorkerDetails>({
@@ -160,9 +159,13 @@ export default function Tracking() {
         setStatus('completed');
         toast.success(
           language === 'hi'
-            ? `✅ काम पूरा हो गया!`
-            : `✅ Work completed successfully!`
+            ? `✅ काम पूरा हो गया! कृपया भुगतान करें।`
+            : `✅ Work completed successfully! Please process payment.`
         );
+        setTimeout(() => {
+          const amount = bookingData?.amount || 300;
+          navigate(`/payment?bookingId=${bookingId}&amount=${amount}&type=payment`);
+        }, 2000);
       }
     };
 
@@ -420,16 +423,16 @@ export default function Tracking() {
                               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="mt-4 p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
                                 <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-1">Work Finishing OTP (Worker will give)</p>
                                 <div className="flex items-center justify-between">
-                                  <span className="text-2xl font-black tracking-widest text-slate-800">{finishOtp}</span>
+                                  <span className="text-2xl font-black tracking-widest text-slate-800">{bookingData?.otp_finish || '----'}</span>
                                   <Button size="icon" variant="ghost" className="h-8 w-8 text-emerald-600" onClick={() => {
-                                    navigator.clipboard.writeText(finishOtp);
+                                    navigator.clipboard.writeText(bookingData?.otp_finish || '');
                                     toast.success("OTP Copied");
                                   }}>
                                     <Copy className="h-4 w-4" />
                                   </Button>
                                 </div>
                                 <Button onClick={handleFinishWork} className="w-full mt-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl h-10 font-bold">
-                                  Enter {finishOtp} to Finish
+                                  Enter {bookingData?.otp_finish || ''} to Finish
                                 </Button>
                               </motion.div>
                             )}

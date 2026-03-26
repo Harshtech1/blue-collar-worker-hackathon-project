@@ -60,6 +60,7 @@ const WorkerDashboard = () => {
 
   // OTP State
   const [otpDialogOpen, setOtpDialogOpen] = useState(false);
+  const [otpType, setOtpType] = useState<'start' | 'finish'>('start');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
 
@@ -96,18 +97,18 @@ const WorkerDashboard = () => {
       return jobDate === today;
     }).length,
     completedJobs: allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid').length, 
-    pendingJobs: pendingJobs.length,
+    pendingJobs: pendingJobs.length + allJobs.filter(j => j.status === 'pending').length,
     activeJobsCount: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
     upcomingJobs: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length + pendingJobs.length,
     earningsToday: allJobs
-      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid'))
+      .filter(j => (j.paymentStatus === 'paid'))
       .filter(j => {
         const date = new Date(j.updated_at || j.created_at);
         return !isNaN(date.getTime()) && date.toDateString() === new Date().toDateString();
       })
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0),
     totalEarnings: allJobs
-      .filter(j => (j.status === 'completed' || j.paymentStatus === 'paid'))
+      .filter(j => (j.paymentStatus === 'paid'))
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0)
   };
 
@@ -133,21 +134,34 @@ const WorkerDashboard = () => {
 
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);
+    setOtpType('start');
+    setOtpDialogOpen(true);
+  };
+
+  const handleCompleteJob = (jobId: string) => {
+    setSelectedJobId(jobId);
+    setOtpType('finish');
     setOtpDialogOpen(true);
   };
 
   const handleVerifyOTP = async () => {
     if (!selectedJobId) return;
-    const result = await startJob(selectedJobId, otp);
-    if (!result.error) {
-      setOtpDialogOpen(false);
-      setOtp('');
-      setSelectedJobId(null);
+    
+    if (otpType === 'start') {
+      const result = await startJob(selectedJobId, otp);
+      if (!result.error) {
+        setOtpDialogOpen(false);
+        setOtp('');
+        setSelectedJobId(null);
+      }
+    } else {
+      const result = await completeJob(selectedJobId, otp);
+      if (!result.error) {
+        setOtpDialogOpen(false);
+        setOtp('');
+        setSelectedJobId(null);
+      }
     }
-  };
-
-  const handleCompleteJob = async (jobId: string) => {
-    await completeJob(jobId);
   };
 
   const handleMarkNotificationRead = (id: number) => {
@@ -760,9 +774,13 @@ const WorkerDashboard = () => {
       <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Enter Customer OTP</DialogTitle>
+            <DialogTitle>
+              {otpType === 'start' ? 'Enter Customer OTP to Start' : 'Enter Customer OTP to Finish'}
+            </DialogTitle>
             <DialogDescription>
-              Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.
+              {otpType === 'start' 
+                ? 'Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
+                : 'Ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -784,7 +802,7 @@ const WorkerDashboard = () => {
               Cancel
             </Button>
             <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
-              Verify & Start
+              {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
             </Button>
           </DialogFooter>
         </DialogContent>

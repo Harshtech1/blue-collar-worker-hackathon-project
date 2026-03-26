@@ -63,7 +63,7 @@ const WorkerEarningsPage = () => {
       }
       
       // Filter jobs by status
-      const completedJobs = allJobs.filter((j: any) => j.status === 'completed' || j.paymentStatus === 'paid');
+      const completedJobs = allJobs.filter((j: any) => j.paymentStatus === 'paid');
       const activeJobs = allJobs.filter((j: any) => ['pending', 'confirmed', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status) && j.paymentStatus !== 'paid');
 
       // Get today's date
@@ -94,8 +94,12 @@ const WorkerEarningsPage = () => {
 
       // Calculate fees
       const commissionRate = 0.15;
-      const insuranceFee = totalEarnings * 0.02;
-      const platformFee = totalEarnings * 0.03;
+      const insuranceFeeRate = 0.02;
+      const platformFeeRate = 0.03;
+      
+      const totalGross = completedJobs.reduce((sum: number, job: any) => sum + (job.amount || job.total_amount || 0), 0);
+      const totalInsurance = completedJobs.reduce((sum: number, job: any) => sum + (job.insurance_fee || (job.amount * insuranceFeeRate) || 0), 0);
+      const totalPlatform = completedJobs.reduce((sum: number, job: any) => sum + (job.platform_fee || (job.amount * platformFeeRate) || 0), 0);
 
       setEarningsData({
         today: todayEarnings,
@@ -104,8 +108,8 @@ const WorkerEarningsPage = () => {
         monthly: monthlyEarnings,
         total: totalEarnings,
         commissionRate,
-        insuranceFee,
-        platformFee,
+        insuranceFee: totalInsurance,
+        platformFee: totalPlatform,
         completedCount: completedJobs.length
       });
 
@@ -136,11 +140,15 @@ const WorkerEarningsPage = () => {
   };
 
   const calculateNetEarnings = () => {
-    const gross = earningsData.total;
-    const commission = gross * earningsData.commissionRate;
-    const insurance = earningsData.insuranceFee;
-    const platform = earningsData.platformFee;
-    return gross - commission - insurance - platform;
+    return earningsData.total; // total is already net worker_earning in our calculation
+  };
+
+  const calculateGrossEarnings = () => {
+    return transactions.reduce((sum: number, job: any) => sum + (job.amount || job.total_amount || 0), 0);
+  };
+
+  const calculateTotalCommission = () => {
+    return transactions.reduce((sum: number, job: any) => sum + (job.commission || (job.amount * earningsData.commissionRate) || 0), 0);
   };
 
   const getTransactionStatusColor = (status: string) => {
@@ -250,7 +258,7 @@ const WorkerEarningsPage = () => {
                   <span className="font-medium">Gross Earnings</span>
                   <div className="flex items-baseline gap-1">
                     <IndianRupee className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">{earningsData.total.toFixed(2)}</span>
+                    <span className="font-medium">{calculateGrossEarnings().toFixed(2)}</span>
                   </div>
                 </div>
                 
@@ -261,7 +269,7 @@ const WorkerEarningsPage = () => {
                   </div>
                   <div className="flex items-baseline gap-1">
                     <IndianRupee className="h-4 w-4 text-muted-foreground" />
-                    <span>-{(earningsData.total * earningsData.commissionRate).toFixed(2)}</span>
+                    <span>-{calculateTotalCommission().toFixed(2)}</span>
                   </div>
                 </div>
                 
@@ -301,12 +309,12 @@ const WorkerEarningsPage = () => {
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
                   <div 
                     className="bg-green-600 h-2.5 rounded-full" 
-                    style={{ width: `${(calculateNetEarnings() / earningsData.total) * 100 || 0}%` }}
+                    style={{ width: `${(calculateNetEarnings() / calculateGrossEarnings()) * 100 || 0}%` }}
                   ></div>
                 </div>
                 <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>Net Earnings: {(calculateNetEarnings() / earningsData.total) * 100 || 0}%</span>
-                  <span>Deductions: {((earningsData.total - calculateNetEarnings()) / earningsData.total) * 100 || 0}%</span>
+                  <span>Net Earnings: {((calculateNetEarnings() / calculateGrossEarnings()) * 100 || 0).toFixed(1)}%</span>
+                  <span>Deductions: {(((calculateGrossEarnings() - calculateNetEarnings()) / calculateGrossEarnings()) * 100 || 0).toFixed(1)}%</span>
                 </div>
               </div>
             </CardContent>

@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 
 const WorkerJobsPage = () => {
   const { user, profile } = useAuth();
-  const { startJob } = useJobRequests();
+  const { startJob, completeJob } = useJobRequests();
   const [jobs, setJobs] = useState<any[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('all');
@@ -29,22 +29,41 @@ const WorkerJobsPage = () => {
 
   // OTP State
   const [otpDialogOpen, setOtpDialogOpen] = useState(false);
+  const [otpType, setOtpType] = useState<'start' | 'finish'>('start');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
 
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);
+    setOtpType('start');
+    setOtpDialogOpen(true);
+  };
+
+  const handleCompleteJob = (jobId: string) => {
+    setSelectedJobId(jobId);
+    setOtpType('finish');
     setOtpDialogOpen(true);
   };
 
   const handleVerifyOTP = async () => {
     if (!selectedJobId) return;
-    const result = await startJob(selectedJobId, otp);
-    if (!result.error) {
-      setOtpDialogOpen(false);
-      setOtp('');
-      setSelectedJobId(null);
-      fetchJobs(); // Refresh list
+    
+    if (otpType === 'start') {
+      const result = await startJob(selectedJobId, otp);
+      if (!result.error) {
+        setOtpDialogOpen(false);
+        setOtp('');
+        setSelectedJobId(null);
+        fetchJobs(); // Refresh list
+      }
+    } else {
+      const result = await completeJob(selectedJobId, otp);
+      if (!result.error) {
+        setOtpDialogOpen(false);
+        setOtp('');
+        setSelectedJobId(null);
+        fetchJobs(); // Refresh list
+      }
     }
   };
 
@@ -292,7 +311,7 @@ const WorkerJobsPage = () => {
                               <Button 
                                 size="sm" 
                                 className="bg-green-600 hover:bg-green-700"
-                                onClick={() => handleJobAction(job.id, 'complete')}
+                                onClick={() => handleCompleteJob(job.id)}
                               >
                                 <CheckCircle className="h-4 w-4 mr-2" />
                                 Mark Complete
@@ -618,9 +637,13 @@ const WorkerJobsPage = () => {
       <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Enter Customer OTP</DialogTitle>
+            <DialogTitle>
+              {otpType === 'start' ? 'Enter Customer OTP to Start' : 'Enter Customer OTP to Finish'}
+            </DialogTitle>
             <DialogDescription>
-              Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.
+              {otpType === 'start' 
+                ? 'Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
+                : 'Ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -642,7 +665,7 @@ const WorkerJobsPage = () => {
               Cancel
             </Button>
             <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
-              Verify & Start
+              {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -492,24 +492,24 @@ const WorkerProfilePage = () => {
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="flex flex-col items-center justify-center p-4 border rounded-lg">
-                  <ShieldCheck className="h-8 w-8 text-green-500 mb-2" />
+                  <ShieldCheck className={workerProfile?.verificationStatus?.aadhaar === 'verified' ? "h-8 w-8 text-green-500 mb-2" : "h-8 w-8 text-amber-500 mb-2"} />
                   <span className="font-medium">Aadhaar</span>
-                  <Badge variant="default" className="mt-2">
-                    {workerProfile?.aadhaar_verified ? 'Verified' : 'Pending'}
+                  <Badge variant={workerProfile?.verificationStatus?.aadhaar === 'verified' ? "default" : "secondary"} className="mt-2">
+                    {workerProfile?.verificationStatus?.aadhaar === 'verified' ? 'Verified' : 'Pending'}
                   </Badge>
                 </div>
                 <div className="flex flex-col items-center justify-center p-4 border rounded-lg">
-                  <ShieldCheck className="h-8 w-8 text-green-500 mb-2" />
+                  <ShieldCheck className={workerProfile?.verificationStatus?.pan === 'verified' ? "h-8 w-8 text-green-500 mb-2" : "h-8 w-8 text-amber-500 mb-2"} />
                   <span className="font-medium">PAN Card</span>
-                  <Badge variant="secondary" className="mt-2">
-                    {workerProfile?.pan_verified ? 'Verified' : 'Pending'}
+                  <Badge variant={workerProfile?.verificationStatus?.pan === 'verified' ? "default" : "secondary"} className="mt-2">
+                    {workerProfile?.verificationStatus?.pan === 'verified' ? 'Verified' : 'Pending'}
                   </Badge>
                 </div>
                 <div className="flex flex-col items-center justify-center p-4 border rounded-lg">
-                  <ShieldCheck className="h-8 w-8 text-green-500 mb-2" />
+                  <ShieldCheck className={workerProfile?.verificationStatus?.skills === 'verified' ? "h-8 w-8 text-green-500 mb-2" : "h-8 w-8 text-amber-500 mb-2"} />
                   <span className="font-medium">Skills</span>
-                  <Badge variant="default" className="mt-2">
-                    {workerProfile?.skills_verified ? 'Verified' : 'Pending'}
+                  <Badge variant={workerProfile?.verificationStatus?.skills === 'verified' ? "default" : "secondary"} className="mt-2">
+                    {workerProfile?.verificationStatus?.skills === 'verified' ? 'Verified' : 'Pending'}
                   </Badge>
                 </div>
               </div>

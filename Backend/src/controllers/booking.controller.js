@@ -71,6 +71,7 @@ export const createBooking = async (req, res) => {
       customer_lat: customer_lat || null,
       customer_lng: customer_lng || null,
       otp_start: Math.floor(1000 + Math.random() * 9000).toString(),
+      otp_finish: Math.floor(1000 + Math.random() * 9000).toString(),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -360,6 +361,37 @@ export const updateBooking = async (req, res) => {
       if (existing.otp_start !== updates.otp) {
         return res.status(400).json({ message: 'Invalid OTP' });
       }
+      updates.otp_verified = true;
+      updates.started_at = new Date();
+    }
+
+    // Validate OTP if status is changing to completed
+    if (updates.status === 'completed' && existing.status !== 'completed') {
+      // If otp is provided in request, verify it against otp_finish
+      if (updates.otp) {
+        if (existing.otp_finish !== updates.otp) {
+          return res.status(400).json({ message: 'Invalid completion OTP' });
+        }
+        updates.otp_finish_verified = true;
+      }
+      
+      const amount = existing.amount || 0;
+      const commissionRate = 0.15; // 15%
+      const insuranceFeeRate = 0.02; // 2%
+      const platformFeeRate = 0.03; // 3%
+
+      const commission = amount * commissionRate;
+      const insuranceFee = amount * insuranceFeeRate;
+      const platformFee = amount * platformFeeRate;
+      const workerEarning = amount - commission - insuranceFee - platformFee;
+
+      updates.completed_at = new Date();
+      updates.worker_earning = workerEarning;
+      updates.commission = commission;
+      updates.insurance_fee = insuranceFee;
+      updates.platform_fee = platformFee;
+      updates.paymentStatus = existing.paymentStatus || 'unpaid'; // Do not auto-mark as paid
+      // Note: Worker profile earnings update is handled in the /api/payments/initiate endpoint
     }
 
     if (updates.service) updates.service = toObjectId(updates.service) || updates.service;

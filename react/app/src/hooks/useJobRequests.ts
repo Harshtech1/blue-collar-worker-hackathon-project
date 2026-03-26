@@ -63,7 +63,13 @@ export function useJobRequests() {
       if (!pendingRes.ok) throw new Error('Failed to fetch pending jobs');
       let pending = await pendingRes.json();
       if (Array.isArray(pending)) {
-        pending = pending.map((j: any) => ({ ...j, id: j.id || j._id }));
+        pending = pending.map((j: any) => ({ 
+          ...j, 
+          id: j.id || j._id,
+          created_at: j.created_at || j.createdAt,
+          updated_at: j.updated_at || j.updatedAt,
+          scheduled_at: j.scheduled_at || j.scheduledAt
+        }));
       }
 
       // Fetch active jobs assigned to this worker by resolving worker profile
@@ -71,7 +77,13 @@ export function useJobRequests() {
       if (!activeRes.ok) throw new Error('Failed to fetch active jobs');
       let activeData = await activeRes.json();
       if (Array.isArray(activeData)) {
-        activeData = activeData.map((j: any) => ({ ...j, id: j.id || j._id }));
+        activeData = activeData.map((j: any) => ({ 
+          ...j, 
+          id: j.id || j._id,
+          created_at: j.created_at || j.createdAt,
+          updated_at: j.updated_at || j.updatedAt,
+          scheduled_at: j.scheduled_at || j.scheduledAt
+        }));
       }
 
       const activeFiltered = (activeData || []).filter((b: JobRequest) => ['pending', 'confirmed', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(b.status));
@@ -194,16 +206,27 @@ export function useJobRequests() {
     }
   };
 
-  const completeJob = async (jobId: string) => {
+  const completeJob = async (jobId: string, otp?: string) => {
     if (!user) return { error: new Error('Not authenticated') };
 
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${API}/bookings/${jobId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        body: JSON.stringify({ status: 'completed', otp, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       });
-      if (!res.ok) throw new Error('Failed to complete job');
+      
+      if (!res.ok) {
+        if (res.status === 400) {
+          toast({
+            title: 'Invalid OTP',
+            description: 'Please ask the customer for the correct finish OTP.',
+            variant: 'destructive',
+          });
+          return { error: new Error('Invalid OTP') };
+        }
+        throw new Error('Failed to complete job');
+      }
 
       toast({
         title: 'Job Completed!',

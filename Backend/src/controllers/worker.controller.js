@@ -64,13 +64,30 @@ export const updateByUserId = async (req, res) => {
     delete updates.user;
     delete updates._id;
 
+    // Handle document verification status updates if files are uploaded
+    if (updates.aadhaar_url || updates.pan_url || updates.skills_url) {
+      if (!updates.verificationStatus) {
+        // If not provided, initialize it
+        const current = await WorkerProfile.collection().findOne({ user: new ObjectId(userId) });
+        updates.verificationStatus = current?.verificationStatus || {
+          aadhaar: "pending",
+          pan: "pending",
+          skills: "pending"
+        };
+      }
+      
+      if (updates.aadhaar_url) updates.verificationStatus.aadhaar = "verified";
+      if (updates.pan_url) updates.verificationStatus.pan = "verified";
+      if (updates.skills_url) updates.verificationStatus.skills = "verified";
+    }
+
     const result = await WorkerProfile.collection().findOneAndUpdate(
       { user: new ObjectId(userId) },
       { $set: updates },
       { returnDocument: 'after' }
     );
 
-    if (!result.value && !result) return res.status(404).json({ message: 'Not found' }); // Driver v4 vs v6 check
+    if (!result.value && !result) return res.status(404).json({ message: 'Not found' });
 
     res.json(result.value || result);
   } catch (err) {

@@ -64,15 +64,19 @@ connectDB()
     app.use("/api/notifications", notificationRoutes);
 
     // ── ADMIN ROUTES (Priority 3 fix) ─────────────────────────────────────────
-    app.get("/api/admin/users", protect, authorize("admin"), async (req, res) => {
+    app.get("/api/admin/customers", protect, authorize("admin"), async (req, res) => {
       try {
         const db = getDb();
         const users = await db
           .collection("users")
-          .find({}, { projection: { password: 0, otp: 0, otpExpires: 0 } })
-          .sort({ createdAt: -1 })
+          .aggregate([
+            { $match: { role: "customer" } },
+            { $project: { password: 0, otp: 0, otpExpires: 0 } },
+            { $addFields: { name: "$full_name" } },
+            { $sort: { createdAt: -1 } }
+          ])
           .toArray();
-        res.json(users);
+        res.json({ data: users });
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });
@@ -84,11 +88,13 @@ connectDB()
         const db = getDb();
         const bookings = await db
           .collection("bookings")
-          .find({})
-          .sort({ createdAt: -1 })
-          .limit(200)
+          .aggregate([
+            { $addFields: { service: "$serviceName", total_price: "$amount" } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 200 }
+          ])
           .toArray();
-        res.json(bookings);
+        res.json({ data: bookings });
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });
@@ -100,10 +106,29 @@ connectDB()
         const db = getDb();
         const workers = await db
           .collection("worker_profiles")
-          .find({})
-          .sort({ createdAt: -1 })
+          .aggregate([
+            { $lookup: { from: "users", localField: "user", foreignField: "_id", as: "userData" } },
+            { $unwind: { path: "$userData", preserveNullAndEmptyArrays: true } },
+            {
+              $addFields: {
+                name: "$userData.full_name",
+                phone: "$userData.phone",
+                email: "$userData.email",
+                profession: "$bio",
+                isAvailable: { $eq: ["$status", "online"] }
+              }
+            },
+            { $sort: { createdAt: -1 } }
+          ])
           .toArray();
-        res.json(workers);
+        
+        // Ensure status field translates verificationStatus if it exists, otherwise fall back
+        const mappedWorkers = workers.map(w => ({
+          ...w,
+          status: w.verificationStatus?.aadhaar === 'verified' ? 'verified' : 'pending'
+        }));
+
+        res.json({ data: mappedWorkers });
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });
@@ -161,6 +186,26 @@ connectDB()
             );
             // Notify the worker that payment arrived
             const booking = await db.collection("bookings").findOne({ _id: objId });
+            
+            // Update worker profile total earnings here
+            if (booking && booking.worker_earning) {
+              const workerProfileColl = db.collection("worker_profiles");
+              if (booking.worker) {
+                await workerProfileColl.updateOne(
+                  { _id: booking.worker },
+                  { $inc: { total_earnings: booking.worker_earning, completed_jobs_count: 1 }, $set: { updatedAt: new Date() } }
+                );
+              } else if (booking.worker_user_id) {
+                let wUserObjId;
+                try { wUserObjId = new ObjectId(booking.worker_user_id); } catch (_) { }
+                if (wUserObjId) {
+                   await workerProfileColl.updateOne(
+                     { user: wUserObjId },
+                     { $inc: { total_earnings: booking.worker_earning, completed_jobs_count: 1 }, $set: { updatedAt: new Date() } }
+                   );
+                }
+              }
+            }
             const { getIO } = await import("./socket.js");
             const io = getIO();
             if (io && booking?.worker_user_id) {

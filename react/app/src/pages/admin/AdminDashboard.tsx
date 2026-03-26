@@ -127,18 +127,22 @@ export default function AdminDashboard() {
     const headers = { Authorization: `Bearer ${token}` } as HeadersInit;
     try {
       const [usersRes, bookingsRes, workersRes] = await Promise.all([
-        fetch(`${API}/admin/users`, { headers }),
+        fetch(`${API}/admin/customers`, { headers }),
         fetch(`${API}/admin/bookings`, { headers }),
         fetch(`${API}/admin/workers`, { headers }),
       ]);
 
-      const users = await usersRes.json();
-      const bookings: Booking[] = await bookingsRes.json();
-      const workers = await workersRes.json();
+      const usersData = await usersRes.json();
+      const bookingsData = await bookingsRes.json();
+      const workersData = await workersRes.json();
       
-      setUsersList(Array.isArray(users) ? users : []);
-      setBookingsList(Array.isArray(bookings) ? bookings : []);
-      setWorkersList(Array.isArray(workers) ? workers : []);
+      const users = usersData.data || (Array.isArray(usersData) ? usersData : []);
+      const bookings: Booking[] = bookingsData.data || (Array.isArray(bookingsData) ? bookingsData : []);
+      const workers = workersData.data || (Array.isArray(workersData) ? workersData : []);
+      
+      setUsersList(users);
+      setBookingsList(bookings);
+      setWorkersList(workers);
 
       const completed = bookings.filter(b => b.status === "completed");
       const active = bookings.filter(
