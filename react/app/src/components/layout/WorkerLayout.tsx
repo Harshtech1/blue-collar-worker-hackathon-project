@@ -276,7 +276,10 @@ const WorkerLayout = () => {
                 variant="ghost"
                 size="icon"
                 className="md:hidden h-10 w-10 rounded-full bg-worker-primary/90 text-white hover:bg-worker-primary hover:scale-110 transition-all duration-300"
-                onClick={() => setSidebarOpen(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSidebarOpen(true);
+                }}
               >
                 <Menu className="h-5 w-5" />
               </Button>

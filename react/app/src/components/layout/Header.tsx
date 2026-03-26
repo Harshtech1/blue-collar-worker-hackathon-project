@@ -79,9 +79,9 @@ export function Header() {
           <Link to="/" className="flex items-center gap-2 group">
             <motion.div
               whileHover={{ rotate: 10, scale: 1.1 }}
-              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-indigo-600 text-white shadow-lg shadow-primary/20"
+              className="flex h-11 w-11 items-center justify-center rounded-2xl overflow-hidden shadow-lg shadow-primary/20 bg-white"
             >
-              <Sparkles className="h-6 w-6 stroke-[2.5]" />
+              <img src="/images/rahi_logo.jpeg" alt="RAHI Logo" className="h-full w-full object-contain p-0.5" />
             </motion.div>
             <div className="flex flex-col leading-none">
               <span className="text-2xl font-black tracking-tighter text-slate-900 group-hover:text-primary transition-colors">RAHI</span>
@@ -206,8 +206,10 @@ export function Header() {
               <div className="h-full flex flex-col bg-white">
                 <div className="p-6 border-b flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center text-white font-black">R</div>
-                    <span className="font-black text-xl">RAHI</span>
+                    <div className="h-10 w-10 rounded-xl overflow-hidden bg-white">
+                      <img src="/images/rahi_logo.jpeg" alt="RAHI Logo" className="h-full w-full object-contain p-0.5" />
+                    </div>
+                    <span className="font-black text-2xl tracking-tighter">RAHI</span>
                   </div>
                   <Button variant="ghost" size="icon" onClick={() => setIsOpen(false)}><X className="h-6 w-6" /></Button>
                 </div>

@@ -105,8 +105,8 @@ export default function EnhancedLogin() {
             animate={{ opacity: 1, y: 0 }}
             className="mb-12"
           >
-            <div className="h-16 w-16 bg-primary rounded-2xl flex items-center justify-center shadow-2xl shadow-primary/40 mb-8">
-              <Sparkles className="h-10 w-10 text-white" />
+            <div className="h-16 w-16 rounded-2xl overflow-hidden shadow-2xl shadow-primary/40 mb-8 bg-white">
+              <img src="/images/rahi_logo.jpeg" alt="RAHI Logo" className="h-full w-full object-contain p-1" />
             </div>
             <h2 className="text-5xl font-black mb-6 leading-tight">Welcome back to RAHI.</h2>
             <p className="text-xl text-slate-400 font-medium">Log in to manage your bookings, earnings, and teams.</p>

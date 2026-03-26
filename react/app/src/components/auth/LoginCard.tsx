@@ -76,8 +76,8 @@ export function LoginCard() {
   return (
     <Card className="w-full max-w-md border-slate-100 rounded-[2.5rem] overflow-hidden shadow-2xl shadow-slate-200/50 bg-white">
       <CardHeader className="text-center pb-2">
-        <div className="mx-auto h-12 w-12 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
-          <Sparkles className="h-6 w-6 text-primary" />
+        <div className="mx-auto h-12 w-12 rounded-2xl overflow-hidden mb-4 bg-white">
+          <img src="/images/rahi_logo.jpeg" alt="RAHI Logo" className="h-full w-full object-contain p-0.5" />
         </div>
         <CardTitle className="text-3xl font-black text-slate-900">Welcome Back</CardTitle>
         <CardDescription className="text-slate-500 font-medium">
