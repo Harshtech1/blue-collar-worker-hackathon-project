@@ -1,6 +1,6 @@
 # RAHI_BLUE_Collar — Docker-only blueprint for Render
 services:
-  - type: web_service
+  - type: web
     name: RAHI-APP-Docker
     env: docker
     repo: Harshtech1/blue-collar-worker-hackathon-project
