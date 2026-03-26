@@ -1,26 +1,17 @@
-# Dockerfile to run the Backend Express app
-FROM node:18-alpine
-
-# Create app directory
+# Stage 1: Build the frontend
+FROM node:14 AS build
 WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
 
-# Install dependencies (copy package.json first for caching)
-COPY Backend/package*.json ./
-
+# Stage 2: Serve the app with static files
+FROM node:14
+WORKDIR /app
+COPY --from=build /app/build ./build
+COPY Backend/package.json Backend/package-lock.json ./Backend/
 RUN npm install --production
-
-# Copy backend source
-COPY Backend/ ./
-
-# Create a non-root user and switch to it
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-USER appuser
-
-# Expose port (Render sets PORT env var at runtime)
+COPY Backend/ ./Backend/
 EXPOSE 3000
-
-# Default env for PORT (can be overridden by Render)
-ENV PORT=3000
-
-# Start the app (Backend package.json uses node src/index.js)
-CMD ["node", "src/index.js"]
+CMD ["node", "Backend/index.js"]
