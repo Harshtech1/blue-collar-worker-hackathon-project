@@ -1,41 +1,9 @@
-# RAHI_BLUE_Collar blueprint for Harshtech1/blue-collar-worker-hackathon-project
-# This blueprint provides three service options:
-# 1) Docker-based web service (uses Dockerfile if present)
-# 2) Node.js web service (uses npm build/start)
-# 3) Static site (serves the 'public' folder)
-# Choose the service that matches your project or keep multiple and Render will let you enable the one you want.
-
+# RAHI_BLUE_Collar — Docker-only blueprint for Render
 services:
-  - type: web
+  - type: web_service
     name: RAHI-APP-Docker
     env: docker
     repo: Harshtech1/blue-collar-worker-hackathon-project
     branch: main
     dockerfilePath: Dockerfile
     plan: free
-
-  - type: web
-    name: RAHI-APP-Node
-    env: node
-    repo: Harshtech1/blue-collar-worker-hackathon-project
-    branch: main
-    buildCommand: npm install
-    startCommand: npm start
-    plan: free
-    envVars:
-      - key: NODE_ENV
-        value: production
-
-  - type: static
-    name: RAHI-Static
-    env: static
-    repo: Harshtech1/blue-collar-worker-hackathon-project
-    branch: main
-    staticPublishPath: public
-    plan: free
-
-# Notes for use:
-# - If your project contains a Dockerfile, enable the RAHI-APP-Docker service in Render.
-# - If it's a Node.js app (package.json present), enable RAHI-APP-Node.
-# - If it's a static site with a 'public' directory, enable RAHI-Static.
-# - You can remove the unused service blocks once you decide which one to use.
