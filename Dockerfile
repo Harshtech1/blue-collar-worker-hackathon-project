@@ -1,17 +1,17 @@
-# Stage 1: Build the frontend
-FROM node:14 AS build
-WORKDIR /app
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm install
-COPY frontend/ ./
-RUN npm run build
+# Backend — built from repo root for Render deployment
+FROM node:20-alpine
 
-# Stage 2: Serve the app with static files
-FROM node:14
 WORKDIR /app
-COPY --from=build /app/build ./build
-COPY Backend/package.json Backend/package-lock.json ./Backend/
-RUN npm install --production
-COPY Backend/ ./Backend/
-EXPOSE 3000
-CMD ["node", "Backend/index.js"]
+
+# Copy backend package files first for layer caching
+COPY Backend/package.json Backend/package-lock.json ./
+
+# Install production dependencies only
+RUN npm ci --omit=dev
+
+# Copy backend source
+COPY Backend/ ./
+
+EXPOSE 5000
+
+CMD ["node", "src/index.js"]

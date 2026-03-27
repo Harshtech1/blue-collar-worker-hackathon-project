@@ -3,7 +3,25 @@ services:
   - type: web
     name: RAHI-APP-Docker
     env: docker
-    repo: Harshtech1/blue-collar-worker-hackathon-project
+    repo: https://github.com/Harshtech1/blue-collar-worker-hackathon-project
     branch: main
     dockerfilePath: Dockerfile
+    dockerContext: .
     plan: free
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SMTP_EMAIL
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: NODE_ENV
+        value: production

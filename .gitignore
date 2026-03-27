@@ -9,6 +9,10 @@
 .env.development
 .env.staging
 *.env
+backend_env.env
+.(frontend)env
+.env
+.env.*
 
 # Node
 node_modules/
