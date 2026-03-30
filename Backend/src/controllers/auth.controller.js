@@ -41,13 +41,11 @@ export const register = async (req, res) => {
         }
       });
 
-      // Resend OTP
-      try {
-        await sendEmail(email, 'Your Verification OTP', `Your OTP is ${otp}`);
-      } catch (emailErr) {
+      // Resend OTP asynchronously so it doesn't block the API response
+      sendEmail(email, 'Your Verification OTP', `Your OTP is ${otp}`).catch(emailErr => {
         console.error("Email send failed:", emailErr);
         // Continue even if email fails in dev, but usually strict in prod
-      }
+      });
       return res.json({ message: 'OTP sent to email', userId: existing._id, email });
     }
 
@@ -70,11 +68,10 @@ export const register = async (req, res) => {
 
     const result = await db.collection('users').insertOne(newUser);
 
-    try {
-      await sendEmail(email, 'Your Verification OTP', `Your OTP is ${otp}`);
-    } catch (emailErr) {
+    // Send OTP asynchronously
+    sendEmail(email, 'Your Verification OTP', `Your OTP is ${otp}`).catch(emailErr => {
       console.error("Email send failed:", emailErr);
-    }
+    });
 
     res.json({ message: 'OTP sent to email', userId: result.insertedId, email });
   } catch (err) {
@@ -171,11 +168,10 @@ export const login = async (req, res) => {
       $set: { otp, otpExpires: new Date(Date.now() + 10 * 60 * 1000) }
     });
 
-    try {
-      await sendEmail(email, 'Your Login OTP', `Your OTP for login is ${otp}`);
-    } catch (emailErr) {
+    // Send OTP asynchronously
+    sendEmail(email, 'Your Login OTP', `Your OTP for login is ${otp}`).catch(emailErr => {
       console.error("Login OTP email failed:", emailErr);
-    }
+    });
 
     res.json({ message: 'OTP sent to email', requireOtp: true, email });
   } catch (err) {
