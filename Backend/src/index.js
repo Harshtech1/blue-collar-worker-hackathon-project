@@ -49,6 +49,9 @@ connectDB()
   .then(() => {
     console.log("✅ Database connected successfully");
 
+    // Root route to fix Render health checks and UptimeRobot 404
+    app.get("/", (req, res) => res.json({ message: "RAHI Backend API is running successfully." }));
+
     // Health
     app.get("/api/health", (req, res) =>
       res.json({ status: "ok", timestamp: new Date(), socketio: "active" })
