@@ -1,7 +1,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import dns from "dns";
 import { createServer } from "http";
+
 import { connectDB, getDb } from "./config/db.js";
 import { ObjectId } from "mongodb";
 import { initSocket } from "./socket.js";          // ← singleton, no circular dep
@@ -12,15 +14,17 @@ import usersRoutes from "./routes/users.routes.js";
 import serviceRoutes from "./routes/service.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
-import { protect, authorize } from "./middleware/auth.js";
 import jwt from "jsonwebtoken";
 import path from "path";
-import { fileURLToPath } from "url";
 
-dotenv.config({ path: path.join(__dirname, "../.env") });
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+
+dotenv.config({ path: path.join(__dirname, "../.env") });
+
 
 const app = express();
 
@@ -278,8 +282,8 @@ connectDB()
 
     // ── Start ─────────────────────────────────────────────────────────────────
     const PORT = process.env.PORT || 5000;
-    httpServer.listen(PORT, () =>
-      console.log(`🚀 RAHI Server + Socket.IO → http://localhost:${PORT}`)
+    httpServer.listen(PORT, '0.0.0.0', () =>
+      console.log(`🚀 RAHI Server + Socket.IO → http://0.0.0.0:${PORT}`)
     );
   })
   .catch((err) => {
