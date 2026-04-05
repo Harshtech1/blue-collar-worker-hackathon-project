@@ -18,6 +18,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { API as API_BASE_FROM_ENV } from '@/lib/constants';
+
+// Remove '/api' from the end of the constant if present to match the expected format in this file
+const API_BASE = API_BASE_FROM_ENV.replace(/\/api$/, '');
 
 const WorkerJobsPage = () => {
   const { user, profile } = useAuth();
@@ -80,7 +84,6 @@ const WorkerJobsPage = () => {
       setLoading(true);
       
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
       
       // Fetch all bookings for this worker via API
       const res = await fetch(`${API_BASE}/api/bookings?worker_user_id=${user.id || user._id}`, {
@@ -146,7 +149,6 @@ const WorkerJobsPage = () => {
       if (!user) return;
 
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
 
       // Update job status based on action
       let newStatus = '';

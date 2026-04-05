@@ -69,7 +69,8 @@ export const ChatAssistant: React.FC = () => {
         controller.abort();
       }, CHAT_TIMEOUT_MS);
       
-      const BACKEND_API_URL = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
+      const { API: API_FROM_ENV } = await import('@/lib/constants');
+      const BACKEND_API_URL = API_FROM_ENV.replace(/\/api$/, '');
       const response = await fetch(`${BACKEND_API_URL}/chat`, {
         method: 'POST',
         headers: {

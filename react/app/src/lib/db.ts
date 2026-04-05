@@ -1,5 +1,4 @@
-// MongoDB API Client (formerly Supabase wrapper)
-const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+import { API as API_BASE } from './constants';
 
 interface Filter {
     field: string;
