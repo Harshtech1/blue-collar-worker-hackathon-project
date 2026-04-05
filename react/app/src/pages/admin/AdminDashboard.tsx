@@ -13,6 +13,7 @@ import { DataTable } from "./components/DataTable";
 import { SystemTab } from "./components/SystemTab";
 import { BugsTab } from "./components/BugsTab";
 import { FinanceTab } from "./components/FinanceTab";
+import { API } from '@/lib/constants';
 
 /* ================= TYPES ================= */
 
@@ -66,7 +67,6 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
   /* ================= AUTH ================= */
 

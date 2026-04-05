@@ -15,11 +15,12 @@ import { useLocation as useAppLocation } from '@/contexts/LocationContext';
 import { useNotifications } from '@/contexts/NotificationContext';
 import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
+import { API } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { Layout } from '@/components/layout/Layout';
 import TrackingMap from '@/components/TrackingMap';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = API;
 
 type BookingStatus = 'pending' | 'accepted' | 'matched' | 'arriving' | 'otp_verify' | 'in_progress' | 'completed';
 

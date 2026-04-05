@@ -19,6 +19,7 @@ import { PaymentGatewayCard } from '@/components/payment/PaymentGatewayCard';
 import { BookingStatusBanner } from '@/components/customer/BookingStatusBanner';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { API } from '@/lib/constants';
 
 export default function PaymentPage() {
   const { user, profile } = useAuth();
@@ -35,7 +36,6 @@ export default function PaymentPage() {
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState(1240);
 
-  const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
   // PRIORITY 5 FIX: Real API call — creates payment record + updates booking in MongoDB.
   // Replaces the 2.5-second setTimeout mock that previously always "succeeded"

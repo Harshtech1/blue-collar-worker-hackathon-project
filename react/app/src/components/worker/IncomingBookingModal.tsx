@@ -19,8 +19,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { useSocket } from '@/hooks/useSocket';
+import { API } from '@/lib/constants';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 interface IncomingBooking {
   bookingId: string;

@@ -24,6 +24,7 @@ import { toast } from 'sonner';
 import { db } from '@/lib/db';
 import { FadeIn, HoverScale, ScaleIn } from '@/components/ui/animated-container';
 import { cn } from '@/lib/utils';
+import { API as API_URL } from '@/lib/constants';
 import {
   Droplets, Zap as ZapIcon, Hammer, Paintbrush, Grid3X3, Settings,
   HardHat, Tent, Thermometer
@@ -92,7 +93,6 @@ export default function BookService() {
   const [selectedItem, setSelectedItem] = useState<ServiceItem | null>(null);
   const [workerInfo, setWorkerInfo] = useState<{ name: string; phone: string } | null>(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
   // Get detailed items for the current service
   const detailedItems = useMemo(() => {

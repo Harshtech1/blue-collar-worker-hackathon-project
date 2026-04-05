@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { db } from '@/lib/db';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
+import { API } from '@/lib/constants';
 // import type { Database } from '@/integrations/supabase/types';
 
 // Extend Leaflet to fix default icon issues
@@ -324,7 +325,7 @@ export default function WorkerMapDashboard() {
   const updateBookingStatus = async (jobId: string, newStatus: string) => {
     try {
       const token = localStorage.getItem('token');
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+      const API_URL = API;
       
       const res = await fetch(`${API_URL}/bookings/${jobId}`, {
         method: 'PATCH',

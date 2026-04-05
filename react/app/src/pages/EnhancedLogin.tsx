@@ -13,6 +13,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { API } from '@/lib/constants';
 
 export default function EnhancedLogin() {
   const navigate = useNavigate();
@@ -55,7 +56,6 @@ export default function EnhancedLogin() {
         }
       } else {
         // Initial Login Step
-        const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
         const res = await fetch(`${API}/auth/login`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
