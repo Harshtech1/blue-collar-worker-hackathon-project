@@ -80,15 +80,25 @@ const sendViaNodemailer = async (to, subject, text) => {
 // ─── Main export ────────────────────────────────────────────────────────────
 export const sendEmail = async (to, subject, text) => {
     try {
-        // Strategy 1: Use Brevo API (HTTP-based, works on Render/serverless)
-        const sentViaBrevo = await sendViaBrevo(to, subject, text);
-        if (sentViaBrevo) return;
-
-        // Strategy 2: Fallback to Nodemailer SMTP (local development)
-        console.log('[Email] Brevo API key not configured, falling back to Nodemailer SMTP...');
+        if (process.env.BREVO_API_KEY) {
+            return await sendViaBrevo(to, subject, text);
+        }
+        
+        console.log('[Email] Falling back to Nodemailer SMTP (Local dev)...');
         await sendViaNodemailer(to, subject, text);
     } catch (error) {
         console.error('[Email] ❌ Failed to send email:', error.message || error);
+        
+        // If Brevo failed, try Nodemailer as a last resort
+        if (process.env.BREVO_API_KEY) {
+            try {
+                console.log('[Email] Brevo failed, trying Nodemailer SMTP fallback...');
+                return await sendViaNodemailer(to, subject, text);
+            } catch (fallbackError) {
+                console.error('[Email] ❌ Fallback Nodemailer also failed:', fallbackError.message);
+            }
+        }
+
         console.error('[Email] Details:', JSON.stringify({
             to,
             subject,

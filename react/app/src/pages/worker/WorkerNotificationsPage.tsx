@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-pr
 const WorkerNotificationsPage = () => {
   const { user, profile } = useAuth();
   const { socket } = useSocket();
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -260,14 +262,26 @@ const WorkerNotificationsPage = () => {
           )}
 
           {!notification.read && notification.type !== 'new_booking' && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2 text-xs h-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2"
-              onClick={() => markAsRead(notification._id)}
-            >
-              Mark as read
-            </Button>
+            <div className="flex gap-2 items-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 text-xs h-7 text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2"
+                onClick={() => markAsRead(notification._id)}
+              >
+                Mark as read
+              </Button>
+              {notification.relatedId && ['booking_confirmed', 'status_update', 'job_invite'].includes(notification.type) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 text-xs h-7 border-slate-200 text-slate-600"
+                  onClick={() => navigate(`/worker/jobs?id=${notification.relatedId}`)}
+                >
+                  View Details
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </div>

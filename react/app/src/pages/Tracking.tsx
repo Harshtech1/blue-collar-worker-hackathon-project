@@ -142,7 +142,7 @@ export default function Tracking() {
         }
         
         // Play success audio
-        new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
+        new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
 
         toast.success(
           language === 'hi'

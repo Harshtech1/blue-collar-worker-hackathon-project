@@ -37,6 +37,7 @@ export default function Login() {
     if (error) {
       toast.error(error.message);
     } else {
+      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
       setOtpSent(true);
       toast.success(language === 'hi' ? 'OTP भेजा गया!' : 'OTP sent!');
     }
@@ -55,6 +56,7 @@ export default function Login() {
     if (error) {
       toast.error(error.message);
     } else {
+      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
       toast.success(language === 'hi' ? 'सफलतापूर्वक लॉगिन!' : 'Login successful!');
       // Small delay to ensure state is settled before navigation
       setTimeout(() => {
@@ -76,6 +78,7 @@ export default function Login() {
     if (error) {
       toast.error(error.message);
     } else {
+      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
       toast.success(language === 'hi' ? 'सफलतापूर्वक लॉगिन!' : 'Login successful!');
       // Small delay to ensure state is settled before navigation
       setTimeout(() => {

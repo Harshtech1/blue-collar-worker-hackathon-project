@@ -46,6 +46,10 @@ export function IncomingBookingModal() {
     const handleNewBooking = (data: IncomingBooking) => {
       console.log('📥 new_booking received:', data);
       setBooking(data);
+      
+      // Play custom notification sound
+      new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
+
       // Play browser notification sound if available
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('New Job Request! 🔔', {

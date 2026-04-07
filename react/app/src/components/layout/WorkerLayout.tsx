@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
+import { toast } from 'sonner';
 import { db } from "@/lib/db";
 import { IncomingBookingModal } from "@/components/worker/IncomingBookingModal";
 import { WorkerLocationTracker } from "@/components/worker/WorkerLocationTracker";
@@ -129,6 +130,10 @@ const WorkerLayout = () => {
       } else {
         const updated = await res.json();
         setWorkerProfile(updated);
+        toast.success(`${profile?.full_name || 'Worker'} is now ${newStatus}`, {
+          description: newStatus === 'online' ? 'You are now visible to customers.' : 'You are now hidden from customers.',
+          icon: newStatus === 'online' ? <CircleCheck className="h-4 w-4 text-green-500" /> : <Circle className="h-4 w-4 text-gray-500" />,
+        });
         console.log(`${profile?.full_name || 'Worker'} is now ${newStatus}`);
       }
     } catch (error) {

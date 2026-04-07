@@ -36,6 +36,7 @@ export default function Login() {
     setLoading(false);
     if (error) toast.error(error.message);
     else {
+      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
       setOtpSent(true);
       toast.success(language === 'hi' ? 'OTP भेजा गया!' : 'OTP sent!');
     }
@@ -51,6 +52,7 @@ export default function Login() {
     setLoading(false);
     if (error) toast.error(error.message);
     else {
+      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
       toast.success(language === 'hi' ? 'सफलतापूर्वक लॉगिन!' : 'Login successful!');
       navigate('/');
     }
@@ -66,6 +68,7 @@ export default function Login() {
     setLoading(false);
     if (error) toast.error(error.message);
     else {
+      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
       toast.success(language === 'hi' ? 'सफलतापूर्वक लॉगिन!' : 'Login successful!');
       navigate('/');
     }
