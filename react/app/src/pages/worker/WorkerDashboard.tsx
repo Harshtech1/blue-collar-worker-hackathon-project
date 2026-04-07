@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -39,14 +39,7 @@ import {
 
 
 
-// Mock monthly comparison data
-const monthlyData = [
-  { month: 'Jan', current: 18500, previous: 15200 },
-  { month: 'Feb', current: 22300, previous: 18900 },
-  { month: 'Mar', current: 24500, previous: 21000 },
-];
 
-// Dynamic Data replaces mock ones
 
 const WorkerDashboard = () => {
   const navigate = useNavigate();
@@ -119,7 +112,31 @@ const WorkerDashboard = () => {
     { name: 'Pending', value: stats.pendingJobs, color: '#f59e0b' },
   ];
 
-  // Generate earnings trend from completed jobs
+  // Generate monthly comparison data from real jobs (last 6 months)
+  const monthlyData = useMemo(() => {
+    const months: Record<string, { month: string; current: number; previous: number }> = {};
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const label = d.toLocaleDateString('en-US', { month: 'short' });
+      months[key] = { month: label, current: 0, previous: 0 };
+    }
+    allJobs
+      .filter(j => j.paymentStatus === 'paid')
+      .forEach(j => {
+        const d = new Date(j.updated_at || j.created_at);
+        if (isNaN(d.getTime())) return;
+        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        if (months[key]) months[key].current += j.worker_earning || j.total_price || 0;
+        // Previous year same month
+        const prevKey = `${d.getFullYear() - 1}-${d.getMonth()}`;
+        if (months[prevKey]) months[prevKey].previous += j.worker_earning || j.total_price || 0;
+      });
+    return Object.values(months);
+  }, [allJobs]);
+
+  // Generate earning trend from completed jobs
   const earningsData = Array.from({ length: 7 }, (_, i) => {
     const date = new Date();
     date.setDate(date.getDate() - (6 - i));
@@ -132,6 +149,7 @@ const WorkerDashboard = () => {
       
     return { day: dayName, earnings: dayEarnings };
   });
+
 
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);

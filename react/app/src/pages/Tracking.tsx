@@ -176,6 +176,20 @@ export default function Tracking() {
 
     socket.on('booking_updated', handleBookingUpdated);
 
+    // ── Listen for booking cancellation ────────────────────────────────────
+    const handleBookingCancelled = (data: any) => {
+      if (data.bookingId !== bookingId && data.bookingId !== bookingId?.toString()) return;
+      
+      const reason = data.reason === 'timeout'
+        ? (language === 'hi' ? 'कोई कारीगर उपलब्ध नहीं था। बुकिंग रद्द कर दी गई।' : 'No workers were available. Booking auto-cancelled.')
+        : (language === 'hi' ? 'बुकिंग रद्द कर दी गई' : 'Booking has been cancelled.');
+      
+      toast.error(reason);
+      setTimeout(() => navigate('/bookings'), 2500);
+    };
+
+    socket.on('booking_cancelled', handleBookingCancelled);
+
     // ── Listen for live worker location updates ──────────────────────────
     const handleWorkerLocationUpdate = (data: any) => {
       if (data.bookingId !== bookingId) return;
@@ -199,6 +213,7 @@ export default function Tracking() {
 
     return () => { 
       socket.off('booking_updated', handleBookingUpdated); 
+      socket.off('booking_cancelled', handleBookingCancelled);
       socket.off('worker_location_update', handleWorkerLocationUpdate);
     };
   }, [socket, bookingId, bookingData, language, userLocation]);
@@ -218,6 +233,26 @@ export default function Tracking() {
       const amount = bookingData?.amount || location.state?.amount || 329;
       navigate(`/payment?bookingId=${bookingId}&amount=${amount}&type=payment`);
     }, 1500);
+  };
+
+  const handleCancel = async () => {
+    if (!confirm('Are you sure you want to cancel this booking?')) return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/bookings/${bookingId}/cancel`, {
+        method: 'PATCH',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        toast.success(language === 'hi' ? 'बुकिंग रद्द कर दी गई' : 'Booking cancelled successfully');
+        navigate('/bookings');
+      } else {
+        const body = await res.json();
+        toast.error(body.message || 'Failed to cancel booking');
+      }
+    } catch (err) {
+      toast.error('An error occurred while cancelling');
+    }
   };
 
   const currentStepIndex = statusSteps.findIndex(s => s.id === status);
@@ -259,9 +294,16 @@ export default function Tracking() {
                 <div key={i} className="h-3 w-3 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
               ))}
             </div>
-            <p className="text-xs text-slate-400 mt-4 font-bold">
+            <p className="text-xs text-slate-400 mt-4 font-bold mb-6">
               Booking ID: #{bookingId?.slice(0, 8)}...
             </p>
+            <Button 
+              variant="destructive" 
+              className="rounded-full px-8 font-bold"
+              onClick={handleCancel}
+            >
+              Cancel Booking
+            </Button>
           </div>
         </div>
       </Layout>
@@ -359,6 +401,19 @@ export default function Tracking() {
                           <MessageSquare className="h-4 w-4 mr-2" /> Message
                         </Button>
                       </div>
+                      
+                      {/* Cancel Button if just matched */}
+                      {status === 'matched' && (
+                        <div className="mt-4">
+                          <Button 
+                            variant="ghost" 
+                            className="rounded-2xl h-10 px-6 font-bold text-rose-500 hover:text-rose-600 hover:bg-rose-50 w-full"
+                            onClick={handleCancel}
+                          >
+                            Cancel Booking
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </CardContent>

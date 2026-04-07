@@ -1,5 +1,5 @@
 import express from 'express';
-import { createBooking, listBookings, updateBooking, getByWorkerId, getById, respondToBooking } from '../controllers/booking.controller.js';
+import { createBooking, listBookings, updateBooking, getByWorkerId, getById, respondToBooking, cancelBooking } from '../controllers/booking.controller.js';
 import { queryParser } from '../middlewares/queryParser.js';
 import { protect } from '../middleware/auth.js';
 
@@ -14,8 +14,11 @@ router.post('/', createBooking);
 // Worker responds (accept / decline) — requires auth
 router.patch('/:id/respond', protect, respondToBooking);
 
+// Cancel a booking
+router.patch('/:id/cancel', protect, cancelBooking);
+
 // Update an existing booking
-router.patch('/:id', updateBooking);
+router.patch('/:id', protect, updateBooking);
 
 // Get bookings for a specific worker profile
 router.get('/worker/:workerId', getByWorkerId);

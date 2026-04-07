@@ -82,7 +82,7 @@ const ProtectedRoute = ({ children, role }: { children: React.ReactNode; role?: 
   const { user, loading, profile } = useAuth();
 
   if (loading) {
-    return <div>Loading...</div>; // You can replace this with a spinner
+    return <div className="flex items-center justify-center min-h-screen"><LoadingSpinner size={40} /></div>;
   }
 
   if (!user) {
@@ -91,7 +91,7 @@ const ProtectedRoute = ({ children, role }: { children: React.ReactNode; role?: 
 
   // Redirect user based on role if accessing home page
   if (!profile) {
-    return <div>Loading profile...</div>;
+    return <div className="flex items-center justify-center min-h-screen"><LoadingSpinner size={40} /></div>;
   }
 
   if (role && profile.role !== role) {
@@ -115,7 +115,7 @@ const WorkerProtectedRoute = ({ children }: { children: ReactNode }) => {
 
   // Wait for profile to load
   if (!profile) {
-    return <div>Loading profile...</div>;
+    return <div className="flex items-center justify-center min-h-screen"><LoadingSpinner size={40} /></div>;
   }
 
   if (profile.role !== 'worker') {

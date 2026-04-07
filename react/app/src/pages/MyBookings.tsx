@@ -16,48 +16,8 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
-// Dummy bookings data
-const dummyBookings = [
-  {
-    id: '1',
-    service: 'AC Repair',
-    serviceHi: 'एसी मरम्मत',
-    worker: 'Ramesh Kumar',
-    status: 'completed',
-    date: '25 Jan 2024',
-    time: '10:00 AM',
-    address: '123, Sector 15, Noida',
-    amount: 850,
-    rating: 5,
-    color: '#3b82f6'
-  },
-  {
-    id: '2',
-    service: 'Plumbing',
-    serviceHi: 'प्लंबिंग',
-    worker: 'Suresh Singh',
-    status: 'in_progress',
-    date: '28 Jan 2024',
-    time: '02:00 PM',
-    address: '456, Green Park, Delhi',
-    amount: 650,
-    rating: null,
-    color: '#06b6d4'
-  },
-  {
-    id: '3',
-    service: 'Electrical',
-    serviceHi: 'बिजली का काम',
-    worker: 'Finding Worker...',
-    status: 'pending',
-    date: '30 Jan 2024',
-    time: '11:00 AM',
-    address: '789, Model Town, Gurgaon',
-    amount: 1200,
-    rating: null,
-    color: '#f59e0b'
-  }
-];
+import { useEffect } from 'react';
+import { API } from '@/lib/constants';
 
 const statusConfig = {
   pending: { label: 'Pending', labelHi: 'लंबित', color: 'text-amber-600', bg: 'bg-amber-50', icon: AlertCircle },
@@ -72,15 +32,43 @@ export default function MyBookings() {
   const { language } = useLanguage();
   const [activeFilter, setActiveFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    const fetchBookings = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API}/bookings?customer_user_id=${user._id || user.id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBookings(data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch bookings", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchBookings();
+  }, [user]);
 
   const filteredBookings = useMemo(() => {
-    return dummyBookings.filter(b => {
+    return bookings.filter(b => {
       const matchesFilter = activeFilter === 'all' || b.status === activeFilter;
-      const matchesSearch = b.service.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            b.address.toLowerCase().includes(searchQuery.toLowerCase());
+      const serviceName = b.serviceName || '';
+      const address = b.address || '';
+      const matchesSearch = serviceName.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            address.toLowerCase().includes(searchQuery.toLowerCase());
       return matchesFilter && matchesSearch;
     });
-  }, [activeFilter, searchQuery]);
+  }, [bookings, activeFilter, searchQuery]);
 
   if (!user) {
     return (
@@ -142,6 +130,12 @@ export default function MyBookings() {
         </div>
 
         <div className="container px-4 py-8">
+           {loading ? (
+             <div className="text-center py-20 bg-white rounded-[2.5rem] border-2 border-dashed border-slate-200">
+               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+               <h3 className="text-xl font-bold text-slate-800">Loading bookings...</h3>
+             </div>
+           ) : (
            <AnimatePresence mode="popLayout">
             {filteredBookings.length > 0 ? (
                <motion.div layout className="grid gap-6">
@@ -150,53 +144,52 @@ export default function MyBookings() {
                    const StatusIcon = config.icon;
                    return (
                      <motion.div
-                       key={booking.id}
+                       key={booking._id}
                        initial={{ opacity: 0, scale: 0.95 }}
                        animate={{ opacity: 1, scale: 1 }}
                        exit={{ opacity: 0, scale: 0.95 }}
                        layout
                      >
                        <Card className="rounded-[2rem] border-slate-200/60 hover:border-primary/40 hover:shadow-xl hover:shadow-slate-200/50 transition-all duration-500 overflow-hidden bg-white">
-                         <CardContent className="p-6 md:p-8">
-                           <div className="flex flex-col md:flex-row gap-6 items-start">
+                          <CardContent className="p-6 md:p-8">
+                            <div className="flex flex-col md:flex-row gap-6 items-start">
                              {/* Service Icon Area */}
                              <div 
-                               className="h-16 w-16 md:h-20 md:w-20 rounded-[1.5rem] flex items-center justify-center shadow-inner shrink-0"
-                               style={{ backgroundColor: `${booking.color}15` }}
+                               className="h-16 w-16 md:h-20 md:w-20 rounded-[1.5rem] flex items-center justify-center shadow-inner shrink-0 bg-blue-50"
                              >
-                               <Briefcase className="h-8 w-8 md:h-10 md:w-10" style={{ color: booking.color }} />
+                               <Briefcase className="h-8 w-8 md:h-10 md:w-10 text-blue-500" />
                              </div>
 
                              {/* Booking Info */}
                              <div className="flex-1 space-y-4">
                                <div className="flex flex-wrap items-center gap-3">
                                  <h3 className="text-xl font-black text-slate-900">
-                                   {language === 'hi' ? booking.serviceHi : booking.service}
+                                   {booking.serviceName || 'Service'}
                                  </h3>
-                                 <Badge className={cn("rounded-full px-3 py-1 font-bold", config.bg, config.color)}>
-                                   <StatusIcon className="h-3 w-3 mr-1.5" />
-                                   {language === 'hi' ? config.labelHi : config.label}
+                                 <Badge className={cn("rounded-full px-3 py-1 font-bold", config?.bg || 'bg-slate-100', config?.color || 'text-slate-500')}>
+                                   {StatusIcon && <StatusIcon className="h-3 w-3 mr-1.5" />}
+                                   {language === 'hi' ? config?.labelHi : config?.label}
                                  </Badge>
                                </div>
 
                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-8 text-sm text-slate-500 font-medium">
                                  <div className="flex items-center gap-3">
-                                   <Calendar className="h-4 w-4 text-slate-400" /> {booking.date}
+                                   <Calendar className="h-4 w-4 text-slate-400" /> {new Date(booking.createdAt).toLocaleDateString()}
                                  </div>
                                  <div className="flex items-center gap-3">
-                                   <Clock className="h-4 w-4 text-slate-400" /> {booking.time}
+                                   <Clock className="h-4 w-4 text-slate-400" /> {new Date(booking.createdAt).toLocaleTimeString()}
                                  </div>
                                  <div className="flex items-start gap-3 sm:col-span-2">
-                                   <MapPin className="h-4 w-4 text-slate-400 mt-0.5" /> {booking.address}
+                                   <MapPin className="h-4 w-4 text-slate-400 mt-0.5" /> {booking.address || 'Address not specified'}
                                  </div>
                                </div>
 
-                               {booking.worker && (
+                               {booking.workerName && (
                                  <div className="pt-4 border-t border-slate-50 mt-4 flex items-center gap-3">
                                    <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
-                                     {booking.worker[0]}
+                                     {booking.workerName.charAt(0).toUpperCase()}
                                    </div>
-                                   <span className="text-sm font-bold text-slate-700">Assigned Pro: {booking.worker}</span>
+                                   <span className="text-sm font-bold text-slate-700">Assigned Pro: {booking.workerName}</span>
                                  </div>
                                 )}
                              </div>
@@ -209,9 +202,9 @@ export default function MyBookings() {
                                </div>
                                
                                <div className="flex gap-2 w-full">
-                                 {booking.status === 'in_progress' ? (
+                                 {booking.status === 'in_progress' || booking.status === 'pending' || booking.status === 'accepted' ? (
                                    <Button 
-                                     onClick={() => navigate(`/tracking/${booking.id}`)}
+                                     onClick={() => navigate(`/tracking/${booking._id}`)}
                                      className="rounded-xl px-6 font-bold flex-1 md:flex-none shadow-lg shadow-primary/20"
                                    >
                                      Track Live
@@ -237,7 +230,7 @@ export default function MyBookings() {
                                  {(booking.status === 'completed' || booking.status === 'cancelled') && (
                                     <Button 
                                       className="rounded-xl px-4 font-bold"
-                                      onClick={() => navigate(`/book/${booking.service.toLowerCase().replace(/\s+/g, '-')}`)}
+                                      onClick={() => navigate(`/book/${(booking.serviceName || 'general').toLowerCase().replace(/\s+/g, '-')}`)}
                                     >
                                       Rebook <ChevronRight className="h-4 w-4 ml-1" />
                                     </Button>
@@ -260,6 +253,7 @@ export default function MyBookings() {
               </motion.div>
             )}
            </AnimatePresence>
+           )}
         </div>
       </div>
     </Layout>

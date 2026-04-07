@@ -3,6 +3,8 @@ import { WorkerProfile } from '../models/WorkerProfile.js';
 import { ObjectId } from 'mongodb';
 import { getIO, getConnectedUserIds } from '../socket.js';  // ← singleton, no circular dep
 import { createNotification } from './notification.controller.js';
+import { sendEmail } from '../utils/emailService.js';
+import { getDb } from '../config/db.js';
 
 const toObjectId = (id) => {
   try {
@@ -102,9 +104,9 @@ export const createBooking = async (req, res) => {
         io.to(workerRoom.toString()).emit('new_booking', bookingPayload);
         console.log(`📡 Emitted new_booking → room: ${workerRoom}`);
       } else {
-        // BROADCAST to ALL connected sockets (all online workers will receive it)
-        io.emit('new_booking', bookingPayload);
-        console.log(`📡 Broadcasted new_booking to ALL connected clients`);
+        // BROADCAST to ALL connected workers (only online workers will receive it)
+        io.to('worker').emit('new_booking', bookingPayload);
+        console.log(`📡 Broadcasted new_booking to ALL connected workers`);
       }
     }
 
@@ -140,6 +142,30 @@ export const createBooking = async (req, res) => {
           `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
           insertedId.toString()
         );
+      }
+    }
+
+    // ── Email customer their booking OTPs ─────────────────────────────────────
+    if (customer_user_id) {
+      try {
+        const db = getDb();
+        const customerUser = await db.collection('users').findOne({ _id: toObjectId(customer_user_id) });
+        if (customerUser?.email) {
+          const otpStart = doc.otp_start;
+          const otpFinish = doc.otp_finish;
+          sendEmail(
+            customerUser.email,
+            `RAHI Booking Confirmed — Your Service OTPs`,
+            `Your ${serviceName || 'service'} booking has been placed successfully!\n\n` +
+            `📍 Address: ${address || 'Not specified'}\n` +
+            `💰 Amount: ₹${amount || 0}\n\n` +
+            `🔐 Share this OTP with the worker when they ARRIVE to START work:\n   Start OTP: ${otpStart}\n\n` +
+            `✅ Share this OTP with the worker when they FINISH to COMPLETE work:\n   Finish OTP: ${otpFinish}\n\n` +
+            `Keep these OTPs safe. Do not share them until the worker is physically present.`
+          ).catch(e => console.error('[Booking OTP Email] Failed:', e.message));
+        }
+      } catch (emailErr) {
+        console.error('[Booking OTP Email] Error fetching user:', emailErr.message);
       }
     }
 
@@ -397,6 +423,57 @@ export const getById = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * @desc Cancel a booking (Only customer who made it can cancel)
+ * @route PATCH /api/bookings/:id/cancel
+ * @access Protected
+ */
+export const cancelBooking = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const objId = toObjectId(id);
+    if (!objId) return res.status(400).json({ message: 'Invalid booking ID format.' });
+
+    const booking = await Booking.collection().findOne({ _id: objId });
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found.' });
+    }
+
+    // Only allow if pending or accepted (not completed or already cancelled)
+    if (!['pending', 'accepted'].includes(booking.status)) {
+      return res.status(400).json({ message: `Cannot cancel a booking that is ${booking.status}.` });
+    }
+
+    // Verify it's the customer's booking
+    if (booking.customer_user_id?.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Not authorized to cancel this booking.' });
+    }
+
+    await Booking.collection().updateOne(
+      { _id: objId },
+      { $set: { status: 'cancelled', updatedAt: new Date() } }
+    );
+
+    const io = getIO();
+    if (io) {
+      // Notify the customer
+      io.to(booking.customer_user_id.toString()).emit('booking_cancelled', { bookingId: booking._id });
+      // Notify the worker if assigned
+      if (booking.worker_user_id) {
+        io.to(booking.worker_user_id.toString()).emit('booking_cancelled', { bookingId: booking._id });
+      } else {
+        // Broadcast to all workers to remove from their queue if pending
+        io.to('worker').emit('booking_taken', { bookingId: booking._id, reason: 'cancelled' }); 
+      }
+    }
+
+    return res.status(200).json({ ...booking, status: 'cancelled' });
+  } catch (error) {
+    console.error('Error in cancelBooking:', error);
+    res.status(500).json({ message: 'Server error cancelling booking.' });
   }
 };
 

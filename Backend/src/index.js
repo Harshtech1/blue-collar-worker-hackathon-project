@@ -285,8 +285,53 @@ connectDB()
     httpServer.listen(PORT, '0.0.0.0', () =>
       console.log(`🚀 RAHI Server + Socket.IO → http://0.0.0.0:${PORT}`)
     );
+
+    // ── Booking Timeout Job — Auto-cancel stale pending bookings ──────────────
+    // Runs every 2 minutes; cancels bookings pending for > 15 minutes
+    const BOOKING_TIMEOUT_MS = 15 * 60 * 1000;   // 15 minutes
+    const CHECK_INTERVAL_MS  =  2 * 60 * 1000;   //  2 minutes
+
+    setInterval(async () => {
+      try {
+        const db = getDb();
+        const cutoff = new Date(Date.now() - BOOKING_TIMEOUT_MS);
+
+        const stale = await db.collection('bookings').find({
+          status: 'pending',
+          worker_user_id: null,
+          createdAt: { $lt: cutoff },
+        }).toArray();
+
+        if (stale.length === 0) return;
+
+        const ids = stale.map(b => b._id);
+        await db.collection('bookings').updateMany(
+          { _id: { $in: ids } },
+          { $set: { status: 'cancelled', cancelReason: 'timeout', updatedAt: new Date() } }
+        );
+        console.log(`⏰ [Timeout Job] Auto-cancelled ${stale.length} stale pending booking(s)`);
+
+        // Notify customers via socket
+        const { getIO } = await import('./socket.js');
+        const io = getIO();
+        if (io) {
+          for (const booking of stale) {
+            if (booking.customer_user_id) {
+              io.to(booking.customer_user_id.toString()).emit('booking_cancelled', {
+                bookingId: booking._id.toString(),
+                reason: 'timeout',
+                message: 'No workers were available. Your booking has been cancelled.',
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('⏰ [Timeout Job] Error:', err.message);
+      }
+    }, CHECK_INTERVAL_MS);
   })
   .catch((err) => {
     console.error("❌ DB connection failed:", err.message);
     process.exit(1);
   });
+

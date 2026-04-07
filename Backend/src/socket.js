@@ -39,6 +39,9 @@ export function initSocket(httpServer) {
       socket.join(userId);
       socket.data.userId = userId;
       socket.data.role = role || 'unknown';
+      if (role) {
+        socket.join(role);
+      }
 
       // Track this user in connectedUsers map
       if (!connectedUsers.has(userId)) {
