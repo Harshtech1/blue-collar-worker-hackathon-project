@@ -100,6 +100,32 @@ const WorkerNotificationsPage = () => {
     }
   };
 
+  const updateBookingStatus = async (notificationId: string, bookingId: string, status: string) => {
+    if (!token) return;
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/api/bookings/${bookingId}/respond`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ status })
+      });
+
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+      
+      toast.success(`Booking ${status}`);
+      // Mark as read after responding
+      await markAsRead(notificationId);
+      // Fetch latest
+      await fetchNotifications();
+    } catch (error) {
+      console.error('Error responding to booking:', error);
+      toast.error('Failed to update booking');
+      setLoading(false);
+    }
+  };
+
   const markAllAsRead = async () => {
     if (!token) return;
     try {
@@ -204,7 +230,29 @@ const WorkerNotificationsPage = () => {
             </div>
           </div>
           <p className="text-sm text-slate-500 mt-1 line-clamp-2">{notification.message}</p>
-          {!notification.read && (
+          
+          {notification.type === 'new_booking' && !notification.read && notification.relatedId && (
+            <div className="flex gap-2 mt-3">
+              <Button
+                variant="default"
+                size="sm"
+                className="h-8 bg-green-600 hover:bg-green-700 text-white"
+                onClick={() => updateBookingStatus(notification._id, notification.relatedId, 'accepted')}
+              >
+                Accept Booking
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-8"
+                onClick={() => updateBookingStatus(notification._id, notification.relatedId, 'declined')}
+              >
+                Decline
+              </Button>
+            </div>
+          )}
+
+          {!notification.read && notification.type !== 'new_booking' && (
             <Button
               variant="ghost"
               size="sm"

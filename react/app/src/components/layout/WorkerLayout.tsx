@@ -83,15 +83,14 @@ const WorkerLayout = () => {
     if (!user) return;
     
     try {
-      const { data, error } = await db
-        .collection('worker_profiles')
-        .select('*')
-        .eq('user_id', user.id || user._id)
-        .single();
-      
-      if (data) {
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || user._id}`);
+      if (res.ok) {
+        const data = await res.json();
         setWorkerProfile(data);
-        setIsOnline(data.status === 'online');
+        setIsOnline(data.status === 'online' || data.status === 'available');
+      } else {
+        // Treat as offline if no profile exists yet
+        setWorkerProfile({ status: 'offline' });
       }
     } catch (error) {
       console.error('Error fetching worker profile:', error);
@@ -99,22 +98,41 @@ const WorkerLayout = () => {
   };
   
   const toggleOnlineStatus = async () => {
-    if (!user || !workerProfile) return;
+    if (!user) return;
     
     try {
       const newStatus = isOnline ? 'offline' : 'online';
-      const { error } = await db
-        .collection('worker_profiles')
-        .update({ status: newStatus })
-        .eq('user_id', user.id || user._id);
+      // Optimistic update
+      setIsOnline(!isOnline);
       
-      if (!error) {
-        setIsOnline(!isOnline);
-        // For now, we'll just update the status in the worker_profiles table
-        // In a real implementation, we would create a notifications table or use a different approach
+      const payload = { status: newStatus };
+      
+      let res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || user._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.status === 404) {
+        // Profile doesn't exist, create it
+        res = await fetch(`${API_BASE}/api/worker-profiles`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ userId: user.id || user._id, status: newStatus, bio: 'Worker Profile' })
+        });
+      }
+      
+      if (!res.ok) {
+        // Revert on failure
+        setIsOnline(isOnline);
+        console.error('Failed to update status');
+      } else {
+        const updated = await res.json();
+        setWorkerProfile(updated);
         console.log(`${profile?.full_name || 'Worker'} is now ${newStatus}`);
       }
     } catch (error) {
+      setIsOnline(isOnline);
       console.error('Error updating status:', error);
     }
   };
