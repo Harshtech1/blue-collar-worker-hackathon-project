@@ -174,99 +174,153 @@ export const respondToBooking = async (req, res) => {
     const objId = toObjectId(id);
     if (!objId) return res.status(400).json({ message: 'Invalid booking ID' });
 
-    const updates = {
-      status,
-      updatedAt: new Date(),
-    };
+    const io = getIO();
 
-    // If accepted, assign this worker to the booking
-    if (status === 'accepted' && req.user) {
-      updates.worker_user_id = req.user._id.toString();
+    // ─────────────────────────────────────────────────────────────────────────
+    // ACCEPT: Atomic "first-wins" guard using a filter on status: 'pending'
+    // If another worker already accepted, findOneAndUpdate returns null → 409.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (status === 'accepted') {
+      const updates = {
+        status: 'accepted',
+        updatedAt: new Date(),
+        worker_user_id: req.user._id.toString(),
+        workerName: req.user.full_name || 'Worker',
+        workerPhone: req.user.phone || '',
+      };
 
-      // Try to find the worker's profile to get their name
+      // Try to link the worker's profile document
       const workerProfile = await WorkerProfile.collection().findOne({ user: req.user._id });
       if (workerProfile) {
         updates.worker = workerProfile._id;
       }
-      updates.workerName = req.user.full_name || 'Worker';
-      updates.workerPhone = req.user.phone || '';
+
+      // ── ATOMIC: Only succeeds if booking is still 'pending' ───────────────
+      const result = await Booking.collection().findOneAndUpdate(
+        { _id: objId, status: 'pending' },  // ← Race condition guard
+        { $set: updates },
+        { returnDocument: 'after' }
+      );
+
+      // Handle both old and new MongoDB driver return shapes
+      const updatedBooking = result?.value ?? result;
+
+      // If null, the booking was already taken by another worker
+      if (!updatedBooking || !updatedBooking._id) {
+        // Fetch the current booking to find out who took it
+        const existingBooking = await Booking.collection().findOne({ _id: objId });
+
+        // Emit 'booking_taken' to THIS worker so their modal auto-dismisses
+        if (io && req.user) {
+          io.to(req.user._id.toString()).emit('booking_taken', {
+            bookingId: id,
+            takenBy: existingBooking?.workerName || 'Another worker',
+            message: 'This booking was already accepted by another worker.',
+          });
+          console.log(`⚡ Emitted booking_taken → worker: ${req.user._id} (arrived too late)`);
+        }
+
+        return res.status(409).json({
+          message: 'This booking was already accepted by another worker.',
+          code: 'BOOKING_ALREADY_TAKEN',
+        });
+      }
+
+      // ── SUCCESS: This worker won the race ────────────────────────────────
+
+      // Notify customer
+      if (io) {
+        const customerRoom = updatedBooking.customer_user_id?.toString();
+        if (customerRoom) {
+          io.to(customerRoom).emit('booking_updated', {
+            bookingId: id,
+            status: 'accepted',
+            workerName: updates.workerName,
+            workerPhone: updates.workerPhone,
+            worker_user_id: updates.worker_user_id,
+            updatedAt: new Date(),
+          });
+          console.log(`📡 Emitted booking_updated (accepted) → customer room: ${customerRoom}`);
+        }
+
+        // Confirm to the winning worker
+        io.to(req.user._id.toString()).emit('booking_updated', {
+          bookingId: id,
+          status: 'accepted',
+          updatedAt: new Date(),
+        });
+      }
+
+      // DB notifications
+      if (updatedBooking.customer_user_id) {
+        await createNotification(
+          updatedBooking.customer_user_id,
+          'status_update',
+          `✅ Worker accepted your booking!`,
+          `${updates.workerName} has accepted your ${updatedBooking.serviceName || 'service'} request and is on the way!`,
+          id
+        );
+      }
+      await createNotification(
+        req.user._id.toString(),
+        'booking_confirmed',
+        `✅ You accepted a booking`,
+        `You've accepted ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request. Head to: ${updatedBooking.address || 'the location'}.`,
+        id
+      );
+
+      return res.json({ success: true, booking: updatedBooking });
     }
 
-    const booking = await Booking.collection().findOneAndUpdate(
+    // ─────────────────────────────────────────────────────────────────────────
+    // DECLINE: No race condition risk — just record the decline
+    // ─────────────────────────────────────────────────────────────────────────
+    const declineResult = await Booking.collection().findOneAndUpdate(
       { _id: objId },
-      { $set: updates },
+      { $set: { status: 'declined', updatedAt: new Date() } },
       { returnDocument: 'after' }
     );
 
-    const updatedBooking = booking.value || booking;
+    const updatedBooking = declineResult?.value ?? declineResult;
 
-    if (!updatedBooking) {
+    if (!updatedBooking || !updatedBooking._id) {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // ── Emit booking_updated to customer's socket room ────────────────────
-    const io = getIO();
+    // Notify customer of decline
     if (io) {
       const customerRoom = updatedBooking.customer_user_id?.toString();
       if (customerRoom) {
         io.to(customerRoom).emit('booking_updated', {
           bookingId: id,
-          status,
-          workerName: updates.workerName || null,
-          workerPhone: updates.workerPhone || null,
-          worker_user_id: updates.worker_user_id || null,
+          status: 'declined',
           updatedAt: new Date(),
         });
-        console.log(`📡 Emitted booking_updated (${status}) → customer room: ${customerRoom}`);
-      }
-
-      // Also confirm back to the worker
-      if (req.user) {
-        io.to(req.user._id.toString()).emit('booking_updated', {
-          bookingId: id,
-          status,
-          updatedAt: new Date(),
-        });
+        console.log(`📡 Emitted booking_updated (declined) → customer room: ${customerRoom}`);
       }
     }
 
-    // ── Create notification in DB for the CUSTOMER ─────────────────────────
+    // DB notifications for decline
     if (updatedBooking.customer_user_id) {
-      const title = status === 'accepted'
-        ? `✅ Worker accepted your booking!`
-        : `❌ Worker declined your request`;
-      const message = status === 'accepted'
-        ? `${updates.workerName || 'A worker'} has accepted your ${updatedBooking.serviceName || 'service'} request and is on the way!`
-        : `Your ${updatedBooking.serviceName || 'service'} request was declined. We'll find another worker.`;
-
       await createNotification(
         updatedBooking.customer_user_id,
         'status_update',
-        title,
-        message,
+        `❌ Worker declined your request`,
+        `Your ${updatedBooking.serviceName || 'service'} request was declined. We'll find another worker.`,
         id
       );
     }
-
-    // ── Create notification in DB for the WORKER ──────────────────────────
     if (req.user) {
-      const workerTitle = status === 'accepted'
-        ? `✅ You accepted a booking`
-        : `❌ You declined a booking`;
-      const workerMessage = status === 'accepted'
-        ? `You've accepted ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request. Head to: ${updatedBooking.address || 'the location'}.`
-        : `You declined ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request.`;
-
       await createNotification(
         req.user._id.toString(),
-        status === 'accepted' ? 'booking_confirmed' : 'booking_cancelled',
-        workerTitle,
-        workerMessage,
+        'booking_cancelled',
+        `❌ You declined a booking`,
+        `You declined ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request.`,
         id
       );
     }
 
-    res.json({ success: true, booking: updatedBooking });
+    return res.json({ success: true, booking: updatedBooking });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
