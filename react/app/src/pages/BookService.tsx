@@ -97,14 +97,17 @@ export default function BookService() {
   // Get detailed items for the current service
   const detailedItems = useMemo(() => {
     const key = serviceId?.toLowerCase();
-    if (key?.includes('plumbing')) return SERVICE_DATA_MAP.plumbing;
+    if (key?.includes('plumbing') || key?.includes('plumber')) return SERVICE_DATA_MAP.plumbing;
     if (key?.includes('electrical') || key?.includes('electrician')) return SERVICE_DATA_MAP.electrical;
     if (key?.includes('carpentry') || key?.includes('carpenter')) return SERVICE_DATA_MAP.carpentry;
     if (key?.includes('painting') || key?.includes('painter')) return SERVICE_DATA_MAP.painting;
-    if (key?.includes('ac-repair') || key?.includes('ac-services')) return SERVICE_DATA_MAP['ac-repair'];
+    if (key?.includes('tiles') || key?.includes('tile')) return SERVICE_DATA_MAP.tiles;
+    if (key?.includes('appliance')) return SERVICE_DATA_MAP['appliance-repair'];
+    if (key?.includes('ac-repair') || key?.includes('ac-services') || key?.includes('ac')) return SERVICE_DATA_MAP['ac-repair'];
     if (key?.includes('thekedar')) return SERVICE_DATA_MAP.thekedar;
     return null;
   }, [serviceId]);
+
 
   // If detailed items exist, we have 4 steps, otherwise 3
   const hasSubItems = !!detailedItems;
