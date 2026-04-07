@@ -34,14 +34,14 @@ interface IncomingBooking {
   customer_user_id: string | null;
 }
 
-export function IncomingBookingModal() {
+export function IncomingBookingModal({ isOnline }: { isOnline: boolean }) {
   const { socket } = useSocket();
   const [booking, setBooking] = useState<IncomingBooking | null>(null);
   const [loading, setLoading] = useState<'accept' | 'decline' | null>(null);
 
   // ── Listen for new_booking events ──────────────────────────────────────────
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !isOnline) return;
 
     const handleNewBooking = (data: IncomingBooking) => {
       console.log('📥 new_booking received:', data);

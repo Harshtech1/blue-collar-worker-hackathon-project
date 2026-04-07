@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,7 @@ const monthlyData = [
 
 const WorkerDashboard = () => {
   const navigate = useNavigate();
+  const { isOnline } = useOutletContext<{ isOnline: boolean }>();
   const { user, profile } = useAuth();
   const { activeJobs, pendingJobs, allJobs, updateJobStatus, startJob, completeJob } = useJobRequests();
 
@@ -66,10 +67,10 @@ const WorkerDashboard = () => {
 
   // Fetch jobs and profile data
   useEffect(() => {
-    if (user && profile?.role === 'worker') {
+    if (user && profile?.role === 'worker' && isOnline) {
       fetchDashboardData();
     }
-  }, [user, profile]);
+  }, [user, profile, isOnline]);
 
   const fetchDashboardData = async () => {
     if (!user) return;
@@ -188,6 +189,17 @@ const WorkerDashboard = () => {
 
   return (
     <div className="container mx-auto py-6 px-4 animate-fade-in">
+      {/* Offline Status Banner */}
+      {!isOnline && (
+        <div className="mb-6 p-4 bg-gray-100 border border-gray-300 rounded-xl flex items-center gap-3">
+          <AlertCircle className="h-6 w-6 text-gray-500" />
+          <div>
+            <h3 className="font-bold text-gray-800">You are currently Offline</h3>
+            <p className="text-sm text-gray-600">You won't receive any job requests or notifications until you go back online.</p>
+          </div>
+        </div>
+      )}
+
       {/* Reminder Banner */}
       {reminders.filter(r => r.urgent).length > 0 && (
         <div className="mb-6 p-4 bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-300 rounded-xl animate-pulse">

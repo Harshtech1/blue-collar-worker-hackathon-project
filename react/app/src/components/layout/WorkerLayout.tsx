@@ -66,12 +66,13 @@ const WorkerLayout = () => {
 
   // Poll for notifications every 30 seconds
   useEffect(() => {
-    if (user && token) {
+    // Only poll if worker is online
+    if (user && token && isOnline) {
       fetchNotifications();
       const interval = setInterval(fetchNotifications, 30000);
       return () => clearInterval(interval);
     }
-  }, [user, token]);
+  }, [user, token, isOnline]);
 
   // Fetch worker profile and status
   useEffect(() => {
@@ -178,7 +179,7 @@ const WorkerLayout = () => {
   return (
     <div className="flex h-screen bg-gradient-to-br from-orange-50 to-amber-50">
       {/* REAL-TIME: IncomingBookingModal listens globally across all worker pages */}
-      <IncomingBookingModal />
+      <IncomingBookingModal isOnline={isOnline} />
       {/* REAL-TIME: WorkerLocationTracker tracks worker live location for active bookings */}
       <WorkerLocationTracker />
       {/* Sidebar for desktop */}
@@ -379,7 +380,7 @@ const WorkerLayout = () => {
         {/* Page content */}
         <div className="flex-1 overflow-y-auto">
           <div className="animate-fade-in-up">
-            <Outlet />
+            <Outlet context={{ isOnline }} />
           </div>
         </div>
       </main>

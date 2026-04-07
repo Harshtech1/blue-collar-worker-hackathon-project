@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ const WorkerNotificationsPage = () => {
   const { user, profile } = useAuth();
   const { socket } = useSocket();
   const navigate = useNavigate();
+  const { isOnline } = useOutletContext<{ isOnline: boolean }>();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -28,7 +29,7 @@ const WorkerNotificationsPage = () => {
 
   // ── Listen for new_booking & booking_updated socket events to auto-refresh ──
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !isOnline) return;
 
     const handleNewBooking = (data: any) => {
       // Audio notification
