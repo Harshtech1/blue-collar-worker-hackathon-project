@@ -81,6 +81,29 @@ export const createBooking = async (req, res) => {
     const result = await Booking.collection().insertOne(doc);
     const insertedId = result.insertedId;
 
+    // Phase 2: The Geospatial Matcher
+    let availableWorkers = [];
+    if (!worker_user_id && !workerId && customer_lng && customer_lat) {
+      try {
+        const coordinates = [parseFloat(customer_lng), parseFloat(customer_lat)];
+        
+        availableWorkers = await WorkerProfile.collection().find({
+          location: {
+            $near: {
+              $geometry: { type: "Point", coordinates },
+              $maxDistance: 10000 // 10km radius
+            }
+          },
+          isAvailable: true,
+          status: "online"
+        }).toArray();
+        
+        console.log(`🌐 Geospatial Matcher found ${availableWorkers.length} nearby workers within 10km!`);
+      } catch (geoErr) {
+        console.error("Geospatial Matcher Error:", geoErr.message);
+      }
+    }
+
     const bookingPayload = {
       bookingId: insertedId.toString(),
       serviceName: serviceName || 'Service Request',
@@ -104,9 +127,24 @@ export const createBooking = async (req, res) => {
         io.to(workerRoom.toString()).emit('new_booking', bookingPayload);
         console.log(`📡 Emitted new_booking → room: ${workerRoom}`);
       } else {
-        // BROADCAST to ALL connected workers (only online workers will receive it)
-        io.to('worker').emit('new_booking', bookingPayload);
-        console.log(`📡 Broadcasted new_booking to ALL connected workers`);
+        // Broadcast to matched workers or fallback to ALL online workers
+        if (availableWorkers.length > 0) {
+          availableWorkers.forEach(worker => {
+            io.to(worker.user.toString()).emit('new_booking', bookingPayload);
+          });
+          console.log(`📡 Broadcasted new_booking to ${availableWorkers.length} matching nearby workers`);
+        } else {
+          // Fallback: Notify explicitly ONLINE workers
+          try {
+            const allOnlineWorkers = await WorkerProfile.collection().find({ status: "online", isAvailable: true }).toArray();
+            allOnlineWorkers.forEach(worker => {
+              io.to(worker.user.toString()).emit('new_booking', bookingPayload);
+            });
+            console.log(`📡 Broadcasted new_booking to ${allOnlineWorkers.length} online workers (fallback)`);
+          } catch (e) {
+            console.error('Socket fallback error: ', e.message);
+          }
+        }
       }
     }
 
@@ -121,27 +159,44 @@ export const createBooking = async (req, res) => {
       );
     }
 
-    // ── Save notification in DB for targeted WORKER ───────────────────────────
-    if (worker_user_id) {
+    // ── Save notification in DB for WORKER(s) ─────────────────────────────────
+    if (worker_user_id || workerId) {
+      const targetWorker = worker_user_id || workerId;
       await createNotification(
-        worker_user_id,
+        targetWorker.toString(),
         'new_booking',
         `🆕 New Booking Request!`,
         `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
         insertedId.toString()
       );
-    } else {
-      // BROADCAST: Save a notification for ALL connected users (except the customer)
-      const connectedIds = getConnectedUserIds();
-      for (const uid of connectedIds) {
-        if (uid === customer_user_id) continue; // skip the customer who booked
+    } else if (availableWorkers.length > 0) {
+      // Create notification only for nearby matched workers
+      for (const worker of availableWorkers) {
         await createNotification(
-          uid,
+          worker.user.toString(),
           'new_booking',
-          `🆕 New Booking Request!`,
+          `🆕 New Booking Request near you!`,
           `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
           insertedId.toString()
         );
+      }
+    } else {
+      // Fallback: Save a notification explicitly for ONLINE and AVAILABLE workers
+      try {
+        const allOnlineWorkers = await WorkerProfile.collection().find({ status: "online", isAvailable: true }).toArray();
+        for (const worker of allOnlineWorkers) {
+          const uid = worker.user.toString();
+          if (uid === customer_user_id) continue;
+          await createNotification(
+            uid,
+            'new_booking',
+            `🆕 New Booking Request!`,
+            `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
+            insertedId.toString()
+          );
+        }
+      } catch (err) {
+        console.error('Fallback DB notifications error: ', err.message);
       }
     }
 
@@ -368,6 +423,25 @@ export const listBookings = async (req, res) => {
     // Filter by customer_user_id
     if (req.query.customer_user_id) {
       query.customer_user_id = req.query.customer_user_id;
+    }
+
+    // Worker Job Filter: If a worker is requesting pending jobs, filter by their profession.
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer') && req.query.status === 'pending') {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const jwt = await import('jsonwebtoken'); // dynamic import since it's not at the top
+        const decoded = jwt.default.verify(token, process.env.JWT_SECRET || 'changeme');
+        if (decoded.role === 'worker') {
+          const wp = await WorkerProfile.collection().findOne({ user: toObjectId(decoded.id) });
+          // If the worker has a profession string in bio, filter matching sub-categories. 
+          // We can use a regex to match things loosely (e.g., 'plumb' matches 'Plumber').
+          if (wp && wp.bio) {
+             query.serviceName = { $regex: new RegExp(wp.bio.slice(0,4), 'i') }; // slice(0,4) for Plumber->Plumb
+          }
+        }
+      } catch (err) {
+        console.warn('listBookings token parse warning:', err.message);
+      }
     }
 
     const pipeline = [
