@@ -15,7 +15,6 @@ import serviceRoutes from "./routes/service.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
 import jwt from "jsonwebtoken";
-import path from "path";
 
 import { fileURLToPath } from "url";
 import path from "path";

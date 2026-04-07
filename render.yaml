@@ -25,3 +25,6 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+      - key: RESEND_API_KEY
+        sync: false
+
