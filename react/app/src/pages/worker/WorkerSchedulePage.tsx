@@ -47,7 +47,7 @@ const WorkerSchedulePage = () => {
       setLoading(true);
 
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
       
       // Fetch all bookings for this worker via API
       const res = await fetch(`${API_BASE}/api/bookings?worker_user_id=${user.id || user._id}`, {
@@ -96,7 +96,7 @@ const WorkerSchedulePage = () => {
       if (!user) return;
 
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
       // Update job status based on action
       let newStatus = '';

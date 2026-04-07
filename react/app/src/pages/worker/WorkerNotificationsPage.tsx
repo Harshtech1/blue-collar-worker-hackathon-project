@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
 
-const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
 const WorkerNotificationsPage = () => {
   const { user, profile } = useAuth();

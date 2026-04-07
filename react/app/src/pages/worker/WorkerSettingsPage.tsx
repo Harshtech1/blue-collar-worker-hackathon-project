@@ -121,7 +121,7 @@ const WorkerSettingsPage = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
       
       // Fetch worker profile via API
       const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
@@ -167,7 +167,7 @@ const WorkerSettingsPage = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
       
       const formData = new FormData();
       formData.append('file', file);
@@ -199,7 +199,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
       const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
         method: 'PATCH',
@@ -227,7 +227,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
       const res = await fetch(`${API_BASE}/api/worker/settings/notifications`, {
         method: 'PATCH',
@@ -255,7 +255,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
       const res = await fetch(`${API_BASE}/api/worker/settings/security`, {
         method: 'PATCH',
@@ -283,7 +283,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
       const res = await fetch(`${API_BASE}/api/worker/settings/preferences`, {
         method: 'PATCH',

@@ -23,7 +23,7 @@ import { db } from "@/lib/db";
 import { IncomingBookingModal } from "@/components/worker/IncomingBookingModal";
 import { WorkerLocationTracker } from "@/components/worker/WorkerLocationTracker";
 
-const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
 const WorkerLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);

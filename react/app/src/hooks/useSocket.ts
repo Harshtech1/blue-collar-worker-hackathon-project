@@ -16,7 +16,7 @@ import { io, Socket } from 'socket.io-client';
 import { useAuth } from '@/contexts/AuthContext';
 
 const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+  import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
 // Module-level singleton so we don't create multiple connections
 let socketSingleton: Socket | null = null;

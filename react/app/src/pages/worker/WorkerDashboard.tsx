@@ -75,7 +75,7 @@ const WorkerDashboard = () => {
     if (!user) return;
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000';
+      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
       
       const res = await fetch(`${API_BASE}/api/notifications?limit=5`, {
         headers: { 'Authorization': `Bearer ${token}` }
