@@ -29,6 +29,9 @@ const WorkerNotificationsPage = () => {
     if (!socket) return;
 
     const handleNewBooking = (data: any) => {
+      // Audio notification
+      new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
+
       // Auto-refresh notifications list when a new booking comes in
       fetchNotifications();
       toast.info('🔔 New booking request received!', {
@@ -114,6 +117,10 @@ const WorkerNotificationsPage = () => {
         throw new Error(await res.text());
       }
       
+      if (status === 'accepted') {
+         new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
+      }
+
       toast.success(`Booking ${status}`);
       // Mark as read after responding
       await markAsRead(notificationId);

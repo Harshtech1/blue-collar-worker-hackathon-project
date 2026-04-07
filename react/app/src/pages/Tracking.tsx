@@ -140,6 +140,10 @@ export default function Tracking() {
             specialty: bookingData?.serviceName || 'Service Professional',
           });
         }
+        
+        // Play success audio
+        new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
+
         toast.success(
           language === 'hi'
             ? `✅ ${data.workerName || 'कारीगर'} ने स्वीकार किया!`
