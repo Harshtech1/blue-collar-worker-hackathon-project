@@ -86,6 +86,7 @@ export const createBooking = async (req, res) => {
     if (!worker_user_id && !workerId && customer_lng && customer_lat) {
       try {
         const coordinates = [parseFloat(customer_lng), parseFloat(customer_lat)];
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
         
         availableWorkers = await WorkerProfile.collection().find({
           location: {
@@ -95,8 +96,9 @@ export const createBooking = async (req, res) => {
             }
           },
           isAvailable: true,
-          status: "online"
-        }).toArray();
+          status: "online",
+          lastSeen: { $gte: tenMinutesAgo }
+        }).limit(10).toArray();
         
         console.log(`🌐 Geospatial Matcher found ${availableWorkers.length} nearby workers within 10km!`);
       } catch (geoErr) {
@@ -622,6 +624,26 @@ export const updateBooking = async (req, res) => {
     }
 
     res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+/**
+ * @desc Get chat messages for a booking
+ * @route GET /api/bookings/:id/messages
+ * @access Protected
+ */
+export const getBookingMessages = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    const messages = await db.collection('chat_messages')
+      .find({ bookingId: new ObjectId(id) })
+      .sort({ timestamp: 1 })
+      .toArray();
+    res.json(messages);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });

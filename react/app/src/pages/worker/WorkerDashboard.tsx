@@ -8,7 +8,7 @@ import { Calendar, MapPin, Package, DollarSign, Bell, Clock, CheckCircle, AlertC
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
 import { db } from '@/lib/db';
-import ChatComponent from '@/components/chat/ChatComponent';
+import ChatDrawer from '@/components/ChatDrawer';
 import { toast } from 'sonner';
 import { useJobRequests } from '@/hooks/useJobRequests';
 import {
@@ -49,7 +49,6 @@ const WorkerDashboard = () => {
 
   const [notifications, setNotifications] = useState<any[]>([]);
   const [reminders, setReminders] = useState<any[]>([]);
-  const [showChat, setShowChat] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
 
   // OTP State
@@ -57,6 +56,11 @@ const WorkerDashboard = () => {
   const [otpType, setOtpType] = useState<'start' | 'finish'>('start');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
+  
+  const [selectedChatJob, setSelectedChatJob] = useState<any>(null);
+  const currentUserId = user?._id || localStorage.getItem('userId') || '';
+
+  const [apiStats, setApiStats] = useState({ totalEarnings: 0, totalCompleted: 0, activeJobs: 0, monthlyStats: [] as any[] });
 
   // Fetch jobs and profile data
   useEffect(() => {
@@ -78,21 +82,30 @@ const WorkerDashboard = () => {
         const data = await res.json();
         setNotifications(data || []);
       }
+
+      // Fetch Real-Time Earnings Stats
+      const statsRes = await fetch(`${API_BASE}/api/worker/stats`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setApiStats(statsData);
+      }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     }
   };
 
-  // Dynamic Stats calculated from real jobs
+  // Dynamic Stats combining real API aggregation with active frontend state
   const stats = {
     todayJobs: allJobs.filter(j => {
       const today = new Date().toDateString();
       const jobDate = j.scheduled_at ? new Date(j.scheduled_at).toDateString() : new Date(j.created_at).toDateString();
       return jobDate === today;
     }).length,
-    completedJobs: allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid').length, 
+    completedJobs: apiStats.totalCompleted || allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid').length, 
     pendingJobs: pendingJobs.length + allJobs.filter(j => j.status === 'pending').length,
-    activeJobsCount: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
+    activeJobsCount: apiStats.activeJobs || allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
     upcomingJobs: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length + pendingJobs.length,
     earningsToday: allJobs
       .filter(j => (j.paymentStatus === 'paid'))
@@ -101,7 +114,7 @@ const WorkerDashboard = () => {
         return !isNaN(date.getTime()) && date.toDateString() === new Date().toDateString();
       })
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0),
-    totalEarnings: allJobs
+    totalEarnings: apiStats.totalEarnings || allJobs
       .filter(j => (j.paymentStatus === 'paid'))
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0)
   };
@@ -118,23 +131,33 @@ const WorkerDashboard = () => {
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleDateString('en-US', { month: 'short' });
       months[key] = { month: label, current: 0, previous: 0 };
     }
+
+    if (apiStats.monthlyStats && apiStats.monthlyStats.length > 0) {
+      apiStats.monthlyStats.forEach(stat => {
+        if (months[stat._id]) {
+          months[stat._id].current = stat.earnings;
+        }
+      });
+      return Object.values(months);
+    }
+
     allJobs
       .filter(j => j.paymentStatus === 'paid')
       .forEach(j => {
         const d = new Date(j.updated_at || j.created_at);
         if (isNaN(d.getTime())) return;
-        const key = `${d.getFullYear()}-${d.getMonth()}`;
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         if (months[key]) months[key].current += j.worker_earning || j.total_price || 0;
         // Previous year same month
-        const prevKey = `${d.getFullYear() - 1}-${d.getMonth()}`;
+        const prevKey = `${d.getFullYear() - 1}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         if (months[prevKey]) months[prevKey].previous += j.worker_earning || j.total_price || 0;
       });
     return Object.values(months);
-  }, [allJobs]);
+  }, [allJobs, apiStats.monthlyStats]);
 
   // Generate earning trend from completed jobs
   const earningsData = Array.from({ length: 7 }, (_, i) => {
@@ -565,6 +588,15 @@ const WorkerDashboard = () => {
                         )}
                         <Button 
                           size="sm" 
+                          variant="secondary"
+                          className="w-full text-xs font-bold bg-worker-primary/10 text-worker-primary hover:bg-worker-primary/20 border-worker-primary/20 transition-all active:scale-95"
+                          onClick={() => setSelectedChatJob(job)}
+                        >
+                          <MessageCircle className="w-4 h-4 mr-2" />
+                          Chat Customer
+                        </Button>
+                        <Button 
+                          size="sm" 
                           variant="outline"
                           className="w-full text-xs"
                           onClick={() => handleStartNavigation(job.address)}
@@ -725,11 +757,11 @@ const WorkerDashboard = () => {
               <Button 
                 variant="outline" 
                 className="flex flex-col items-start h-auto py-5 gap-2 border-gray-300 text-gray-700 hover:bg-gray-700 hover:text-white transition-all duration-300 hover-scale rounded-xl" 
-                onClick={() => setShowChat(true)}
+                onClick={() => activeJobs.length > 0 ? setSelectedChatJob(activeJobs[0]) : toast.info('No active jobs to chat')}
               >
                 <MessageCircle className="h-6 w-6" />
                 <span className="font-bold">Chat</span>
-                <span className="text-xs opacity-90">Communicate with team</span>
+                <span className="text-xs opacity-90">Communicate with customer</span>
               </Button>
             </div>
           </CardContent>
@@ -737,20 +769,15 @@ const WorkerDashboard = () => {
       </div>
 
       {/* Chat Component */}
-      {showChat && (
-        <div className="fixed bottom-4 right-4 z-50 w-96 h-[500px]">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg">Worker Chat</CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => setShowChat(false)}>
-                <X className="h-4 w-4" />
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <ChatComponent title="Worker Chat" />
-            </CardContent>
-          </Card>
-        </div>
+      {selectedChatJob && (
+        <ChatDrawer
+          isOpen={!!selectedChatJob}
+          onClose={() => setSelectedChatJob(null)}
+          bookingId={selectedChatJob.id || selectedChatJob._id}
+          currentUserId={currentUserId}
+          otherUserId={selectedChatJob.customer?._id || selectedChatJob.customer_id}
+          otherUserName={selectedChatJob.customer?.full_name || 'Customer'}
+        />
       )}
 
       {/* Reminders Modal */}

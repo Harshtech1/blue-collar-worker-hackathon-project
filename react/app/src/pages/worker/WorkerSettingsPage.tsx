@@ -13,6 +13,7 @@ import {
   User, 
   Bell, 
   Shield, 
+  ShieldCheck,
   Globe, 
   CreditCard, 
   Lock, 
@@ -100,6 +101,11 @@ const WorkerSettingsPage = () => {
     session_timeout: '30', // minutes
     password_reset_required: false
   });
+
+  // Aadhaar verification upload state
+  const [aadhaarFile, setAadhaarFile] = useState<File | null>(null);
+  const [aadhaarStatus, setAadhaarStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const [aadhaarUrl, setAadhaarUrl] = useState<string | null>(null);
   
   // Preferences
   const [preferences, setPreferences] = useState({
@@ -711,6 +717,99 @@ const WorkerSettingsPage = () => {
                   </Select>
                 </div>
                 
+                {/* ✅ Aadhaar Verification Upload */}
+                <div className="border rounded-xl p-4 bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="h-5 w-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-semibold text-blue-900 dark:text-blue-100">Identity Verification (Aadhaar)</h3>
+                      <p className="text-xs text-blue-600 dark:text-blue-400">Upload your Aadhaar card to get the "ID Verified" badge visible to customers and managers</p>
+                    </div>
+                    {aadhaarUrl && (
+                      <span className="ml-auto text-[10px] font-bold uppercase tracking-wide bg-green-100 text-green-700 border border-green-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" /> Verified
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="file"
+                      id="aadhaar-upload"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) setAadhaarFile(e.target.files[0]);
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-blue-300 text-blue-700 hover:bg-blue-100 gap-1.5"
+                      onClick={() => document.getElementById('aadhaar-upload')?.click()}
+                      disabled={aadhaarStatus === 'uploading'}
+                    >
+                      <Upload className="h-4 w-4" />
+                      {aadhaarFile ? aadhaarFile.name.slice(0, 20) + '…' : 'Choose File'}
+                    </Button>
+
+                    {aadhaarFile && (
+                      <Button
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+                        disabled={aadhaarStatus === 'uploading'}
+                        onClick={async () => {
+                          if (!aadhaarFile || !user) return;
+                          setAadhaarStatus('uploading');
+                          try {
+                            const token = localStorage.getItem('token');
+                            const API_BASE = import.meta.env.PROD
+                              ? 'https://blue-collar-worker-hackathon-project.onrender.com'
+                              : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+                            const fd = new FormData();
+                            fd.append('file', aadhaarFile);
+                            fd.append('type', 'aadhaar');
+                            const res = await fetch(`${API_BASE}/api/worker/profile/aadhaar`, {
+                              method: 'POST',
+                              headers: { Authorization: `Bearer ${token}` },
+                              body: fd,
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setAadhaarUrl(data.url || 'uploaded');
+                              setAadhaarStatus('done');
+                              toast.success('Aadhaar uploaded! Verification badge activated.');
+                            } else {
+                              setAadhaarStatus('error');
+                              toast.error('Upload failed. Please try again.');
+                            }
+                          } catch {
+                            setAadhaarStatus('error');
+                            toast.error('Network error during upload.');
+                          }
+                        }}
+                      >
+                        {aadhaarStatus === 'uploading' ? (
+                          <><div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Uploading...</>
+                        ) : (
+                          <><ShieldCheck className="h-3.5 w-3.5" /> Submit for Verification</>
+                        )}
+                      </Button>
+                    )}
+                  </div>
+
+                  {aadhaarStatus === 'done' && (
+                    <p className="text-xs text-green-600 font-medium flex items-center gap-1">
+                      <CheckCircle className="h-3 w-3" /> Document submitted — badge will appear on your profile within minutes.
+                    </p>
+                  )}
+                  {aadhaarStatus === 'error' && (
+                    <p className="text-xs text-red-500 flex items-center gap-1">
+                      <XCircle className="h-3 w-3" /> Upload failed. Check file size (max 5MB) and try again.
+                    </p>
+                  )}
+                </div>
+
                 <div className="border-t pt-4">
                   <h3 className="font-medium mb-4">Account Actions</h3>
                   <div className="space-y-3">

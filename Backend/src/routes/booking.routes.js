@@ -1,7 +1,9 @@
 import express from 'express';
-import { createBooking, listBookings, updateBooking, getByWorkerId, getById, respondToBooking, cancelBooking } from '../controllers/booking.controller.js';
+import { createBooking, listBookings, updateBooking, getByWorkerId, getById, respondToBooking, cancelBooking, getBookingMessages } from '../controllers/booking.controller.js';
 import { queryParser } from '../middlewares/queryParser.js';
 import { protect } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
+import { createBookingSchema } from '../validators/booking.validator.js';
 
 const router = express.Router();
 
@@ -9,7 +11,7 @@ const router = express.Router();
 router.get('/', queryParser, listBookings);
 
 // Create a new booking (customer — may or may not require auth)
-router.post('/', createBooking);
+router.post('/', validate(createBookingSchema), createBooking);
 
 // Worker responds (accept / decline) — requires auth
 router.patch('/:id/respond', protect, respondToBooking);
@@ -25,5 +27,8 @@ router.get('/worker/:workerId', getByWorkerId);
 
 // Get a single booking by id
 router.get('/:id', getById);
+
+// Get chat messages for a booking
+router.get('/:id/messages', protect, getBookingMessages);
 
 export default router;

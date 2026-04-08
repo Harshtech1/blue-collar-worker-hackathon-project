@@ -13,6 +13,7 @@ import { DataTable } from "./components/DataTable";
 import { SystemTab } from "./components/SystemTab";
 import { BugsTab } from "./components/BugsTab";
 import { FinanceTab } from "./components/FinanceTab";
+import { HeatmapTab } from "./components/HeatmapTab";
 import { API } from '@/lib/constants';
 
 /* ================= TYPES ================= */
@@ -349,6 +350,7 @@ export default function AdminDashboard() {
             />
           )}
           {activeTab === "finance" && <FinanceTab revenue={stats.totalRevenue} bookings={bookingsList} />}
+          {activeTab === "heatmap" && <HeatmapTab token={localStorage.getItem("adminToken") || ""} />}
           {activeTab === "system" && <SystemTab />}
           {activeTab === "bugs" && <BugsTab />}
 

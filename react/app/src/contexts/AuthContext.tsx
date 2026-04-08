@@ -103,34 +103,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
+
+      console.log(`[Auth] Login status: ${res.status}`);
+      const contentType = res.headers.get("content-type");
+      
       if (!res.ok) {
-        const err = await res.json();
-        return { error: new Error(err.message || 'Login failed') };
+        if (contentType && contentType.includes("application/json")) {
+           const err = await res.json();
+           return { error: new Error(err.message || 'Login failed') };
+        } else {
+           const text = await res.text();
+           console.error("[Auth] Non-JSON error response:", text);
+           return { error: new Error(`Login failed with status ${res.status}`) };
+        }
       }
-      const data = await res.json();
 
-      // If 2FA is required, we don't set user/token yet
-      if (data.requireOtp) {
-        return { data, error: null };
-      }
-
-      // Normal login (if 2FA disabled or handled otherwise)
-      if (data.token) {
-        if (data.role === 'admin') {
-          localStorage.setItem('adminToken', data.token);
-          window.location.href = '/admin-portal-2026';
-          // Return early so we don't proceed with normal state sets
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        // If 2FA is required, we don't set user/token yet
+        if (data.requireOtp) {
           return { data, error: null };
         }
-
-        localStorage.setItem('token', data.token);
-        setUser(data.user ? { ...data.user, id: data.user.id || data.user._id } : data.user);
-        const userId = data.user?.id || data.user?._id;
-        if (userId) {
-          setProfile({ id: userId, full_name: data.user.full_name, email: data.user.email, role: data.user.role });
+        
+        if (data.token) {
+          if (data.role === 'admin') {
+            localStorage.setItem('adminToken', data.token);
+            window.location.href = '/admin-portal-2026';
+            return { data, error: null };
+          }
+          localStorage.setItem('token', data.token);
+          setUser(data.user ? { ...data.user, id: data.user.id || data.user._id } : data.user);
+          const userId = data.user?.id || data.user?._id;
+          if (userId) {
+            setProfile({ id: userId, full_name: data.user.full_name, email: data.user.email, role: data.user.role });
+          }
         }
+        return { data, error: null };
+      } else {
+        const text = await res.text();
+        console.error("[Auth] Success status but non-JSON response:", text);
+        return { error: new Error("Server returned non-JSON response") };
       }
-      return { data, error: null };
     } catch (err: any) {
       return { error: err as Error };
     }

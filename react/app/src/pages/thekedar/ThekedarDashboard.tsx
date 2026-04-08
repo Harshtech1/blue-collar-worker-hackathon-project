@@ -20,7 +20,9 @@ import {
   Phone,
   CheckCircle,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -130,20 +132,94 @@ const dummyReminders = [
   { id: 2, title: 'Team meeting', titleHi: 'टीम मीटिंग', time: '3:00 PM', date: 'Tomorrow', customer: 'All team', urgent: false },
   { id: 3, title: 'Project deadline: Model Town', titleHi: 'प्रोजेक्ट डेडलाइन: मॉडल टाउन', time: '6:00 PM', date: 'Day After', customer: 'Amit Verma', urgent: true },
 ];
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+// ─── CSV Export Utility ────────────────────────────────────────────────────────
+const downloadTeamEarningsReport = (teamData: typeof teamPerformanceData, statsData: typeof revenueData) => {
+  const today = new Date().toISOString().split('T')[0];
+  
+  // --- Sheet 1: Team Performance ---
+  const teamHeaders = 'Worker Name,Jobs Completed,Rating (/ 5)\n';
+  const teamRows = teamData
+    .map(w => `"${w.name}",${w.jobs},${w.rating}`)
+    .join('\n');
+
+  // --- Sheet 2: Monthly Revenue Trend ---
+  const revenueHeaders = '\n\nMonth,Revenue (INR),Commission (INR)\n';
+  const revenueRows = statsData
+    .map(r => `${r.month},${r.revenue},${r.commission}`)
+    .join('\n');
+
+  const csvContent = teamHeaders + teamRows + revenueHeaders + revenueRows;
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('hidden', '');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `RAHI_Team_Report_${today}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+// ──────────────────────────────────────────────────────────────────────────────
 
 const ThekedarDashboard = () => {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { language } = useLanguage();
   const [stats, setStats] = useState({
-    upcomingVisits: 8,
-    activeProjects: 12,
-    teamMembers: 7,
-    totalEarnings: 210000,
-    monthlyEarnings: 45000,
-    commissionEarned: 21000,
-    projectCompletionRate: 85
+    upcomingVisits: 0,
+    activeProjects: 0,
+    teamMembers: 0,
+    totalEarnings: 0,
+    monthlyEarnings: 0,
+    commissionEarned: 0,
+    projectCompletionRate: 0,
+    totalJobs: 0
   });
+
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const fetchStats = async () => {
+    if (!user || profile?.role !== 'thekedar') return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/thekedar/stats`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) throw new Error('Failed to fetch stats');
+      
+      const data = await response.json();
+      
+      // Map backend data to frontend stats
+      setStats({
+        upcomingVisits: data.activeJobs || 0, // Using active jobs as a proxy for upcoming for now
+        activeProjects: data.activeJobs || 0,
+        teamMembers: data.teamSize || 0,
+        totalEarnings: data.totalEarnings || 0,
+        monthlyEarnings: data.totalEarnings / 12, // Rough estimate if trend data isn't parsed yet
+        commissionEarned: (data.totalEarnings || 0) * 0.1, // Assuming 10% commission
+        projectCompletionRate: data.totalJobs > 0 ? Math.round(((data.totalJobs - data.activeJobs) / data.totalJobs) * 100) : 0,
+        totalJobs: data.totalJobs || 0
+      });
+      
+      // You could also update revenueData chart with data.monthlyTrends if available
+    } catch (err) {
+      console.error(err);
+      // toast.error('Failed to load dashboard statistics');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStats();
+  }, [user, profile]);
   
   const [siteVisits, setSiteVisits] = useState(dummySiteVisits);
   const [notifications, setNotifications] = useState(dummyNotifications);
@@ -223,7 +299,7 @@ const ThekedarDashboard = () => {
               </span>
             </div>
           </div>
-          <div className="flex gap-2">
+        <div className="flex gap-2">
             <Button 
               variant="outline" 
               size="icon"
@@ -243,6 +319,25 @@ const ThekedarDashboard = () => {
               onClick={() => setShowReminders(true)}
             >
               <BellRing className="h-5 w-5 text-amber-500" />
+            </Button>
+            {/* CSV Report Download */}
+            <Button
+              variant="outline"
+              className="gap-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:border-emerald-400 transition-all"
+              onClick={() => {
+                downloadTeamEarningsReport(teamPerformanceData, revenueData);
+                toast.success(
+                  language === 'hi'
+                    ? 'रिपोर्ट डाउनलोड हो रही है...'
+                    : 'Downloading monthly report as CSV...'
+                );
+              }}
+              title="Download Monthly Report"
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              <span className="hidden sm:inline">
+                {language === 'hi' ? 'रिपोर्ट डाउनलोड' : 'Download Report'}
+              </span>
             </Button>
           </div>
         </div>

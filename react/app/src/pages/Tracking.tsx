@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, Phone, MessageSquare, Shield, Star, Clock,
   Check, MapPin, User, IndianRupee, Copy, Navigation,
-  AlertCircle, ChevronRight, Share2, Info, Loader2
+  AlertCircle, ChevronRight, Share2, Info, Loader2, Rocket, Play
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,6 +19,9 @@ import { API } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { Layout } from '@/components/layout/Layout';
 import TrackingMap from '@/components/TrackingMap';
+import NearbyWorkersMap from '@/components/NearbyWorkersMap';
+import ChatDrawer from '@/components/ChatDrawer';
+
 
 const API_URL = API;
 
@@ -50,6 +53,7 @@ export default function Tracking() {
 
   const [status, setStatus] = useState<BookingStatus>('pending');
   const [eta, setEta] = useState(25);
+  const [radius, setRadius] = useState(10000); // Initial 10km search
 
   const [loading, setLoading] = useState(true);
   const [bookingData, setBookingData] = useState<any>(null);
@@ -59,6 +63,8 @@ export default function Tracking() {
     initials: 'W',
     specialty: 'Service Professional',
   });
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const currentUserId = localStorage.getItem('userId') || '';
 
   // Map state
   const userLocation = useMemo<[number, number]>(() => {
@@ -255,6 +261,36 @@ export default function Tracking() {
     }
   };
 
+  const handleWidenSearch = () => {
+    setRadius(prev => prev + 5000);
+    toast.info(
+      language === 'hi' 
+        ? `🔍 खोज क्षेत्र को ${(radius + 5000) / 1000}km तक बढ़ाया जा रहा है...` 
+        : `🔍 Expanding search to ${(radius + 5000) / 1000}km...`
+    );
+  };
+
+  const handleDemoSimulation = async () => {
+    if (!bookingId) return;
+    const token = localStorage.getItem('token');
+    
+    toast.promise(
+      fetch(`${API_URL}/workers/simulate-movement`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify({ bookingId })
+      }),
+      {
+        loading: '🚀 Launching Worker Simulation...',
+        success: '✅ Simulation started! Watch the map for movement.',
+        error: '❌ Simulation failed to start.'
+      }
+    );
+  };
+
   const currentStepIndex = statusSteps.findIndex(s => s.id === status);
   const progress = ((currentStepIndex + 1) / statusSteps.length) * 100;
 
@@ -272,38 +308,79 @@ export default function Tracking() {
   if (status === 'pending') {
     return (
       <Layout>
-        <div className="min-h-screen bg-slate-50/50 flex items-center justify-center">
-          <div className="text-center max-w-md px-4">
-            <div className="relative mb-8 mx-auto w-32 h-32">
-              <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
-              <div className="absolute inset-0 bg-primary/10 rounded-full animate-ping" style={{ animationDelay: '0.7s' }} />
-              <div className="relative z-10 h-32 w-32 rounded-full bg-white shadow-2xl flex items-center justify-center border-4 border-primary">
-                <User className="h-16 w-16 text-primary" />
+        <div className="min-h-screen bg-slate-50/50 py-8">
+          <div className="container max-w-2xl px-4">
+            <div className="text-center mb-8">
+              <div className="relative mb-6 mx-auto w-24 h-24">
+                <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
+                <div className="relative z-10 h-24 w-24 rounded-full bg-white shadow-xl flex items-center justify-center border-2 border-primary">
+                  <User className="h-10 w-10 text-primary" />
+                </div>
               </div>
+              <h2 className="text-3xl font-black text-slate-800 mb-2">
+                {language === 'hi' ? 'कारीगर की खोज...' : 'Finding Workers...'}
+              </h2>
+              <p className="text-slate-500 font-medium">
+                {language === 'hi'
+                  ? 'हम आपके आस-पास सबसे अच्छे कारीगर ढूंढ रहे हैं।'
+                  : 'We are matching you with the best nearby professionals.'}
+              </p>
             </div>
-            <h2 className="text-2xl font-black text-slate-800 mb-2">
-              {language === 'hi' ? 'कारीगर की प्रतीक्षा...' : 'Waiting for a Worker...'}
-            </h2>
-            <p className="text-slate-500 mb-6">
-              {language === 'hi'
-                ? 'आपकी बुकिंग सभी कारीगरों को भेजी गई है।'
-                : 'Your booking has been sent to available workers.'}
-            </p>
-            <div className="flex gap-2 justify-center">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="h-3 w-3 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
-              ))}
+
+            {/* NEW: Nearby Workers Map */}
+            <div className="mb-8 h-[380px] rounded-[2.5rem] overflow-hidden shadow-2xl border-4 border-white relative z-0 group">
+              <NearbyWorkersMap 
+                center={userLocation} 
+                radius={radius}
+                onWidenSearch={handleWidenSearch}
+                onWorkerClick={(worker) => {
+                  toast.info(`${worker.user.full_name} is active nearby!`);
+                }}
+              />
+              
+              <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-2">
+                <div className="bg-white/90 backdrop-blur px-3 py-1.5 rounded-full shadow-lg border border-slate-200 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">
+                    Scanning {radius/1000}km Zone
+                  </span>
+                </div>
+              </div>
+
+              {/* Demo Control Button (Internal/Admin only in real app, but for demo here) */}
+              <button 
+                onClick={handleDemoSimulation}
+                className="absolute bottom-4 right-4 z-[1000] bg-slate-900 text-white p-3 rounded-full shadow-2xl hover:bg-slate-800 transition-all active:scale-95 group-hover:ring-4 ring-primary/20"
+                title="Simulate Worker Arrival"
+              >
+                <Rocket className="h-5 w-5 text-primary" />
+              </button>
             </div>
-            <p className="text-xs text-slate-400 mt-4 font-bold mb-6">
-              Booking ID: #{bookingId?.slice(0, 8)}...
-            </p>
-            <Button 
-              variant="destructive" 
-              className="rounded-full px-8 font-bold"
-              onClick={handleCancel}
-            >
-              Cancel Booking
-            </Button>
+
+            <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100 flex flex-col items-center">
+              <div className="flex gap-3 mb-8">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-3 w-3 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${i * 0.2}s` }} />
+                ))}
+              </div>
+              <div className="w-full space-y-4 mb-8">
+                <div className="flex justify-between items-center p-5 bg-slate-50 rounded-3xl border border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Selected Service</span>
+                  <span className="font-bold text-slate-700">{bookingData?.serviceName || 'Service'}</span>
+                </div>
+                <div className="flex justify-between items-center p-5 bg-slate-50 rounded-3xl border border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Request ID</span>
+                  <span className="font-mono font-bold text-slate-700">#{bookingId?.slice(0, 8)}</span>
+                </div>
+              </div>
+              <Button 
+                variant="destructive" 
+                className="w-full rounded-2xl h-14 font-black shadow-lg shadow-rose-200 hover:shadow-rose-300 active:scale-[0.98] transition-all"
+                onClick={handleCancel}
+              >
+                Cancel This Request
+              </Button>
+            </div>
           </div>
         </div>
       </Layout>
@@ -397,7 +474,11 @@ export default function Tracking() {
                             ? `${workerDetails.name.split(' ')[0]} को कॉल करें`
                             : `Call ${workerDetails.name.split(' ')[0]}`}
                         </Button>
-                        <Button variant="outline" className="rounded-2xl h-11 px-6 font-bold flex-1 md:flex-none">
+                        <Button 
+                          onClick={() => setIsChatOpen(true)}
+                          variant="outline" 
+                          className="rounded-2xl h-11 px-6 font-bold flex-1 md:flex-none border-primary/20 text-primary hover:bg-primary/5 transition-all"
+                        >
                           <MessageSquare className="h-4 w-4 mr-2" /> Message
                         </Button>
                       </div>
@@ -530,6 +611,15 @@ export default function Tracking() {
           </div>
         </div>
       </div>
+
+      <ChatDrawer 
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        bookingId={bookingId || ''}
+        currentUserId={currentUserId}
+        otherUserId={bookingData?.worker_user_id || ''}
+        otherUserName={workerDetails.name}
+      />
     </Layout>
   );
 }

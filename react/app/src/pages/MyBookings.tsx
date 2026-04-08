@@ -101,7 +101,7 @@ export default function MyBookings() {
             {/* Filters & Search */}
             <div className="mt-8 flex flex-col md:flex-row gap-4 items-center justify-between">
               <div className="flex gap-2 overflow-x-auto w-full md:w-auto pb-2 no-scrollbar">
-                {['all', 'pending', 'in_progress', 'completed'].map((f) => (
+                {['all', 'pending', 'in_progress', 'completed', 'cancelled'].map((f) => (
                   <button
                     key={f}
                     onClick={() => setActiveFilter(f)}

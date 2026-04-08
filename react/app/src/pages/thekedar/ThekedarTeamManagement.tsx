@@ -19,9 +19,14 @@ import {
   Trash2, 
   Search,
   Calendar,
-  DollarSign
+  DollarSign,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 interface TeamMember {
   id: string;
@@ -37,6 +42,8 @@ interface TeamMember {
   location: string;
   skills: string[];
   is_active: boolean;
+  is_verified?: boolean;    // ✅ Aadhaar/ID verified flag
+  aadhaar_url?: string;     // Document URL — presence = submitted
 }
 
 const ThekedarTeamManagement = () => {
@@ -56,138 +63,37 @@ const ThekedarTeamManagement = () => {
     email: '',
     location: '',
     skills: '',
-    join_date: new Date().toISOString().split('T')[0]
+    join_date: new Date().toISOString().split('T')[0],
+    worker_identifier: '' // email or phone
   });
 
-  useEffect(() => {
-    if (user && profile?.role === 'thekedar') {
-      // Initialize with mock data since thekedar_teams table might not exist
-      setTeamMembers([
-        {
-          id: '1',
-          worker_id: 'worker_1',
-          full_name: 'Ramesh Kumar',
-          phone: '+91 9876543210',
-          email: 'ramesh@example.com',
-          rating: 4.8,
-          status: 'online',
-          join_date: '2024-01-15',
-          total_jobs: 42,
-          earnings: 125000,
-          location: 'Sector 22, Gurgaon',
-          skills: ['Plumbing', 'Electrical', 'Carpentry'],
-          is_active: true
-        },
-        {
-          id: '2',
-          worker_id: 'worker_2',
-          full_name: 'Suresh Singh',
-          phone: '+91 8765432109',
-          email: 'suresh@example.com',
-          rating: 4.6,
-          status: 'busy',
-          join_date: '2024-02-10',
-          total_jobs: 38,
-          earnings: 98000,
-          location: 'DLF Phase 3, Gurgaon',
-          skills: ['Painting', 'Wallpaper', 'Interior Design'],
-          is_active: true
-        },
-        {
-          id: '3',
-          worker_id: 'worker_3',
-          full_name: 'Amit Sharma',
-          phone: '+91 7654321098',
-          email: 'amit@example.com',
-          rating: 4.9,
-          status: 'offline',
-          join_date: '2024-01-20',
-          total_jobs: 56,
-          earnings: 156000,
-          location: 'MG Road, Gurgaon',
-          skills: ['AC Repair', 'Refrigerator', 'Appliance'],
-          is_active: true
-        },
-        {
-          id: '4',
-          worker_id: 'worker_4',
-          full_name: 'Vijay Patel',
-          phone: '+91 6543210987',
-          email: 'vijay@example.com',
-          rating: 4.5,
-          status: 'online',
-          join_date: '2024-03-05',
-          total_jobs: 25,
-          earnings: 72000,
-          location: 'Cyber Hub, Gurgaon',
-          skills: ['Cleaning', 'Housekeeping', 'Laundry'],
-          is_active: true
+  const fetchTeam = async () => {
+    if (!user || profile?.role !== 'thekedar') return;
+    
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/thekedar/team`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-      ]);
-      setFilteredMembers([
-        {
-          id: '1',
-          worker_id: 'worker_1',
-          full_name: 'Ramesh Kumar',
-          phone: '+91 9876543210',
-          email: 'ramesh@example.com',
-          rating: 4.8,
-          status: 'online',
-          join_date: '2024-01-15',
-          total_jobs: 42,
-          earnings: 125000,
-          location: 'Sector 22, Gurgaon',
-          skills: ['Plumbing', 'Electrical', 'Carpentry'],
-          is_active: true
-        },
-        {
-          id: '2',
-          worker_id: 'worker_2',
-          full_name: 'Suresh Singh',
-          phone: '+91 8765432109',
-          email: 'suresh@example.com',
-          rating: 4.6,
-          status: 'busy',
-          join_date: '2024-02-10',
-          total_jobs: 38,
-          earnings: 98000,
-          location: 'DLF Phase 3, Gurgaon',
-          skills: ['Painting', 'Wallpaper', 'Interior Design'],
-          is_active: true
-        },
-        {
-          id: '3',
-          worker_id: 'worker_3',
-          full_name: 'Amit Sharma',
-          phone: '+91 7654321098',
-          email: 'amit@example.com',
-          rating: 4.9,
-          status: 'offline',
-          join_date: '2024-01-20',
-          total_jobs: 56,
-          earnings: 156000,
-          location: 'MG Road, Gurgaon',
-          skills: ['AC Repair', 'Refrigerator', 'Appliance'],
-          is_active: true
-        },
-        {
-          id: '4',
-          worker_id: 'worker_4',
-          full_name: 'Vijay Patel',
-          phone: '+91 6543210987',
-          email: 'vijay@example.com',
-          rating: 4.5,
-          status: 'online',
-          join_date: '2024-03-05',
-          total_jobs: 25,
-          earnings: 72000,
-          location: 'Cyber Hub, Gurgaon',
-          skills: ['Cleaning', 'Housekeeping', 'Laundry'],
-          is_active: true
-        }
-      ]);
+      });
+      
+      if (!response.ok) throw new Error('Failed to fetch team');
+      
+      const data = await response.json();
+      setTeamMembers(data);
+      setFilteredMembers(data);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load team members');
+    } finally {
       setIsLoading(false);
     }
+  };
+
+  useEffect(() => {
+    fetchTeam();
   }, [user, profile]);
 
   useEffect(() => {
@@ -202,35 +108,46 @@ const ThekedarTeamManagement = () => {
     setFilteredMembers(filtered);
   }, [teamMembers, searchTerm]);
 
-  const handleAddMember = () => {
-    const newMember: TeamMember = {
-      id: `member_${Date.now()}`,
-      worker_id: `worker_${Date.now()}`,
-      full_name: formData.full_name,
-      phone: formData.phone,
-      email: formData.email,
-      rating: 0,
-      status: 'offline',
-      join_date: formData.join_date,
-      total_jobs: 0,
-      earnings: 0,
-      location: formData.location,
-      skills: formData.skills.split(',').map(skill => skill.trim()),
-      is_active: true
-    };
+  const handleAddMember = async () => {
+    if (!formData.worker_identifier) {
+      toast.error('Worker identifier (phone/email) is required');
+      return;
+    }
 
-    setTeamMembers([...teamMembers, newMember]);
-    
-    // Reset form and close dialog
-    setFormData({
-      full_name: '',
-      phone: '',
-      email: '',
-      location: '',
-      skills: '',
-      join_date: new Date().toISOString().split('T')[0]
-    });
-    setIsDialogOpen(false);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/thekedar/team`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ identifier: formData.worker_identifier })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to add member');
+      }
+
+      toast.success('Worker added to your team!');
+      fetchTeam();
+      
+      // Reset form and close dialog
+      setFormData({
+        full_name: '',
+        phone: '',
+        email: '',
+        location: '',
+        skills: '',
+        join_date: new Date().toISOString().split('T')[0],
+        worker_identifier: ''
+      });
+      setIsDialogOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message);
+    }
   };
 
   const handleUpdateMember = () => {
@@ -288,72 +205,30 @@ const ThekedarTeamManagement = () => {
               Add Team Member
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add New Team Member</DialogTitle>
               <DialogDescription>
-                Enter details for the new team member
+                Enter details for the new team member to join your management group.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+            <div className="grid gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="full_name">Full Name</Label>
+                <Label htmlFor="worker_identifier">Worker Identifier (Phone or Email)</Label>
                 <Input
-                  id="full_name"
-                  value={formData.full_name}
-                  onChange={(e) => setFormData({...formData, full_name: e.target.value})}
-                  placeholder="Enter full name"
+                  id="worker_identifier"
+                  value={formData.worker_identifier}
+                  onChange={(e) => setFormData({...formData, worker_identifier: e.target.value})}
+                  placeholder="Enter worker's registration phone or email"
+                  className="border-primary/20 focus:border-primary"
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
-                <Input
-                  id="phone"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                  placeholder="Enter phone number"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  placeholder="Enter email address"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="location">Location</Label>
-                <Input
-                  id="location"
-                  value={formData.location}
-                  onChange={(e) => setFormData({...formData, location: e.target.value})}
-                  placeholder="Enter location"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="skills">Skills (comma separated)</Label>
-                <Input
-                  id="skills"
-                  value={formData.skills}
-                  onChange={(e) => setFormData({...formData, skills: e.target.value})}
-                  placeholder="e.g., Plumbing, Electrical, Carpentry"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="join_date">Join Date</Label>
-                <Input
-                  id="join_date"
-                  type="date"
-                  value={formData.join_date}
-                  onChange={(e) => setFormData({...formData, join_date: e.target.value})}
-                />
+                <p className="text-xs text-muted-foreground mt-1 text-orange-600 dark:text-orange-400 font-medium">
+                  Note: The worker must already have a RAHI account.
+                </p>
               </div>
             </div>
             <DialogFooter>
-              <Button onClick={handleAddMember}>Add Member</Button>
+              <Button onClick={handleAddMember} className="w-full sm:w-auto">Add to Team</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -453,11 +328,39 @@ const ThekedarTeamManagement = () => {
                   <TableRow key={member.id}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-bold">
-                          {member.full_name.charAt(0)}
+                        <div className="relative">
+                          <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-bold">
+                            {member.full_name.charAt(0)}
+                          </div>
+                          {/* Verification ring around avatar */}
+                          {(member.is_verified || member.aadhaar_url) && (
+                            <div className="absolute -bottom-0.5 -right-0.5 h-4 w-4 bg-white rounded-full flex items-center justify-center shadow-sm">
+                              <ShieldCheck className="h-3.5 w-3.5 text-blue-500" />
+                            </div>
+                          )}
                         </div>
                         <div>
-                          <div>{member.full_name}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span>{member.full_name}</span>
+                            {/* Inline verification badge */}
+                            {(member.is_verified || member.aadhaar_url) ? (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200"
+                                title="Identity Verified via Aadhaar"
+                              >
+                                <ShieldCheck className="h-3 w-3" />
+                                Verified
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-50 text-gray-400 border border-gray-200"
+                                title="Identity not yet verified"
+                              >
+                                <ShieldAlert className="h-3 w-3" />
+                                Unverified
+                              </span>
+                            )}
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             Joined {new Date(member.join_date).toLocaleDateString()}
                           </div>

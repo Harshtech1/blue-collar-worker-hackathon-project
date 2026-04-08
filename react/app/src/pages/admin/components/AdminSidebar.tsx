@@ -11,11 +11,12 @@ import {
   LogOut,
   Menu,
   X,
-  BarChart3
+  BarChart3,
+  Map
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type AdminTab = 'overview' | 'users' | 'workers' | 'bookings' | 'finance' | 'system' | 'bugs' | 'audit' | 'settings';
+export type AdminTab = 'overview' | 'users' | 'workers' | 'bookings' | 'finance' | 'heatmap' | 'system' | 'bugs' | 'audit' | 'settings';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -29,6 +30,7 @@ const menuItems = [
   { id: 'workers', label: 'Worker Fleet', icon: Briefcase },
   { id: 'bookings', label: 'Order Stream', icon: Activity },
   { id: 'finance', label: 'Revenue & Payouts', icon: DollarSign },
+  { id: 'heatmap', label: 'Job Heatmap', icon: Map },
   { id: 'system', label: 'System Health', icon: Settings },
   { id: 'bugs', label: 'Bug Monitor', icon: AlertCircle },
   { id: 'audit', label: 'Platform Audit', icon: ShieldCheck },

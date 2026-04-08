@@ -9,6 +9,7 @@ import { LocationProvider } from "@/contexts/LocationContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
 import { ReactNode } from 'react';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
+import PWAInstallPrompt from '@/components/PWAInstallPrompt';
 
 // Core pages
 import Index from "./pages/Index";
@@ -169,6 +170,7 @@ const App = () => {
                 <Toaster />
                 <Sonner />
                 <BrowserRouter>
+                  <PWAInstallPrompt />
                   <Routes>
                     <Route path="/" element={<RoleBasedHome />} />
 

@@ -58,8 +58,9 @@ export function useJobRequests() {
 
     try {
       // Fetch pending jobs that need workers
-      // Fetch pending jobs that need workers
-      const pendingRes = await fetch(`${API}/bookings?status=pending&is_worker_null=1&limit=10`);
+      const token = localStorage.getItem('token');
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const pendingRes = await fetch(`${API}/bookings?status=pending&is_worker_null=1&limit=10`, { headers });
       if (!pendingRes.ok) throw new Error('Failed to fetch pending jobs');
       let pending = await pendingRes.json();
       if (Array.isArray(pending)) {
@@ -71,6 +72,7 @@ export function useJobRequests() {
           scheduled_at: j.scheduled_at || j.scheduledAt
         }));
       }
+
 
       // Fetch active jobs assigned to this worker by resolving worker profile
       const activeRes = await fetch(`${API}/bookings?worker_user_id=${user.id || (user as any)._id}`);

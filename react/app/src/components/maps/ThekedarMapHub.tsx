@@ -11,10 +11,15 @@ import {
   Play,
   Pause,
   RotateCcw,
-  Eye
+  Flame,
+  TrendingUp,
+  LayoutGrid
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { toast } from 'sonner';
+
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 import { db } from '@/lib/db';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -27,43 +32,26 @@ L.Icon.Default.mergeOptions({
 });
 
 interface TeamMember {
-  id: string;
-  worker_id: string;
-  is_active: boolean;
-  profiles: {
-    full_name: string;
-    phone: string;
-    avatar_url: string | null;
-  } | null;
-  worker_profiles: {
-    latitude: number | null;
-    longitude: number | null;
-    status: string | null;
-    last_online_at: string | null;
-  } | null;
+  _id: string;
+  full_name: string;
+  phone: string;
+  status: string;
+  latitude: number | null;
+  longitude: number | null;
+  totalEarnings: number;
+  totalJobs: number;
 }
 
 interface SiteVisit {
   id: string;
-  customer_id: string;
   status: string;
-  created_at: string;
-  bookings: {
-    address: string;
-    latitude: number | null;
-    longitude: number | null;
-    customer_profiles: {
-      full_name: string;
-      phone: string;
-    } | null;
-  } | null;
-  thekedar_teams: {
-    id: string;
-    worker_id: string;
-    profiles: {
-      full_name: string;
-    } | null;
-  } | null;
+  createdAt: string;
+  estimatedAmount: number;
+  address: string;
+  lat: number;
+  lng: number;
+  workerName: string;
+  customerName: string;
 }
 
 interface Location {
@@ -85,11 +73,15 @@ export default function ThekedarMapHub() {
   const [selectedVisit, setSelectedVisit] = useState<SiteVisit | null>(null);
   const [isTracking, setIsTracking] = useState(true);
   const [activeRoute, setActiveRoute] = useState<{ points: [number, number][]; distance: number; eta: number } | null>(null);
+  const [heatmapData, setHeatmapData] = useState<{ lat: number; lng: number; service: string }[]>([]);
+  const [showHeatmap, setShowHeatmap] = useState(true);
+  const heatmapLayersRef = useRef<L.Circle[]>([]);
 
   // Fetch team and site visit data
   useEffect(() => {
     if (user && profile?.role === 'thekedar') {
       fetchData();
+      fetchHeatmapData();
       startLocationTracking();
     }
 
@@ -100,54 +92,39 @@ export default function ThekedarMapHub() {
     };
   }, [user, profile]);
 
+  const fetchHeatmapData = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/thekedar/demand-heatmap`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch heatmap');
+      const data = await response.json();
+      setHeatmapData(data);
+    } catch (err) {
+      console.error('fetchHeatmapData Error:', err);
+    }
+  };
+
   const fetchData = async () => {
     if (!user) return;
 
     try {
-      // Fetch team members with location data
-      const { data: teamData, error: teamError } = await db
-        .collection('thekedar_teams')
-        .select(`
-          id,
-          worker_id,
-          is_active,
-          profiles!inner(full_name, phone, avatar_url),
-          worker_profiles!inner(latitude, longitude, status, last_online_at)
-        `)
-        .eq('thekedar_id', user.id)
-        .eq('is_active', true);
+      const token = localStorage.getItem('token');
+      
+      // Fetch team members from backend
+      const teamRes = await fetch(`${API_BASE}/thekedar/team`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const teamData = await teamRes.json();
 
-      if (teamError) {
-        console.error('Error fetching team:', teamError);
-      }
-
-      // Fetch site visits with customer details
-      const { data: visitsData, error: visitsError } = await db
-        .collection('site_visits')
-        .select(`
-          id,
-          customer_id,
-          status,
-          created_at,
-          bookings!inner(
-            address,
-            latitude,
-            longitude,
-            customer_profiles!inner(full_name, phone)
-          ),
-          thekedar_teams!inner(
-            id,
-            worker_id,
-            profiles!inner(full_name)
-          )
-        `)
-        .eq('thekedar_id', user.id)
-        .in('status', ['pending', 'scheduled', 'in_progress'])
-        .order('created_at', { ascending: false });
-
-      if (visitsError) {
-        console.error('Error fetching site visits:', visitsError);
-      }
+      // Fetch site visits from backend
+      const visitsRes = await fetch(`${API_BASE}/thekedar/visits`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const visitsData = await visitsRes.json();
 
       setTeamMembers(teamData || []);
       setSiteVisits(visitsData || []);
@@ -171,10 +148,10 @@ export default function ThekedarMapHub() {
         },
         (error) => {
           console.error('Error getting location:', error);
-          // Use default location (New Delhi)
+          // Use default location (Chandigarh Center)
           const defaultLocation = {
-            lat: 28.6139,
-            lng: 77.2090,
+            lat: 30.7333,
+            lng: 76.7794,
             timestamp: new Date()
           };
           setCurrentLocation(defaultLocation);
@@ -237,7 +214,41 @@ export default function ThekedarMapHub() {
     mapInstanceRef.current = map;
     addTeamMarkers();
     addVisitMarkers();
+    if (showHeatmap) addHeatmap();
   };
+
+  const addHeatmap = () => {
+    if (!mapInstanceRef.current || heatmapData.length === 0) return;
+
+    // Clear existing
+    heatmapLayersRef.current.forEach(layer => mapInstanceRef.current?.removeLayer(layer));
+    heatmapLayersRef.current = [];
+
+    heatmapData.forEach(point => {
+      const circle = L.circle([point.lat, point.lng], {
+        color: '#ef4444',
+        fillColor: '#ef4444',
+        fillOpacity: 0.4,
+        radius: 300,
+        stroke: false,
+        className: 'animate-pulse'
+      }).addTo(mapInstanceRef.current!);
+      
+      circle.bindTooltip(`High Demand: ${point.service}`);
+      heatmapLayersRef.current.push(circle);
+    });
+  };
+
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      if (showHeatmap) {
+        addHeatmap();
+      } else {
+        heatmapLayersRef.current.forEach(layer => mapInstanceRef.current?.removeLayer(layer));
+        heatmapLayersRef.current = [];
+      }
+    }
+  }, [showHeatmap, heatmapData]);
 
   const updateLocationMarker = (location: Location) => {
     if (mapInstanceRef.current) {
@@ -255,11 +266,11 @@ export default function ThekedarMapHub() {
     teamMarkersRef.current = [];
 
     teamMembers.forEach(member => {
-      const lat = member.worker_profiles?.latitude;
-      const lng = member.worker_profiles?.longitude;
+      const lat = member.latitude;
+      const lng = member.longitude;
       
       if (lat && lng) {
-        const status = member.worker_profiles?.status || 'offline';
+        const status = member.status || 'offline';
         const color = status === 'online' ? 'bg-green-500' : 
                      status === 'busy' ? 'bg-yellow-500' : 'bg-gray-500';
 
@@ -280,10 +291,10 @@ export default function ThekedarMapHub() {
         const marker = L.marker([lat, lng], { icon: teamIcon })
           .addTo(mapInstanceRef.current!)
           .bindPopup(`
-            <div class="font-medium">${member.profiles?.full_name || 'Team Member'}</div>
+            <div class="font-medium">${member.full_name || 'Team Member'}</div>
             <div class="text-sm">Status: ${status}</div>
-            <div class="text-sm">Last seen: ${member.worker_profiles?.last_online_at ? new Date(member.worker_profiles.last_online_at).toLocaleTimeString() : 'N/A'}</div>
-            <button onclick="selectTeamMember('${member.id}')" class="mt-2 px-3 py-1 bg-blue-500 text-white rounded text-sm">
+            <div class="text-sm">Jobs: ${member.totalJobs || 0}</div>
+            <button onclick="selectTeamMember('${member._id}')" class="mt-2 px-3 py-1 bg-blue-500 text-white rounded text-sm">
               View Details
             </button>
           `);
@@ -301,8 +312,8 @@ export default function ThekedarMapHub() {
     visitMarkersRef.current = [];
 
     siteVisits.forEach(visit => {
-      const lat = visit.bookings?.latitude;
-      const lng = visit.bookings?.longitude;
+      const lat = visit.lat;
+      const lng = visit.lng;
       
       if (lat && lng) {
         const statusColor = visit.status === 'pending' ? 'bg-red-500' :
@@ -327,8 +338,9 @@ export default function ThekedarMapHub() {
           .addTo(mapInstanceRef.current!)
           .bindPopup(`
             <div class="font-medium">Site Visit</div>
-            <div class="text-sm">${visit.bookings?.address || 'Address not available'}</div>
-            <div class="text-sm mt-1">Customer: ${visit.bookings?.customer_profiles?.full_name || 'Unknown'}</div>
+            <div class="text-sm">${visit.address || 'Address not available'}</div>
+            <div class="text-sm mt-1">Worker: ${visit.workerName || 'Pending'}</div>
+            <div class="text-sm">Customer: ${visit.customerName || 'Unknown'}</div>
             <div class="text-sm">Status: ${visit.status}</div>
             <button onclick="selectVisit('${visit.id}')" class="mt-2 px-3 py-1 bg-blue-500 text-white rounded text-sm">
               View Details
@@ -343,11 +355,11 @@ export default function ThekedarMapHub() {
     const allPoints = [
       [currentLocation?.lat || 28.6139, currentLocation?.lng || 77.2090],
       ...teamMembers
-        .filter(m => m.worker_profiles?.latitude && m.worker_profiles?.longitude)
-        .map(m => [m.worker_profiles!.latitude!, m.worker_profiles!.longitude!]),
+        .filter(m => m.latitude && m.longitude)
+        .map(m => [m.latitude!, m.longitude!]),
       ...siteVisits
-        .filter(v => v.bookings?.latitude && v.bookings?.longitude)
-        .map(v => [v.bookings!.latitude!, v.bookings!.longitude!])
+        .filter(v => v.lat && v.lng)
+        .map(v => [v.lat!, v.lng!])
     ];
 
     if (allPoints.length > 1) {
@@ -357,7 +369,7 @@ export default function ThekedarMapHub() {
   };
 
   const calculateRoute = async (visit: SiteVisit) => {
-    if (!currentLocation || !visit.bookings?.latitude || !visit.bookings?.longitude) return;
+    if (!currentLocation || !visit.lat || !visit.lng) return;
 
     try {
       const response = await fetch(
@@ -436,11 +448,20 @@ export default function ThekedarMapHub() {
             <p className="text-muted-foreground">Manage your team and site visits</p>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant={showHeatmap ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowHeatmap(!showHeatmap)}
+              className={showHeatmap ? "bg-orange-600 hover:bg-orange-700" : ""}
+            >
+              <Flame className="h-4 w-4 mr-2" />
+              Demand Heatmap
+            </Button>
             <Badge variant={isTracking ? "default" : "secondary"}>
               {isTracking ? "Tracking Active" : "Tracking Paused"}
             </Badge>
-            <Button size="icon" variant="outline" onClick={toggleTracking}>
-              {isTracking ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            <Button size="icon" variant={showHeatmap ? "default" : "outline"} onClick={() => setShowHeatmap(!showHeatmap)} title="Toggle Demand Heatmap">
+              <Flame className={`h-4 w-4 ${showHeatmap ? "text-orange-200" : "text-orange-500"}`} />
             </Button>
             <Button size="icon" variant="outline" onClick={resetView}>
               <RotateCcw className="h-4 w-4" />
@@ -579,32 +600,32 @@ export default function ThekedarMapHub() {
                 <div className="space-y-3">
                   {teamMembers.map((member) => (
                     <div key={member.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                      <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                        member.worker_profiles?.status === 'online' ? 'bg-green-100' :
-                        member.worker_profiles?.status === 'busy' ? 'bg-yellow-100' : 'bg-gray-100'
-                      }`}>
-                        <Users className={`h-5 w-5 ${
-                          member.worker_profiles?.status === 'online' ? 'text-green-600' :
-                          member.worker_profiles?.status === 'busy' ? 'text-yellow-600' : 'text-gray-600'
-                        }`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">
-                          {member.profiles?.full_name || 'Team Member'}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {member.worker_profiles?.status || 'offline'}
-                        </p>
-                      </div>
-                      <Badge 
-                        variant={
-                          member.worker_profiles?.status === 'online' ? 'default' :
-                          member.worker_profiles?.status === 'busy' ? 'outline' : 'secondary'
-                        }
-                        className="text-xs"
-                      >
-                        {member.worker_profiles?.status || 'offline'}
-                      </Badge>
+                        <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                          member.status === 'online' ? 'bg-green-100' :
+                          member.status === 'busy' ? 'bg-yellow-100' : 'bg-gray-100'
+                        }`}>
+                          <Users className={`h-5 w-5 ${
+                            member.status === 'online' ? 'text-green-600' :
+                            member.status === 'busy' ? 'text-yellow-600' : 'text-gray-600'
+                          }`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">
+                            {member.full_name || 'Team Member'}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {member.status || 'offline'}
+                          </p>
+                        </div>
+                        <Badge 
+                          variant={
+                            member.status === 'online' ? 'default' :
+                            member.status === 'busy' ? 'outline' : 'secondary'
+                          }
+                          className="text-xs"
+                        >
+                          {member.status || 'offline'}
+                        </Badge>
                     </div>
                   ))}
                 </div>

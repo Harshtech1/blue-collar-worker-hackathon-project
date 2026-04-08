@@ -10,6 +10,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import { Server } from 'socket.io';
+import { getDb } from './config/db.js';
+import { ObjectId } from 'mongodb';
 
 let io = null;
 
@@ -34,7 +36,7 @@ export function initSocket(httpServer) {
     console.log(`🔌 Socket connected: ${socket.id}`);
 
     // Client emits { userId, role } immediately after connecting
-    socket.on('join', ({ userId, role }) => {
+    socket.on('join', async ({ userId, role }) => {
       if (!userId) return;
       socket.join(userId);
       socket.data.userId = userId;
@@ -50,14 +52,38 @@ export function initSocket(httpServer) {
       connectedUsers.get(userId).add(socket.id);
 
       console.log(`👤 User ${userId} (${role || 'unknown'}) joined room | Total connected: ${connectedUsers.size}`);
+
+      // Update worker lastSeen on join (helps clear ghost status)
+      if (role === 'worker') {
+        try {
+          const db = getDb();
+          await db.collection('worker_profiles').updateOne(
+            { user: new ObjectId(userId) },
+            { $set: { lastSeen: new Date() } }
+          );
+        } catch (e) {
+          console.error("Socket join worker update error:", e.message);
+        }
+      }
     });
 
     // ── Handle live location updates from workers ──────────────────────────
-    socket.on('location_update', (data) => {
+    socket.on('location_update', async (data) => {
       const { userId, lat, lng, bookingId, customerId } = data;
       if (!userId || !lat || !lng) return;
 
       console.log(`📍 Location update from worker ${userId}: ${lat}, ${lng} | Booking: ${bookingId}`);
+
+      // Keep lastSeen active
+      try {
+        const db = getDb();
+        await db.collection('worker_profiles').updateOne(
+          { user: new ObjectId(userId) },
+          { $set: { lastSeen: new Date() } }
+        );
+      } catch (e) {
+        // ignore fast-fail
+      }
 
       // Broadcast the update to the customer if customerId is provided
       if (customerId) {
@@ -68,6 +94,39 @@ export function initSocket(httpServer) {
           lng,
           timestamp: new Date()
         });
+      }
+    });
+
+    // ── Handle in-app chat messages ─────────────────────────────────────────
+    socket.on('send_message', async (data) => {
+      const { bookingId, senderId, receiverId, text } = data;
+      if (!bookingId || !senderId || !receiverId || !text) return;
+
+      try {
+        const db = getDb();
+        const message = {
+          bookingId: new ObjectId(bookingId),
+          senderId: new ObjectId(senderId),
+          receiverId: new ObjectId(receiverId),
+          text,
+          timestamp: new Date(),
+          status: 'sent'
+        };
+        
+        await db.collection('chat_messages').insertOne(message);
+        
+        // Emit to the receiver room (userId room)
+        io.to(receiverId.toString()).emit('receive_message', {
+          ...message,
+          _id: message._id.toString(),
+          bookingId: bookingId.toString(),
+          senderId: senderId.toString(),
+          receiverId: receiverId.toString()
+        });
+        
+        console.log(`💬 Chat message from ${senderId} to ${receiverId} for booking ${bookingId}`);
+      } catch (e) {
+        console.error("Chat message error:", e.message);
       }
     });
 

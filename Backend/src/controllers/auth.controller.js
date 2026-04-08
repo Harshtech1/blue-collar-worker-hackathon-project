@@ -142,6 +142,10 @@ export const verifyOtp = async (req, res) => {
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+    console.log(`[AUTH] Login attempt for: ${email}`);
     
     // Check if it's the admin
     const ADMIN_EMAIL = process.env.ADMIN_EMAIL;

@@ -14,6 +14,7 @@ import usersRoutes from "./routes/users.routes.js";
 import serviceRoutes from "./routes/service.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
+import thekedarRoutes from "./routes/thekedar.routes.js";
 import jwt from "jsonwebtoken";
 import { protect, authorize } from "./middleware/auth.js";
 
@@ -69,6 +70,16 @@ connectDB()
     app.use("/api/service_categories", serviceRoutes);
     app.use("/api/upload", uploadRoutes);
     app.use("/api/notifications", notificationRoutes);
+    app.use("/api/thekedar", thekedarRoutes);
+
+    // ── Global Error Handler ───────────────────────────────────────────────────
+    app.use((err, req, res, next) => {
+      console.error("[GLOBAL ERROR]:", err.stack);
+      res.status(err.status || 500).json({
+        message: err.message || "Internal Server Error",
+        error: process.env.NODE_ENV === "development" ? err.stack : undefined,
+      });
+    });
 
     // ── ADMIN ROUTES (Priority 3 fix) ─────────────────────────────────────────
     app.get("/api/admin/customers", protect, authorize("admin"), async (req, res) => {
@@ -136,6 +147,47 @@ connectDB()
         }));
 
         res.json({ data: mappedWorkers });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // ── ADMIN HEATMAP (Job Hotspots) ───────────────────────────────────────────────
+    app.get("/api/admin/heatmap", protect, authorize("admin"), async (req, res) => {
+      try {
+        const db = getDb();
+        const heatmap = await db
+          .collection("bookings")
+          .aggregate([
+            { $match: { location: { $exists: true, $ne: null } } },
+            {
+              $group: {
+                _id: {
+                  lat: { $arrayElemAt: ["$location.coordinates", 1] },
+                  lng: { $arrayElemAt: ["$location.coordinates", 0] },
+                  service: "$serviceName",
+                  status: "$status"
+                },
+                count: { $sum: 1 }
+              }
+            },
+            {
+              $project: {
+                _id: 0,
+                location: {
+                  type: "Point",
+                  coordinates: ["$_id.lng", "$_id.lat"]
+                },
+                service: "$_id.service",
+                status: "$_id.status",
+                count: 1
+              }
+            },
+            { $limit: 100 }
+          ])
+          .toArray();
+        res.json({ data: heatmap });
       } catch (err) {
         console.error(err);
         res.status(500).json({ message: "Server error" });
@@ -280,7 +332,45 @@ connectDB()
       }
     });
 
+    // ── AADHAAR VERIFICATION UPLOAD ───────────────────────────────────────────
+    // POST /api/worker/profile/aadhaar   (multipart/form-data, field: "file")
+    app.post('/api/worker/profile/aadhaar', protect, authorize('worker'), async (req, res) => {
+      try {
+        const multer = (await import('multer')).default;
+        const fs = await import('fs');
+        const uploadDir = path.join(__dirname, '../public/uploads/aadhaar');
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+        const storage = multer.diskStorage({
+          destination: (_req, _file, cb) => cb(null, uploadDir),
+          filename: (_req, file, cb) => {
+            const ext = path.extname(file.originalname);
+            cb(null, `aadhaar-${req.user._id}-${Date.now()}${ext}`);
+          },
+        });
+        const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }).single('file');
+
+        upload(req, res, async (err) => {
+          if (err) return res.status(400).json({ message: `Upload error: ${err.message}` });
+          if (!req.file) return res.status(400).json({ message: 'No file provided' });
+
+          const fileUrl = `/uploads/aadhaar/${req.file.filename}`;
+          const db = getDb();
+          await db.collection('worker_profiles').updateOne(
+            { user: new ObjectId(req.user._id) },
+            { $set: { aadhaar_url: fileUrl, is_verified: true, updatedAt: new Date() } }
+          );
+
+          res.json({ success: true, url: fileUrl, message: 'Aadhaar uploaded successfully' });
+        });
+      } catch (err) {
+        console.error('[aadhaar upload]', err);
+        res.status(500).json({ message: 'Server error during upload' });
+      }
+    });
+
     // ── Start ─────────────────────────────────────────────────────────────────
+
     const PORT = process.env.PORT || 5000;
     httpServer.listen(PORT, '0.0.0.0', () =>
       console.log(`🚀 RAHI Server + Socket.IO → http://0.0.0.0:${PORT}`)

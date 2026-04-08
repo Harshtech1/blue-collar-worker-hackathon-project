@@ -170,3 +170,81 @@ body {
     opacity: 1;
   }
 }
+
+/* Map Pulse Animations */
+@keyframes map-ripple {
+  0% { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(3.5); opacity: 0; }
+}
+
+@keyframes map-dot-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.map-ripple-icon {
+  background: rgba(45, 212, 191, 0.4);
+  border-radius: 50%;
+  animation: map-ripple 2s infinite ease-out;
+}
+
+.map-dot-icon {
+  background: #2dd4bf;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(0,0,0,0.2);
+  animation: map-dot-pulse 2s infinite ease-in-out;
+}
+
+/* Pro-Level Customer Pulse Effect */
+@keyframes customer-pulse-ring {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  50% { transform: scale(1.2); opacity: 0.3; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+@keyframes customer-pulse-core {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.7); }
+  50% { transform: scale(1.1); box-shadow: 0 0 0 8px rgba(45, 212, 191, 0); }
+}
+
+.customer-pulse-ring {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid #2dd4bf;
+  animation: customer-pulse-ring 2s infinite ease-out;
+}
+
+.customer-pulse-core {
+  width: 16px;
+  height: 16px;
+  background: #2dd4bf;
+  border: 2px solid white;
+  border-radius: 50%;
+  animation: customer-pulse-core 2s infinite ease-in-out;
+}
+
+/* Pro-Level Radius Circle Pulse */
+@keyframes radius-pulse {
+  0% { fill-opacity: 0.08; stroke-opacity: 0.6; }
+  50% { fill-opacity: 0.15; stroke-opacity: 1; }
+  100% { fill-opacity: 0.08; stroke-opacity: 0.6; }
+}
+
+.leaflet-circle {
+  animation: radius-pulse 3s infinite ease-in-out;
+}
+
+/* Worker Arrival Animation */
+@keyframes worker-approach {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+  100% { transform: scale(1); }
+}
+
+.worker-approaching {
+  animation: worker-approach 0.5s ease-in-out;
+}
