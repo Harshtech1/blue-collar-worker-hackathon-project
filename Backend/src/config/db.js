@@ -35,7 +35,7 @@ const setupIndexes = async (database) => {
   try {
     const workerProfiles = database.collection('worker_profiles');
     await workerProfiles.createIndex({ "location": "2dsphere" });
-    await workerProfiles.createIndex({ "user": 1 });
+    await workerProfiles.createIndex({ "user": 1 }, { unique: true });
     
     const bookings = database.collection('bookings');
     await bookings.createIndex({ "customer_user_id": 1, "createdAt": -1 });
