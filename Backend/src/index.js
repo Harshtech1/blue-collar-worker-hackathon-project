@@ -15,6 +15,7 @@ import serviceRoutes from "./routes/service.routes.js";
 import uploadRoutes from "./routes/upload.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
 import thekedarRoutes from "./routes/thekedar.routes.js";
+import paymentRoutes from "./routes/payment.routes.js";
 import jwt from "jsonwebtoken";
 import { protect, authorize } from "./middleware/auth.js";
 
@@ -71,6 +72,7 @@ connectDB()
     app.use("/api/upload", uploadRoutes);
     app.use("/api/notifications", notificationRoutes);
     app.use("/api/thekedar", thekedarRoutes);
+    app.use("/api/payments", paymentRoutes);
 
     // ── Global Error Handler ───────────────────────────────────────────────────
     app.use((err, req, res, next) => {

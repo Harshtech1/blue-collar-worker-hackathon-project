@@ -17,7 +17,8 @@ export const createProfile = async (req, res) => {
       extra,
       createdAt: new Date(),
       updatedAt: new Date(),
-      status: 'offline'
+      status: req.body.status || 'offline',
+      isAvailable: req.body.status === 'online' || req.body.isAvailable || false
     };
 
     const result = await WorkerProfile.collection().insertOne(newProfile);
@@ -38,7 +39,7 @@ export const getByUserId = async (req, res) => {
     // Manual populate
     const user = await User.collection().findOne(
       { _id: profile.user },
-      { projection: { email: 1, full_name: 1, role: 1 } }
+      { projection: { email: 1, full_name: 1, role: 1, socials: 1 } }
     );
 
     res.json({ ...profile, user });
@@ -60,9 +61,36 @@ export const updateByUserId = async (req, res) => {
     const updates = req.body;
     updates.updatedAt = new Date();
 
-    // Security: don't allow updating user field
+    // Security: don't allow updating user field directly
     delete updates.user;
     delete updates._id;
+
+    // Separate User fields vs Worker fields
+    const userUpdates = {};
+    const userFields = ['full_name', 'phone', 'socials'];
+    for (const field of userFields) {
+      if (updates[field] !== undefined) {
+        userUpdates[field] = updates[field];
+        delete updates[field]; // remove from worker updates
+      }
+    }
+
+    if (Object.keys(userUpdates).length > 0) {
+      const flattenedUserUpdates = {};
+      for (const [key, value] of Object.entries(userUpdates)) {
+        if (typeof value === 'object' && value !== null && key === 'socials') {
+          for (const [subKey, subValue] of Object.entries(value)) {
+            flattenedUserUpdates[`${key}.${subKey}`] = subValue;
+          }
+        } else {
+          flattenedUserUpdates[key] = value;
+        }
+      }
+      await User.collection().updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: flattenedUserUpdates }
+      );
+    }
 
     // Handle document verification status updates if files are uploaded
     if (updates.aadhaar_url || updates.pan_url || updates.skills_url) {
@@ -199,8 +227,7 @@ export const getNearbyWorkers = async (req, res) => {
         }
       },
       isAvailable: true,
-      status: "online",
-      lastSeen: { $gte: tenMinutesAgo }
+      status: "online"
     };
 
     const workers = await WorkerProfile.collection()

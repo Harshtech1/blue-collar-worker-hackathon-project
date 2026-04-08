@@ -20,9 +20,20 @@ export const updateUser = async (req, res) => {
 
     updates.updatedAt = new Date();
 
+    const flattenedUpdates = {};
+    for (const [key, value] of Object.entries(updates)) {
+      if (typeof value === 'object' && value !== null && key === 'socials') {
+        for (const [subKey, subValue] of Object.entries(value)) {
+          flattenedUpdates[`${key}.${subKey}`] = subValue;
+        }
+      } else {
+        flattenedUpdates[key] = value;
+      }
+    }
+
     const result = await User.collection().findOneAndUpdate(
       { _id: new ObjectId(id) },
-      { $set: updates },
+      { $set: flattenedUpdates },
       { returnDocument: 'after' }
     );
 

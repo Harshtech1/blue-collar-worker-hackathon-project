@@ -96,8 +96,7 @@ export const createBooking = async (req, res) => {
             }
           },
           isAvailable: true,
-          status: "online",
-          lastSeen: { $gte: tenMinutesAgo }
+          status: "online"
         }).limit(10).toArray();
         
         console.log(`🌐 Geospatial Matcher found ${availableWorkers.length} nearby workers within 10km!`);

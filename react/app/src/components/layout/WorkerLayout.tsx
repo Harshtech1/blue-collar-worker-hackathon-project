@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import { db } from "@/lib/db";
 import { IncomingBookingModal } from "@/components/worker/IncomingBookingModal";
 import { WorkerLocationTracker } from "@/components/worker/WorkerLocationTracker";
+import { useLocation as useGeoLocation } from "@/contexts/LocationContext";
 
 const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
@@ -33,6 +34,7 @@ const WorkerLayout = () => {
   const [isOnline, setIsOnline] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const { location: geoLocation, detectLocation } = useGeoLocation();
   const { user, profile, signOut } = useAuth();
   const token = localStorage.getItem('token');
   
@@ -41,9 +43,6 @@ const WorkerLayout = () => {
   
   // Reset notifications count when on notifications page
   useEffect(() => {
-    if (isOnNotificationsPage && notifications > 0) {
-      setNotifications(0);
-    }
   }, [isOnNotificationsPage, notifications]);
   
   // Fetch notifications
@@ -104,10 +103,25 @@ const WorkerLayout = () => {
     
     try {
       const newStatus = isOnline ? 'offline' : 'online';
-      // Optimistic update
-      setIsOnline(!isOnline);
+      let locData = geoLocation;
+      if (newStatus === 'online' && !locData) {
+        try {
+          locData = await detectLocation();
+        } catch (err) {
+          console.warn('Could not detect location before going online');
+        }
+      }
       
-      const payload = { status: newStatus };
+      const payload: any = { 
+        status: newStatus,
+        isAvailable: newStatus === 'online'
+      };
+      if (newStatus === 'online' && locData) {
+        payload.location = {
+          type: "Point",
+          coordinates: [locData.lng, locData.lat]
+        };
+      }
       
       let res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || user._id}`, {
         method: 'PATCH',
@@ -120,7 +134,7 @@ const WorkerLayout = () => {
         res = await fetch(`${API_BASE}/api/worker-profiles`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ userId: user.id || user._id, status: newStatus, bio: 'Worker Profile' })
+          body: JSON.stringify({ ...payload, userId: user.id || user._id, bio: 'Worker Profile' })
         });
       }
       
@@ -131,6 +145,7 @@ const WorkerLayout = () => {
       } else {
         const updated = await res.json();
         setWorkerProfile(updated);
+        setIsOnline(newStatus === 'online');
         toast.success(`${profile?.full_name || 'Worker'} is now ${newStatus}`, {
           description: newStatus === 'online' ? 'You are now visible to customers.' : 'You are now hidden from customers.',
           icon: newStatus === 'online' ? <CircleCheck className="h-4 w-4 text-green-500" /> : <Circle className="h-4 w-4 text-gray-500" />,

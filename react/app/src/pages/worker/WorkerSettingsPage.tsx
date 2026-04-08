@@ -55,6 +55,10 @@ const settingsSchema = z.object({
   experience_years: z.coerce.number().min(0, "Experience cannot be negative"),
   base_price: z.coerce.number().min(0, "Base price cannot be negative"),
   service_radius_km: z.coerce.number().min(1, "Radius must be > 0"),
+  socials: z.object({
+    twitter: z.string().optional(),
+    linkedin: z.string().optional(),
+  }).optional(),
 });
 
 type SettingsFormValues = z.infer<typeof settingsSchema>;
@@ -81,7 +85,11 @@ const WorkerSettingsPage = () => {
       bio: '',
       experience_years: 0,
       base_price: 0,
-      service_radius_km: 10
+      service_radius_km: 10,
+      socials: {
+        twitter: '',
+        linkedin: ''
+      }
     }
   });
   
@@ -149,7 +157,11 @@ const WorkerSettingsPage = () => {
           bio: workerData.bio || '',
           experience_years: workerData.experience_years || 0,
           base_price: workerData.base_price || 0,
-          service_radius_km: workerData.service_radius_km || 10
+          service_radius_km: workerData.service_radius_km || 10,
+          socials: {
+            twitter: workerData.user?.socials?.twitter || profile?.socials?.twitter || '',
+            linkedin: workerData.user?.socials?.linkedin || profile?.socials?.linkedin || ''
+          }
         });
 
         // Load notification preferences if available
@@ -533,6 +545,26 @@ const WorkerSettingsPage = () => {
                           placeholder="Enter pincode"
                         />
                         {errors.pincode && <span className="text-xs text-red-500">{errors.pincode.message}</span>}
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="twitter">Twitter / X Handle</Label>
+                        <Input
+                          id="twitter"
+                          {...register('socials.twitter')}
+                          placeholder="@username"
+                        />
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <Label htmlFor="linkedin">LinkedIn Profile URL</Label>
+                        <Input
+                          id="linkedin"
+                          {...register('socials.linkedin')}
+                          placeholder="https://linkedin.com/in/username"
+                        />
                       </div>
                     </div>
                     
