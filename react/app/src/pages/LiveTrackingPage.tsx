@@ -9,11 +9,13 @@ import { Layout } from '@/components/layout/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import TrackingMap from '@/components/TrackingMap';
 
 export default function LiveTrackingPage() {
   const navigate = useNavigate();
   const [eta, setEta] = useState(12);
   const [status, setStatus] = useState('on_the_way');
+  const [workerLocation, setWorkerLocation] = useState<[number, number] | null>([28.7000, 77.0900]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -25,40 +27,12 @@ export default function LiveTrackingPage() {
   return (
     <Layout>
       <div className="min-h-screen bg-slate-50 relative flex flex-col">
-        {/* Map Background Placeholder */}
+        {/* Map Container */}
         <div className="flex-1 bg-slate-200 relative overflow-hidden">
-          <div className="absolute inset-0 bg-[url('https://api.mapbox.com/styles/v1/mapbox/light-v10/static/77.1025,28.7041,12,0/800x600?access_token=pk.eyJ1IjoicGxhY2Vob2xkZXIiLCJhIjoiY2p4eGZyeGZ5MHExMzNxcXp5enp5enp5In0')] bg-cover bg-center opacity-50" />
-          
-          {/* Animated Route Line */}
-          <svg className="absolute inset-0 w-full h-full pointer-events-none">
-             <motion.path
-               d="M 200 400 Q 400 350 600 300"
-               stroke="#3b82f6"
-               strokeWidth="4"
-               fill="none"
-               strokeDasharray="10,10"
-               initial={{ pathLength: 0 }}
-               animate={{ pathLength: 1 }}
-               transition={{ duration: 5, repeat: Infinity }}
-             />
-          </svg>
-
-          {/* Worker Marker */}
-          <motion.div 
-            animate={{ 
-              x: [200, 600], 
-              y: [400, 300] 
-            }}
-            transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-            className="absolute h-12 w-12 bg-primary rounded-full border-4 border-white shadow-2xl flex items-center justify-center text-white"
-          >
-            <Navigation className="h-6 w-6 rotate-45" />
-          </motion.div>
-
-          {/* Customer Marker */}
-          <div className="absolute left-[620px] top-[280px] h-12 w-12 bg-emerald-500 rounded-full border-4 border-white shadow-2xl flex items-center justify-center text-white">
-            <MapPin className="h-6 w-6" />
-          </div>
+          <TrackingMap
+            userLocation={[28.7041, 77.1025]}
+            workerLocation={workerLocation}
+          />
         </div>
 
         {/* Tracking Card (Bottom Sheet Style on Mobile) */}
