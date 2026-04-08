@@ -13,7 +13,8 @@ import {
   RotateCcw,
   Flame,
   TrendingUp,
-  LayoutGrid
+  LayoutGrid,
+  Eye
 } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -373,7 +374,7 @@ export default function ThekedarMapHub() {
 
     try {
       const response = await fetch(
-        `https://router.project-osrm.org/route/v1/driving/${currentLocation.lng},${currentLocation.lat};${visit.bookings.longitude},${visit.bookings.latitude}?overview=full&geometries=geojson`
+        `https://router.project-osrm.org/route/v1/driving/${currentLocation.lng},${currentLocation.lat};${visit.lng},${visit.lat}?overview=full&geometries=geojson`
       );
       const data = await response.json();
 
@@ -556,19 +557,15 @@ export default function ThekedarMapHub() {
                     <div className="space-y-2 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
                         <MapPin className="h-3 w-3" />
-                        <span className="truncate">{visit.bookings?.address || 'Address not available'}</span>
+                        <span className="truncate">{visit.address || 'Address not available'}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Users className="h-3 w-3" />
-                        <span>{visit.bookings?.customer_profiles?.full_name || 'Unknown'}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Phone className="h-3 w-3" />
-                        <span>{visit.bookings?.customer_profiles?.phone || 'N/A'}</span>
+                        <span>{visit.customerName || 'Unknown'}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        <span>{new Date(visit.created_at).toLocaleDateString()}</span>
+                        <span>{new Date(visit.createdAt).toLocaleDateString()}</span>
                       </div>
                     </div>
                     
@@ -599,7 +596,7 @@ export default function ThekedarMapHub() {
               ) : (
                 <div className="space-y-3">
                   {teamMembers.map((member) => (
-                    <div key={member.id} className="flex items-center gap-3 p-3 border rounded-lg">
+                    <div key={member._id} className="flex items-center gap-3 p-3 border rounded-lg">
                         <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
                           member.status === 'online' ? 'bg-green-100' :
                           member.status === 'busy' ? 'bg-yellow-100' : 'bg-gray-100'

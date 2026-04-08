@@ -19,6 +19,7 @@ interface Message {
   text: string;
   timestamp: string;
   status: string;
+  bookingId?: string;
 }
 
 interface ChatDrawerProps {
