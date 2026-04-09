@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_ROOT as API_BASE } from '@/lib/constants';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
 
-const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+// API_BASE is now imported from constants.ts
 
 const WorkerNotificationsPage = () => {
   const { user, profile } = useAuth();

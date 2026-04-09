@@ -31,7 +31,8 @@ const sendViaBrevoApi = async (to, subject, htmlBody) => {
     const fromAddress = process.env.BREVO_SENDER_EMAIL || '23100010042.uset@ltsu.ac.in';
     const recipientList = Array.isArray(to) ? to.map(email => ({ email })) : [{ email: to }];
 
-    console.log(`[Email] Trying Brevo HTTP API → to: ${to}, from: ${fromAddress}`);
+    const maskedKey = apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 4);
+    console.log(`[Email] Trying Brevo HTTP API (Key: ${maskedKey}) → to: ${to}, from: ${fromAddress}`);
 
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',

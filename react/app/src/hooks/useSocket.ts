@@ -14,9 +14,9 @@
 import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from '@/contexts/AuthContext';
+import { API_ROOT as BACKEND_URL } from '@/lib/constants';
 
-const BACKEND_URL =
-  import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+// BACKEND_URL is now imported from constants.ts
 
 // Module-level singleton so we don't create multiple connections
 let socketSingleton: Socket | null = null;

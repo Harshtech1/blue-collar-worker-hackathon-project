@@ -39,6 +39,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log('[AuthContext] Using API URL:', API);
+  }, []);
+
+  useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
       setLoading(false);

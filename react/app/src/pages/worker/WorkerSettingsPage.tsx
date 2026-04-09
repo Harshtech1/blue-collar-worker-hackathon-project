@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_ROOT as API_BASE } from '@/lib/constants';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -135,7 +136,7 @@ const WorkerSettingsPage = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+      // API_BASE is now imported from constants.ts
       
       // Fetch worker profile via API
       const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
@@ -185,7 +186,7 @@ const WorkerSettingsPage = () => {
     
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+      // API_BASE is now imported from constants.ts
       
       const formData = new FormData();
       formData.append('file', file);
@@ -217,7 +218,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+      // API_BASE is now imported from constants.ts
 
       const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
         method: 'PATCH',
@@ -245,7 +246,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+      // API_BASE is now imported from constants.ts
 
       const res = await fetch(`${API_BASE}/api/worker/settings/notifications`, {
         method: 'PATCH',
@@ -273,7 +274,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+      // API_BASE is now imported from constants.ts
 
       const res = await fetch(`${API_BASE}/api/worker/settings/security`, {
         method: 'PATCH',
@@ -301,7 +302,7 @@ const WorkerSettingsPage = () => {
     setSaving(true);
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
+      // API_BASE is now imported from constants.ts
 
       const res = await fetch(`${API_BASE}/api/worker/settings/preferences`, {
         method: 'PATCH',
