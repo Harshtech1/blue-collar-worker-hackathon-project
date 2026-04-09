@@ -20,14 +20,20 @@ L.Marker.prototype.options.icon = DefaultIcon;
 // Custom icons for user and worker
 const userIcon = L.divIcon({
   className: 'custom-div-icon',
-  html: `<div style="background-color: #3b82f6; width: 15px; height: 15px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);"></div>`,
+  html: `<div style="position: relative; display: flex; align-items: center; justify-content: center; width: 15px; height: 15px;">
+           <div class="animate-ping" style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; border-radius: 50%; background-color: #3b82f6; opacity: 0.5;"></div>
+           <div style="position: relative; background-color: #3b82f6; width: 15px; height: 15px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3);"></div>
+         </div>`,
   iconSize: [15, 15],
   iconAnchor: [7, 7]
 });
 
 const workerIcon = L.divIcon({
   className: 'custom-div-icon',
-  html: `<div style="background-color: #f59e0b; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 text-white"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg></div>`,
+  html: `<div style="position: relative; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px;">
+           <div class="animate-ping" style="position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; border-radius: 50%; background-color: #f59e0b; opacity: 0.5;"></div>
+           <div style="position: relative; z-index: 10; background-color: #f59e0b; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 text-white"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg></div>
+         </div>`,
   iconSize: [20, 20],
   iconAnchor: [10, 10]
 });

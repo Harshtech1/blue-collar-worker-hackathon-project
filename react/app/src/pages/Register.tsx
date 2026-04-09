@@ -53,7 +53,7 @@ export default function Register() {
     if (error) {
       toast.error(error.message);
     } else {
-      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
+      new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
       setPendingEmail(email);
       setStep(3); // OTP Step
       toast.success(language === 'hi' ? 'OTP भेजा गया!' : 'OTP sent!');
@@ -69,7 +69,7 @@ export default function Register() {
     if (error) {
       toast.error(error.message);
     } else {
-      new Audio('/sounds/faaaa.mp4').play().catch(e => console.log('Audio error:', e));
+      new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
       toast.success(language === 'hi' ? 'खाता सत्यापित! कृपया लॉगिन करें।' : 'Account verified! Please login.');
       navigate('/login');
     }
