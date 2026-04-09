@@ -25,20 +25,54 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
+  const [emailForOtp, setEmailForOtp] = useState<string | null>(null);
+  const [emailOtpSent, setEmailOtpSent] = useState(false);
 
-  const handleSendOTP = async () => {
-    if (!phone || phone.length < 10) {
-      toast.error(language === 'hi' ? 'कृपया वैध फोन नंबर दर्ज करें' : 'Please enter a valid phone number');
+  const handleEmailLogin = async () => {
+    if (!email || !password) {
+      toast.error(language === 'hi' ? 'कृपया ईमेल और पासवर्ड दर्ज करें' : 'Please enter email and password');
       return;
     }
     setLoading(true);
-    const { error } = await signInWithOTP(`+91${phone}`);
+    const { data, error } = await signIn(email, password);
     setLoading(false);
-    if (error) toast.error(error.message);
-    else {
+    
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    
+    if (data?.requireOtp) {
+      setEmailForOtp(email);
+      setEmailOtpSent(true);
+      toast.info(language === 'hi' ? 'कृपया अपना OTP दर्ज करें' : 'Please enter your OTP');
+      return;
+    }
+    
+    new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
+    toast.success(language === 'hi' ? 'सफलतापूर्वक लॉगिन!' : 'Login successful!');
+    navigate('/');
+  };
+
+  const handleEmailOtpVerify = async () => {
+    if (!otp || otp.length !== 6) {
+      toast.error(language === 'hi' ? 'कृपया 6 अंकों का OTP दर्ज करें' : 'Please enter 6-digit OTP');
+      return;
+    }
+    setLoading(true);
+    const { data, error } = await verifyOTP(emailForOtp!, otp);
+    setLoading(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    if (data?.token) {
+      localStorage.setItem('token', data.token);
+      const { user: authUser } = data;
+      setUser({ ...authUser, id: authUser.id || authUser._id });
       new Audio('/sounds/faaaa.mp3').play().catch(e => console.log('Audio error:', e));
-      setOtpSent(true);
-      toast.success(language === 'hi' ? 'OTP भेजा गया!' : 'OTP sent!');
+      toast.success(language === 'hi' ? 'सफलतापूर्वक लॉगिन!' : 'Login successful!');
+      navigate('/');
     }
   };
 
@@ -197,33 +231,61 @@ export default function Login() {
               </TabsContent>
 
               <TabsContent value="email" className="space-y-6">
-                <div className="space-y-5">
-                   <div className="space-y-2">
-                      <Label className="font-bold text-slate-600 ml-1">Email</Label>
-                      <Input 
-                        placeholder="you@example.com" 
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="h-14 bg-slate-50 border-slate-100 rounded-2xl font-bold"
-                      />
-                   </div>
-                   <div className="space-y-2">
-                      <div className="flex justify-between ml-1">
-                        <Label className="font-bold text-slate-600">Password</Label>
-                        <button className="text-xs font-bold text-primary">Forgot?</button>
+                <AnimatePresence mode="wait">
+                  {!emailOtpSent ? (
+                    <motion.div key="email-login" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}>
+                      <div className="space-y-5">
+                        <div className="space-y-2">
+                          <Label className="font-bold text-slate-600 ml-1">Email</Label>
+                          <Input 
+                            placeholder="you@example.com" 
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            className="h-14 bg-slate-50 border-slate-100 rounded-2xl font-bold"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between ml-1">
+                            <Label className="font-bold text-slate-600">Password</Label>
+                            <button className="text-xs font-bold text-primary">Forgot?</button>
+                          </div>
+                          <Input 
+                            type="password" 
+                            placeholder="••••••••" 
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            className="h-14 bg-slate-50 border-slate-100 rounded-2xl font-bold"
+                          />
+                        </div>
+                        <Button onClick={handleEmailLogin} disabled={loading} className="w-full h-16 rounded-2xl text-lg font-black shadow-lg shadow-primary/20">
+                          {loading ? <Loader2 className="animate-spin" /> : "Login with Email"}
+                        </Button>
                       </div>
-                      <Input 
-                        type="password" 
-                        placeholder="••••••••" 
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="h-14 bg-slate-50 border-slate-100 rounded-2xl font-bold"
-                      />
-                   </div>
-                   <Button onClick={handleEmailLogin} disabled={loading} className="w-full h-16 rounded-2xl text-lg font-black shadow-lg shadow-primary/20">
-                      {loading ? <Loader2 className="animate-spin" /> : "Login with Email"}
-                   </Button>
-                </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div key="email-otp" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }}>
+                      <div className="space-y-6">
+                        <div className="text-center p-4 bg-primary/5 rounded-2xl border border-primary/10">
+                          <p className="text-sm font-bold text-primary">OTP sent to {emailForOtp}</p>
+                          <button onClick={() => { setEmailOtpSent(false); setOtp(''); }} className="text-xs font-black uppercase tracking-widest text-slate-400 mt-2 hover:text-primary transition-colors">Change Email</button>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="font-bold text-slate-600 ml-1">Enter 6-digit OTP</Label>
+                          <Input 
+                            type="text" 
+                            placeholder="••••••" 
+                            value={otp}
+                            onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                            className="h-16 text-3xl text-center tracking-[0.5em] font-black bg-slate-50 border-slate-100 rounded-2xl"
+                          />
+                        </div>
+                        <Button onClick={handleEmailOtpVerify} disabled={loading || otp.length < 6} className="w-full h-16 rounded-2xl text-lg font-black shadow-lg shadow-primary/20">
+                          {loading ? <Loader2 className="animate-spin" /> : "Verify & Login"}
+                        </Button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </TabsContent>
             </Tabs>
           </div>
