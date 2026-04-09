@@ -7,16 +7,20 @@ dotenv.config();
 // This is the FALLBACK when Brevo HTTP API fails
 // Brevo SMTP relay: smtp-relay.brevo.com:587
 const createBrevoSmtpTransporter = () => {
+    // Fallback logic: If BREVO_SMTP_KEY is missing, use BREVO_API_KEY
+    const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
+    const smtpLogin = process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SENDER_EMAIL || '23100010042.uset@ltsu.ac.in';
+
     return nodemailer.createTransport({
         host: 'smtp-relay.brevo.com',
         port: 587,
         secure: false, // STARTTLS
         auth: {
-            user: process.env.BREVO_SMTP_LOGIN,   // Your Brevo account email
-            pass: process.env.BREVO_SMTP_KEY,     // Brevo SMTP key (different from API key!)
+            user: smtpLogin.trim(),
+            pass: smtpKey ? smtpKey.trim() : '',
         },
-        connectionTimeout: 15000,
-        socketTimeout: 20000,
+        connectionTimeout: 30000, // Increased to 30s
+        socketTimeout: 30000,
     });
 };
 
@@ -25,6 +29,13 @@ const sendViaBrevoApi = async (to, subject, htmlBody) => {
     const apiKey = process.env.BREVO_API_KEY;
     if (!apiKey) {
         console.warn('[Email] BREVO_API_KEY not set, skipping Brevo API');
+        return false;
+    }
+
+    // BREAKING: If it starts with xsmtpsib-, it is an SMTP password, NOT an API key.
+    // The Brevo v3 API will return 401 if we use an SMTP password.
+    if (apiKey.startsWith('xsmtpsib-')) {
+        console.warn('[Email] Detecting SMTP Key in API field. Skipping HTTP API and moving to SMTP fallback.');
         return false;
     }
 
@@ -63,8 +74,9 @@ const sendViaBrevoApi = async (to, subject, htmlBody) => {
 
 // ─── Send email via Brevo SMTP (fallback - works on Render) ─────────────────
 const sendViaBrevoSmtp = async (to, subject, htmlBody) => {
-    if (!process.env.BREVO_SMTP_LOGIN || !process.env.BREVO_SMTP_KEY) {
-        console.warn('[Email] BREVO_SMTP_LOGIN or BREVO_SMTP_KEY not set, skipping Brevo SMTP');
+    const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
+    if (!smtpKey) {
+        console.warn('[Email] No SMTP or API key found for fallback. Skipping SMTP.');
         return false;
     }
 
