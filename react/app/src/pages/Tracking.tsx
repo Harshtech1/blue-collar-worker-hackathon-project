@@ -284,6 +284,8 @@ export default function Tracking() {
 
   const currentStepIndex = statusSteps.findIndex(s => s.id === status);
   const progress = ((currentStepIndex + 1) / statusSteps.length) * 100;
+  const chatCurrentUserId = bookingData?.customer_user_id || bookingData?.customerUserId || currentUserId;
+  const chatWorkerUserId = bookingData?.worker_user_id || bookingData?.workerUserId || '';
 
   if (loading) {
     return (
@@ -613,8 +615,8 @@ export default function Tracking() {
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
         bookingId={bookingId || ''}
-        currentUserId={currentUserId}
-        otherUserId={bookingData?.worker_user_id || ''}
+        currentUserId={chatCurrentUserId}
+        otherUserId={chatWorkerUserId}
         otherUserName={workerDetails.name}
       />
     </Layout>

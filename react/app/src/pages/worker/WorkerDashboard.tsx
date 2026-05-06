@@ -774,8 +774,15 @@ const WorkerDashboard = () => {
           isOpen={!!selectedChatJob}
           onClose={() => setSelectedChatJob(null)}
           bookingId={selectedChatJob.id || selectedChatJob._id}
-          currentUserId={currentUserId}
-          otherUserId={selectedChatJob.customer?._id || selectedChatJob.customer_id}
+          currentUserId={selectedChatJob.worker_user_id || selectedChatJob.workerUserId || currentUserId}
+          otherUserId={
+            selectedChatJob.customer_user_id
+            || selectedChatJob.customerUserId
+            || selectedChatJob.customer?.user
+            || selectedChatJob.customer?._id
+            || selectedChatJob.customer_id
+            || ''
+          }
           otherUserName={selectedChatJob.customer?.full_name || 'Customer'}
         />
       )}

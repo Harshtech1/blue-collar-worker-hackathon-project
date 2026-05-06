@@ -61,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser({ ...user, id: user.id || user._id });
           // Normalize ID handling
           const userId = user.id || user._id;
+          if (userId) localStorage.setItem('userId', userId);
           setProfile({
             id: userId,
             full_name: user.full_name,
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else if (res.status === 401 || res.status === 403) {
           // Only clear token on auth errors
           localStorage.removeItem('token');
+          localStorage.removeItem('userId');
         }
       } catch (err) {
         console.error("Auth check failed:", err);
@@ -144,6 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(data.user ? { ...data.user, id: data.user.id || data.user._id } : data.user);
           const userId = data.user?.id || data.user?._id;
           if (userId) {
+            localStorage.setItem('userId', userId);
             setProfile({ id: userId, full_name: data.user.full_name, email: data.user.email, role: data.user.role });
           }
         }
@@ -189,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data?.user) {
           const normalizedUser = { ...data.user, id: data.user.id || data.user._id };
           setUser(normalizedUser);
+          if (normalizedUser.id) localStorage.setItem('userId', normalizedUser.id);
           setProfile({
             id: normalizedUser.id,
             full_name: data.user.full_name,
@@ -225,6 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('userId');
     setUser(null);
     setProfile(null);
   };

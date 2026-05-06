@@ -36,6 +36,8 @@ const QUICK_REPLIES = [
   'Can you confirm the OTP when I arrive?',
 ];
 
+const HISTORY_SYNC_INTERVAL_MS = 3000;
+
 const makeClientMessageId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
@@ -53,19 +55,32 @@ const normalizeMessage = (message: Message): Message => ({
   status: message.status || 'sent',
 });
 
+const getMessageTime = (message: Message) => {
+  const parsed = new Date(message.timestamp).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const upsertMessage = (messages: Message[], incoming: Message) => {
   const normalized = normalizeMessage(incoming);
   const existingIndex = messages.findIndex((message) => {
     if (normalized._id && message._id === normalized._id) return true;
     if (normalized.clientMessageId && message.clientMessageId === normalized.clientMessageId) return true;
+    const sameConversation = (!normalized.bookingId || !message.bookingId || message.bookingId === normalized.bookingId);
+    const sameFingerprint = message.senderId === normalized.senderId
+      && message.receiverId === normalized.receiverId
+      && message.text === normalized.text
+      && Math.abs(getMessageTime(message) - getMessageTime(normalized)) < 2000;
+    if (sameConversation && sameFingerprint) return true;
     return false;
   });
 
-  if (existingIndex === -1) return [...messages, normalized];
+  if (existingIndex === -1) {
+    return [...messages, normalized].sort((a, b) => getMessageTime(a) - getMessageTime(b));
+  }
 
   return messages.map((message, index) => (
     index === existingIndex ? { ...message, ...normalized, status: normalized.status || 'sent' } : message
-  ));
+  )).sort((a, b) => getMessageTime(a) - getMessageTime(b));
 };
 
 export default function ChatDrawer({
@@ -81,6 +96,7 @@ export default function ChatDrawer({
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [chatReady, setChatReady] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -92,8 +108,14 @@ export default function ChatDrawer({
   const canSend = Boolean(socket && isConnected && bookingId && effectiveCurrentUserId && inputText.trim());
 
   useEffect(() => {
-    if (!isOpen) return;
-    fetchMessages();
+    if (!isOpen || !bookingId) return;
+
+    fetchMessages({ silent: false });
+    const interval = window.setInterval(() => {
+      fetchMessages({ silent: true });
+    }, HISTORY_SYNC_INTERVAL_MS);
+
+    return () => window.clearInterval(interval);
   }, [isOpen, bookingId]);
 
   useEffect(() => {
@@ -102,7 +124,7 @@ export default function ChatDrawer({
   }, [messages]);
 
   useEffect(() => {
-    if (!socket || !isOpen || !bookingId) return;
+    if (!socket || !isOpen || !bookingId || !effectiveCurrentUserId) return;
 
     setChatReady(false);
     socket.emit('join_booking_chat', { bookingId, userId: effectiveCurrentUserId });
@@ -150,12 +172,17 @@ export default function ChatDrawer({
     };
   }, [socket, isOpen, bookingId, effectiveCurrentUserId]);
 
-  const fetchMessages = async () => {
+  const fetchMessages = async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoading(true);
+      if (silent) {
+        setSyncing(true);
+      } else {
+        setLoading(true);
+      }
+
       const token = localStorage.getItem('token');
       if (!token || !bookingId) {
-        setMessages([]);
+        if (!silent) setMessages([]);
         return;
       }
 
@@ -169,12 +196,19 @@ export default function ChatDrawer({
       }
 
       const data = await res.json();
-      setMessages(Array.isArray(data) ? data.map(normalizeMessage) : []);
+      const incomingMessages = Array.isArray(data) ? data.map(normalizeMessage) : [];
+      setMessages((prev) => incomingMessages.reduce(upsertMessage, prev));
     } catch (err) {
       console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Unable to load chat history');
+      if (!silent) {
+        toast.error(err instanceof Error ? err.message : 'Unable to load chat history');
+      }
     } finally {
-      setLoading(false);
+      if (silent) {
+        setSyncing(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -244,7 +278,7 @@ export default function ChatDrawer({
                         <WifiOff className="h-3.5 w-3.5 text-amber-500" />
                       )}
                       <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                        {isConnected ? (chatReady ? 'Live chat ready' : 'Connecting room') : 'Reconnecting'}
+                        {isConnected ? (chatReady ? (syncing ? 'Syncing history' : 'Live chat ready') : 'Connecting room') : 'Reconnecting'}
                       </span>
                     </div>
                   </div>
@@ -336,6 +370,7 @@ export default function ChatDrawer({
                   onChange={(e) => setInputText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                   placeholder={isConnected ? 'Type a message...' : 'Reconnecting chat...'}
+                  maxLength={600}
                   className="flex-1 border-none bg-transparent px-2 py-2 text-sm font-semibold text-slate-700 outline-none placeholder:text-slate-400"
                 />
                 <Button

@@ -38,10 +38,18 @@ const resolveChatParticipants = async ({ bookingId, senderId, receiverId }) => {
   const customerId = asString(booking.customer_user_id);
   const workerId = asString(booking.worker_user_id);
   const normalizedSenderId = asString(senderId);
-  let normalizedReceiverId = asString(receiverId);
+  const requestedReceiverId = asString(receiverId);
+  const expectedReceiverId = normalizedSenderId === customerId
+    ? workerId
+    : normalizedSenderId === workerId
+      ? customerId
+      : requestedReceiverId;
 
-  if (!normalizedReceiverId && normalizedSenderId === customerId) normalizedReceiverId = workerId;
-  if (!normalizedReceiverId && normalizedSenderId === workerId) normalizedReceiverId = customerId;
+  if (requestedReceiverId && expectedReceiverId && requestedReceiverId !== expectedReceiverId) {
+    console.warn(
+      `Ignoring mismatched chat receiver ${requestedReceiverId}; expected ${expectedReceiverId} for booking ${bookingId}`,
+    );
+  }
 
   return {
     booking,
@@ -49,7 +57,7 @@ const resolveChatParticipants = async ({ bookingId, senderId, receiverId }) => {
     customerId,
     workerId,
     senderId: normalizedSenderId,
-    receiverId: normalizedReceiverId,
+    receiverId: expectedReceiverId,
   };
 };
 
@@ -203,6 +211,22 @@ export function initSocket(httpServer) {
           return;
         }
 
+        const chatMessages = db.collection('chat_messages');
+
+        if (clientMessageId) {
+          const existingMessage = await chatMessages.findOne({
+            bookingId: bookingObjectId,
+            clientMessageId,
+          });
+
+          if (existingMessage) {
+            const existingPayload = serializeChatMessage(existingMessage);
+            socket.emit('message_sent', existingPayload);
+            socket.to(chatRoom(bookingId)).to(resolvedReceiverId).emit('receive_message', existingPayload);
+            return;
+          }
+        }
+
         const message = {
           bookingId: bookingObjectId,
           senderId: toObjectId(senderId) || senderId,
@@ -213,13 +237,12 @@ export function initSocket(httpServer) {
           clientMessageId: clientMessageId || null,
         };
 
-        const insertResult = await db.collection('chat_messages').insertOne(message);
+        const insertResult = await chatMessages.insertOne(message);
         const payload = serializeChatMessage({ ...message, _id: insertResult.insertedId });
 
         socket.join(chatRoom(bookingId));
-        io.to(chatRoom(bookingId)).emit('receive_message', payload);
-        io.to(senderId).emit('message_sent', payload);
-        io.to(resolvedReceiverId).emit('receive_message', payload);
+        socket.emit('message_sent', payload);
+        socket.to(chatRoom(bookingId)).to(resolvedReceiverId).emit('receive_message', payload);
 
         console.log(`Chat message from ${senderId} to ${resolvedReceiverId} for booking ${bookingId}`);
       } catch (e) {

@@ -6,6 +6,8 @@ import { API } from '@/lib/constants';
 interface JobRequest {
   id: string;
   customer_id: string;
+  customer_user_id?: string;
+  worker_user_id?: string;
   category_id: string;
   address: string;
   city: string | null;
@@ -23,6 +25,9 @@ interface JobRequest {
   longitude: number | null;
   status: 'pending' | 'matched' | 'accepted' | 'arriving' | 'otp_verify' | 'in_progress' | 'completed' | 'cancelled';
   customer?: {
+    _id?: string;
+    id?: string;
+    user?: string;
     full_name: string;
     phone: string;
     avatar_url: string | null;
@@ -39,6 +44,8 @@ const ACTIVE_STATUSES = ['accepted', 'arriving', 'otp_verify', 'in_progress'];
 const normalizeJob = (job: any) => ({
   ...job,
   id: job.id || job._id,
+  customer_user_id: job.customer_user_id || job.customerUserId || job.customer?.user || job.customer_id,
+  worker_user_id: job.worker_user_id || job.workerUserId || job.worker?.user || job.worker_id,
   created_at: job.created_at || job.createdAt,
   updated_at: job.updated_at || job.updatedAt,
   scheduled_at: job.scheduled_at || job.scheduledAt,
