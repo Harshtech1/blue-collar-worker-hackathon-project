@@ -3,20 +3,24 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// Dono variables check kar raha hai
-const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
-
-if (!uri) {
-  console.error("❌ ERROR: MONGODB_URI or MONGO_URI is missing in your .env file!");
-  process.exit(1); 
-}
-
-const client = new MongoClient(uri);
+const getMongoUri = () => process.env.MONGODB_URI || process.env.MONGO_URI;
 
 let db;
+let client;
+
+const shouldAllowDbOffline = () => process.env.ALLOW_DB_OFFLINE === "true";
 
 export const connectDB = async () => {
   try {
+    const uri = getMongoUri();
+    if (!uri) {
+      throw new Error("MONGODB_URI or MONGO_URI is missing in your .env file");
+    }
+
+    if (!client) {
+      client = new MongoClient(uri);
+    }
+
     await client.connect();
     console.log("✅ MongoDB Connected (Native Driver)");
     db = client.db(); // Agar db name .env mein nahi hai, toh ye default db uthayega
@@ -27,6 +31,13 @@ export const connectDB = async () => {
     return db;
   } catch (error) {
     console.error("❌ MongoDB Connection error:", error.message);
+    if (shouldAllowDbOffline()) {
+      console.warn("⚠️ ALLOW_DB_OFFLINE=true, so the API will start in local demo mode without MongoDB.");
+      db = null;
+      client = null;
+      return null;
+    }
+
     process.exit(1);
   }
 };
@@ -85,3 +96,5 @@ export const getDb = () => {
   }
   return db;
 };
+
+export const isDbConnected = () => Boolean(db);

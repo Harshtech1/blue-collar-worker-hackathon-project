@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/db';
 import { useToast } from '@/hooks/use-toast';
 import { API } from '@/lib/constants';
 
@@ -35,6 +34,16 @@ interface JobRequest {
   };
 }
 
+const ACTIVE_STATUSES = ['accepted', 'arriving', 'otp_verify', 'in_progress'];
+
+const normalizeJob = (job: any) => ({
+  ...job,
+  id: job.id || job._id,
+  created_at: job.created_at || job.createdAt,
+  updated_at: job.updated_at || job.updatedAt,
+  scheduled_at: job.scheduled_at || job.scheduledAt,
+});
+
 export function useJobRequests() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -44,55 +53,33 @@ export function useJobRequests() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (user) {
-      fetchJobs();
-      
-      // Auto-refresh every 10 seconds to keep dashboard in sync
-      const interval = setInterval(fetchJobs, 10000);
-      return () => clearInterval(interval);
-    }
+    if (!user) return;
+
+    fetchJobs();
+    const interval = setInterval(fetchJobs, 10000);
+    return () => clearInterval(interval);
   }, [user]);
 
   const fetchJobs = async () => {
     if (!user) return;
 
     try {
-      // Fetch pending jobs that need workers
       const token = localStorage.getItem('token');
       const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
       const pendingRes = await fetch(`${API}/bookings?status=pending&is_worker_null=1&limit=10`, { headers });
       if (!pendingRes.ok) throw new Error('Failed to fetch pending jobs');
-      let pending = await pendingRes.json();
-      if (Array.isArray(pending)) {
-        pending = pending.map((j: any) => ({ 
-          ...j, 
-          id: j.id || j._id,
-          created_at: j.created_at || j.createdAt,
-          updated_at: j.updated_at || j.updatedAt,
-          scheduled_at: j.scheduled_at || j.scheduledAt
-        }));
-      }
+      const pendingData = await pendingRes.json();
+      const pending = Array.isArray(pendingData) ? pendingData.map(normalizeJob) : [];
 
-
-      // Fetch active jobs assigned to this worker by resolving worker profile
-      const activeRes = await fetch(`${API}/bookings?worker_user_id=${user.id || (user as any)._id}`);
+      const activeRes = await fetch(`${API}/bookings?worker_user_id=${user.id || (user as any)._id}`, { headers });
       if (!activeRes.ok) throw new Error('Failed to fetch active jobs');
-      let activeData = await activeRes.json();
-      if (Array.isArray(activeData)) {
-        activeData = activeData.map((j: any) => ({ 
-          ...j, 
-          id: j.id || j._id,
-          created_at: j.created_at || j.createdAt,
-          updated_at: j.updated_at || j.updatedAt,
-          scheduled_at: j.scheduled_at || j.scheduledAt
-        }));
-      }
+      const activeDataRaw = await activeRes.json();
+      const activeData = Array.isArray(activeDataRaw) ? activeDataRaw.map(normalizeJob) : [];
 
-      const activeFiltered = (activeData || []).filter((b: JobRequest) => ['pending', 'confirmed', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(b.status));
-
-      setPendingJobs((pending || []) as JobRequest[]);
-      setActiveJobs((activeFiltered || []) as JobRequest[]);
-      setAllJobs((activeData || []) as JobRequest[]);
+      setPendingJobs(pending as JobRequest[]);
+      setActiveJobs(activeData.filter((job: JobRequest) => ACTIVE_STATUSES.includes(job.status)) as JobRequest[]);
+      setAllJobs(activeData as JobRequest[]);
     } catch (error) {
       console.error('Error fetching jobs:', error);
     } finally {
@@ -100,22 +87,21 @@ export function useJobRequests() {
     }
   };
 
-  const subscribeToJobs = () => {
-    // Realtime not implemented in this migration. Placeholder for future websocket/SSE implementation.
-    console.warn('subscribeToJobs is not implemented yet (no realtime).');
-    return () => { };
-  };
-
   const acceptJob = async (jobId: string) => {
     if (!user) return { error: new Error('Not authenticated') };
 
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API}/bookings/${jobId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ worker: user.id, status: 'accepted', updated_at: new Date().toISOString() })
+      const res = await fetch(`${API}/bookings/${jobId}/respond`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'accepted' }),
       });
-      if (!res.ok) throw new Error('Failed to accept job');
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || 'Failed to accept job');
+      }
 
       toast({
         title: 'Job Accepted!',
@@ -135,15 +121,36 @@ export function useJobRequests() {
   };
 
   const rejectJob = async (jobId: string) => {
-    // For now, just remove from local state (no penalty policy)
-    setPendingJobs(prev => prev.filter(job => job.id !== jobId));
+    if (!user) return { error: new Error('Not authenticated') };
 
-    toast({
-      title: 'Job Skipped',
-      description: 'No worries! You can accept other jobs.',
-    });
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API}/bookings/${jobId}/respond`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'declined' }),
+      });
 
-    return { error: null };
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || 'Failed to skip job');
+      }
+
+      setPendingJobs((prev) => prev.filter((job) => job.id !== jobId));
+      toast({
+        title: 'Job Skipped',
+        description: 'No worries! You can accept other jobs.',
+      });
+
+      return { error: null };
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to skip job',
+        variant: 'destructive',
+      });
+      return { error: error as Error };
+    }
   };
 
   const updateJobStatus = async (jobId: string, status: string) => {
@@ -152,8 +159,9 @@ export function useJobRequests() {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${API}/bookings/${jobId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status, updated_at: new Date().toISOString() })
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
       });
       if (!res.ok) throw new Error('Failed to update job status');
 
@@ -175,8 +183,9 @@ export function useJobRequests() {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${API}/bookings/${jobId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'in_progress', otp, otp_verified: true, started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'in_progress', otp, otp_verified: true, started_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
       });
 
       if (!res.ok) {
@@ -214,10 +223,11 @@ export function useJobRequests() {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${API}/bookings/${jobId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'completed', otp, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: 'completed', otp, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
       });
-      
+
       if (!res.ok) {
         if (res.status === 400) {
           toast({
@@ -232,7 +242,7 @@ export function useJobRequests() {
 
       toast({
         title: 'Job Completed!',
-        description: 'Your earnings have been added to your wallet.',
+        description: 'Payment can now be collected from the customer.',
       });
 
       fetchJobs();

@@ -226,19 +226,10 @@ export default function Tracking() {
 
 
 
-  const handleStartWork = () => {
-    setStatus('in_progress');
-    toast.success("Work Started Successfully!");
-  };
-
-  const handleFinishWork = () => {
-    setStatus('completed');
-    toast.success("Work Completed Successfully!");
-
-    setTimeout(() => {
-      const amount = bookingData?.amount || location.state?.amount || 329;
-      navigate(`/payment?bookingId=${bookingId}&amount=${amount}&type=payment`);
-    }, 1500);
+  const handleCopyOtp = async (value: string, label: string) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
   };
 
   const handleCancel = async () => {
@@ -554,8 +545,11 @@ export default function Tracking() {
                                     <Copy className="h-4 w-4" />
                                   </Button>
                                 </div>
-                                <Button onClick={handleStartWork} className="w-full mt-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-10 font-bold">
-                                  Verify {bookingData?.otp_start || ''} & Start
+                                <Button
+                                  onClick={() => handleCopyOtp(bookingData?.otp_start || '', 'Start OTP')}
+                                  className="w-full mt-3 bg-amber-600 hover:bg-amber-700 text-white rounded-xl h-10 font-bold"
+                                >
+                                  Copy start OTP for worker verification
                                 </Button>
                               </motion.div>
                             )}
@@ -572,8 +566,11 @@ export default function Tracking() {
                                     <Copy className="h-4 w-4" />
                                   </Button>
                                 </div>
-                                <Button onClick={handleFinishWork} className="w-full mt-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl h-10 font-bold">
-                                  Enter {bookingData?.otp_finish || ''} to Finish
+                                <Button
+                                  onClick={() => handleCopyOtp(bookingData?.otp_finish || '', 'Finish OTP')}
+                                  className="w-full mt-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl h-10 font-bold"
+                                >
+                                  Copy finish OTP for payment handoff
                                 </Button>
                               </motion.div>
                             )}

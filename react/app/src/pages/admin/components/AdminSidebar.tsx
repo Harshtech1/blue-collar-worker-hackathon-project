@@ -12,11 +12,12 @@ import {
   Menu,
   X,
   BarChart3,
-  Map
+  Map,
+  BrainCircuit
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type AdminTab = 'overview' | 'users' | 'workers' | 'bookings' | 'finance' | 'heatmap' | 'system' | 'bugs' | 'audit' | 'settings';
+export type AdminTab = 'overview' | 'users' | 'workers' | 'bookings' | 'finance' | 'heatmap' | 'intelligence' | 'system' | 'bugs' | 'audit' | 'settings';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -31,6 +32,7 @@ const menuItems = [
   { id: 'bookings', label: 'Order Stream', icon: Activity },
   { id: 'finance', label: 'Revenue & Payouts', icon: DollarSign },
   { id: 'heatmap', label: 'Job Heatmap', icon: Map },
+  { id: 'intelligence', label: 'Intelligence Engine', icon: BrainCircuit },
   { id: 'system', label: 'System Health', icon: Settings },
   { id: 'bugs', label: 'Bug Monitor', icon: AlertCircle },
   { id: 'audit', label: 'Platform Audit', icon: ShieldCheck },

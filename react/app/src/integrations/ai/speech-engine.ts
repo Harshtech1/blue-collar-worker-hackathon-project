@@ -51,7 +51,7 @@ export const VOICE_PRESETS = {
   }
 };
 
-import { elevenClient, isElevenEnabled } from './eleven-client';
+import { isElevenEnabled } from './eleven-client';
 
 export class SpeechEngine {
   private isPlaying: boolean = false;
@@ -64,10 +64,8 @@ export class SpeechEngine {
       console.warn('ElevenLabs API key not found. Voice features will be disabled.');
     }
 
-    // Ensure the shared client is initialized (safe to create even if API key is missing)
     if (isElevenEnabled()) {
-      // elevenClient is available for future direct SDK calls
-      // We continue to use the lightweight fetch-based flow for browser audio blobs for now
+      // Browser audio uses the fetch-based flow below.
     }
   }
 

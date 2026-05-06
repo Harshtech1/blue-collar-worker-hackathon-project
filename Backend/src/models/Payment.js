@@ -1,6 +1,18 @@
 import { getDb } from '../config/db.js';
+import { ObjectId } from 'mongodb';
 
 const COLLECTION = 'payments';
+
+const toObjectId = (value) => {
+  if (!value) return null;
+  if (value instanceof ObjectId) return value;
+
+  try {
+    return new ObjectId(value);
+  } catch {
+    return null;
+  }
+};
 
 /*
  * Payment Data Structure
@@ -33,14 +45,14 @@ export const Payment = {
   calculateAndInsert: async (booking, paymentMethod, transactionId, baseCommissionRate = 0.10) => {
     const db = getDb();
     
-    const totalAmount = booking.amount || 0;
-    const platformFee = Number((totalAmount * baseCommissionRate).toFixed(2));
-    const workerEarning = Number((totalAmount - platformFee).toFixed(2));
+    const totalAmount = Number(booking.amount || 0);
+    const workerEarning = Number((booking.worker_earning ?? (totalAmount - (totalAmount * baseCommissionRate))).toFixed(2));
+    const platformFee = Number((totalAmount - workerEarning).toFixed(2));
 
     const paymentDoc = {
       booking_id: booking._id,
-      customer_id: booking.customer,
-      worker_id: booking.worker,
+      customer_id: toObjectId(booking.customer_user_id) || toObjectId(booking.customer),
+      worker_id: toObjectId(booking.worker_user_id) || toObjectId(booking.worker),
       total_amount: totalAmount,
       platform_fee_amount: platformFee,
       worker_amount: workerEarning,

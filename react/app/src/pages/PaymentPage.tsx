@@ -52,8 +52,7 @@ export default function PaymentPage() {
         },
         body: JSON.stringify({
           bookingId: bookingId || null,
-          amount: Number(amount),
-          method: selectedMethod,
+          paymentMethod: selectedMethod,
         }),
       });
 

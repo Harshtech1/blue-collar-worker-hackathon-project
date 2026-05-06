@@ -37,8 +37,6 @@ import {
   Upload
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/db';
-import { uploadFile } from '@/lib/upload';
 import { z } from 'zod';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -190,17 +188,29 @@ const WorkerSettingsPage = () => {
       
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('type', 'avatar');
 
-      const res = await fetch(`${API_BASE}/api/worker/profile/avatar`, {
+      const uploadRes = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData
       });
       
-      if (res.ok) {
-        const data = await res.json();
-        setProfileData((prev: any) => ({ ...prev, avatar_url: data.url }));
+      if (uploadRes.ok) {
+        const uploadData = await uploadRes.json();
+        const profileRes = await fetch(`${API_BASE}/api/users/${user.id || (user as any)._id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ avatar_url: uploadData.url })
+        });
+
+        if (!profileRes.ok) {
+          throw new Error('Failed to save avatar');
+        }
+
+        setProfileData((prev: any) => ({ ...prev, avatar_url: uploadData.url }));
         toast.success('Profile picture updated!');
       } else {
         toast.error('Upload failed');
@@ -220,13 +230,15 @@ const WorkerSettingsPage = () => {
       const token = localStorage.getItem('token');
       // API_BASE is now imported from constants.ts
 
+      const { email: _email, ...workerPayload } = data;
+
       const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user.id || (user as any)._id}`, {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}` 
         },
-        body: JSON.stringify(data)
+        body: JSON.stringify(workerPayload)
       });
       
       if (res.ok) {
@@ -248,13 +260,13 @@ const WorkerSettingsPage = () => {
       const token = localStorage.getItem('token');
       // API_BASE is now imported from constants.ts
 
-      const res = await fetch(`${API_BASE}/api/worker/settings/notifications`, {
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user?.id || (user as any)?._id}`, {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}` 
         },
-        body: JSON.stringify(notifications)
+        body: JSON.stringify({ notification_preferences: notifications })
       });
 
       if (res.ok) {
@@ -276,13 +288,13 @@ const WorkerSettingsPage = () => {
       const token = localStorage.getItem('token');
       // API_BASE is now imported from constants.ts
 
-      const res = await fetch(`${API_BASE}/api/worker/settings/security`, {
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user?.id || (user as any)?._id}`, {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}` 
         },
-        body: JSON.stringify(security)
+        body: JSON.stringify({ security_settings: security })
       });
 
       if (res.ok) {
@@ -304,13 +316,13 @@ const WorkerSettingsPage = () => {
       const token = localStorage.getItem('token');
       // API_BASE is now imported from constants.ts
 
-      const res = await fetch(`${API_BASE}/api/worker/settings/preferences`, {
+      const res = await fetch(`${API_BASE}/api/worker-profiles/user/${user?.id || (user as any)?._id}`, {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}` 
         },
-        body: JSON.stringify(preferences)
+        body: JSON.stringify({ preferences })
       });
 
       if (res.ok) {
@@ -423,12 +435,13 @@ const WorkerSettingsPage = () => {
                       
                       <div className="space-y-2">
                         <Label htmlFor="email">Email Address</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          {...register('email')}
-                          placeholder="Enter your email"
-                        />
+                          <Input
+                            id="email"
+                            type="email"
+                            {...register('email')}
+                            placeholder="Enter your email"
+                            disabled
+                          />
                         {errors.email && <span className="text-xs text-red-500">{errors.email.message}</span>}
                       </div>
                       

@@ -14,7 +14,7 @@ const generateOTP = () => {
 
 export const register = async (req, res) => {
   try {
-    const { email, password, full_name, role } = req.body;
+    const { email, password, full_name, phone, role } = req.body;
     if (!email || !password) return res.status(400).json({ message: 'Email and password are required' });
 
     const db = getDb();
@@ -34,6 +34,7 @@ export const register = async (req, res) => {
         $set: {
           password: hashedPassword,
           full_name,
+          phone: phone || existing.phone || null,
           role: role || 'customer',
           otp,
           otpExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 mins
@@ -56,6 +57,7 @@ export const register = async (req, res) => {
 
     const newUser = {
       email,
+      phone: phone || null,
       password: hashedPassword,
       full_name,
       role: role || 'customer',
@@ -82,10 +84,16 @@ export const register = async (req, res) => {
 
 export const verifyOtp = async (req, res) => {
   try {
-    const { email, otp, type } = req.body; // type: 'register' or 'login'
+    const { email, otp, type } = req.body; // `email` may contain email or phone for demo compatibility
+    const identifier = String(email || '').trim();
+    if (!identifier || !otp) {
+      return res.status(400).json({ message: 'Identifier and OTP are required' });
+    }
 
     const db = getDb();
-    const user = await db.collection('users').findOne({ email });
+    const user = await db.collection('users').findOne({
+      $or: [{ email: identifier }, { phone: identifier }]
+    });
 
     if (!user) return res.status(400).json({ message: 'User not found' });
 
@@ -121,7 +129,7 @@ export const verifyOtp = async (req, res) => {
           if (user.role === 'worker') {
             await db.collection('worker_profiles').insertOne({ user: user._id, createdAt: new Date() });
           } else {
-            await db.collection('customers').insertOne({ user: user._id, full_name: user.full_name || '', email, createdAt: new Date() });
+            await db.collection('customers').insertOne({ user: user._id, full_name: user.full_name || '', email: user.email || null, phone: user.phone || null, createdAt: new Date() });
           }
         }
       } catch (profileErr) {
@@ -131,7 +139,23 @@ export const verifyOtp = async (req, res) => {
     }
 
     const token = generateToken(user);
-    res.json({ token, user: { id: user._id, email: user.email, full_name: user.full_name, role: user.role, isVerified: true } });
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        phone: user.phone,
+        full_name: user.full_name,
+        role: user.role,
+        avatar_url: user.avatar_url || null,
+        socials: user.socials || {},
+        preferred_language: user.preferred_language,
+        city: user.city,
+        state: user.state,
+        pincode: user.pincode,
+        isVerified: true
+      }
+    });
 
   } catch (err) {
     console.error(err);
@@ -181,6 +205,43 @@ export const login = async (req, res) => {
     });
 
     res.json({ message: 'OTP sent to email', requireOtp: true, email });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message || 'Server error' });
+  }
+};
+
+export const sendOtp = async (req, res) => {
+  try {
+    const identifier = String(req.body.phone || req.body.email || '').trim();
+    if (!identifier) {
+      return res.status(400).json({ message: 'Phone or email is required' });
+    }
+
+    const db = getDb();
+    const user = await db.collection('users').findOne({
+      $or: [{ email: identifier }, { phone: identifier }]
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const otp = generateOTP();
+    console.log(`[DEV] OTP for ${identifier}: ${otp}`);
+
+    await db.collection('users').updateOne(
+      { _id: user._id },
+      { $set: { otp, otpExpires: new Date(Date.now() + 10 * 60 * 1000), updatedAt: new Date() } }
+    );
+
+    if (user.email) {
+      sendEmail(user.email, 'Your Login OTP', `Your OTP for login is ${otp}`).catch(emailErr => {
+        console.error("Login OTP email failed:", emailErr);
+      });
+    }
+
+    res.json({ message: 'OTP sent successfully', requireOtp: true, identifier });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message || 'Server error' });

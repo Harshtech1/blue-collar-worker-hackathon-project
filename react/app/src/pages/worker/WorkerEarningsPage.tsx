@@ -64,7 +64,7 @@ const WorkerEarningsPage = () => {
       
       // Filter jobs by status
       const completedJobs = allJobs.filter((j: any) => j.paymentStatus === 'paid');
-      const activeJobs = allJobs.filter((j: any) => ['pending', 'confirmed', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status) && j.paymentStatus !== 'paid');
+      const activeJobs = allJobs.filter((j: any) => ['pending', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status) && j.paymentStatus !== 'paid');
 
       // Get today's date
       const today = new Date().toDateString();

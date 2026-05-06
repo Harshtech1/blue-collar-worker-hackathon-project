@@ -6,7 +6,7 @@ export const updateUser = async (req, res) => {
     const { id } = req.params;
 
     // Security: Only allow users to update their own profile, unless admin
-    if (req.user && req.user._id.toString() !== id && req.user.role !== 'admin') {
+    if (req.user && req.user.role !== 'admin' && req.user._id?.toString() !== id) {
       return res.status(403).json({ message: 'Forbidden. You can only update your own user details.' });
     }
 

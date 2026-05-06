@@ -69,6 +69,29 @@ export default defineConfig({
       '@': resolve(__dirname, 'src')
     }
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          const normalizedId = id.replace(/\\/g, '/')
+          const packagePath = normalizedId.split('/node_modules/').pop() || ''
+          const packageName = packagePath.startsWith('@')
+            ? packagePath.split('/').slice(0, 2).join('/')
+            : packagePath.split('/')[0]
+
+          if (['react', 'react-dom', 'scheduler'].includes(packageName)) return 'vendor-react'
+          if (packageName.startsWith('@radix-ui') || packageName === 'lucide-react') return 'vendor-ui'
+          if (packageName === 'react-router' || packageName === 'react-router-dom') return 'vendor-router'
+          if (packageName === '@tanstack/react-query') return 'vendor-query'
+          if (packageName === 'react-hook-form' || packageName.startsWith('@hookform')) return 'vendor-forms'
+          if (packageName.includes('leaflet') || packageName.includes('mapbox')) return 'vendor-maps'
+          if (packageName.includes('pdf') || packageName === 'mammoth') return 'vendor-docs'
+          return 'vendor'
+        }
+      }
+    }
+  },
   // Add this section to fix the ReferenceError
   define: {
     'process.env': {}

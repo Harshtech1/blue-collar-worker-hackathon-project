@@ -7,6 +7,10 @@ interface Profile {
   phone?: string;
   email?: string;
   avatar_url?: string;
+  socials?: {
+    twitter?: string;
+    linkedin?: string;
+  };
   role?: 'customer' | 'worker' | 'thekedar' | 'admin';
   preferred_language?: string;
   city?: string;
@@ -61,10 +65,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             id: userId,
             full_name: user.full_name,
             email: user.email,
+            avatar_url: user.avatar_url,
             role: user.role,
             // Preserve other fields
             phone: user.phone,
-            avatar_url: user.avatar_url,
+            socials: user.socials,
             preferred_language: user.preferred_language,
             city: user.city,
             state: user.state,
@@ -88,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch(`${API}/auth/register`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, full_name: fullName, role })
+        body: JSON.stringify({ email, password, full_name: fullName, phone, role })
       });
       if (!res.ok) {
         const err = await res.json();
@@ -156,9 +161,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // OTP / provider helpers (minimal implementations to satisfy components)
   const signInWithOTP = async (phone: string) => {
     try {
-      // If backend has OTP endpoints, call them; otherwise return not implemented
       const res = await fetch(`${API}/auth/send-otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
-      if (!res.ok) return { error: new Error('OTP send failed') };
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: 'OTP send failed' }));
+        return { error: new Error(err.message || 'OTP send failed') };
+      }
       return { error: null };
     } catch (err: any) {
       return { error: err as Error };
@@ -179,7 +186,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (shouldLogin) {
         if (data?.token) localStorage.setItem('token', data.token);
-        if (data?.user) setUser(data.user);
+        if (data?.user) {
+          const normalizedUser = { ...data.user, id: data.user.id || data.user._id };
+          setUser(normalizedUser);
+          setProfile({
+            id: normalizedUser.id,
+            full_name: data.user.full_name,
+            email: data.user.email,
+            phone: data.user.phone,
+            avatar_url: data.user.avatar_url,
+            socials: data.user.socials,
+            role: data.user.role,
+            preferred_language: data.user.preferred_language,
+            city: data.user.city,
+            state: data.user.state,
+            pincode: data.user.pincode,
+            is_verified: data.user.is_verified ?? true,
+          });
+        }
       }
 
       return { data, error: null };

@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test tests/**/*.test.mjs",
+    "live-gate": "node scripts/liveGateCheck.mjs"
   },
   "keywords": [],
   "author": "",
@@ -23,15 +24,19 @@
     "mongodb": "^7.1.0",
     "mongoose": "^9.1.5",
     "multer": "^2.0.2",
-    "nodemailer": "^8.0.1",
+    "nodemailer": "^8.0.6",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "update": "^0.4.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@faker-js/faker": "^9.9.0",
     "cross-env": "^10.1.0",
     "nodemon": "^3.1.11"
+  },
+  "overrides": {
+    "path-to-regexp": "^8.4.2",
+    "picomatch": "^4.0.4",
+    "socket.io-parser": "^4.2.6"
   }
 }

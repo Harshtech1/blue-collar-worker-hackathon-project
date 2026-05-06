@@ -42,7 +42,7 @@ export const getByUserId = async (req, res) => {
       { projection: { email: 1, full_name: 1, role: 1, socials: 1 } }
     );
 
-    res.json({ ...profile, user });
+    res.json({ ...profile, avatar_url: user?.avatar_url || null, user });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -54,7 +54,7 @@ export const updateByUserId = async (req, res) => {
     const { userId } = req.params;
 
     // Security: Only allow users to update their own profile, unless admin
-    if (req.user && req.user._id.toString() !== userId && req.user.role !== 'admin') {
+    if (req.user && req.user.role !== 'admin' && req.user._id?.toString() !== userId) {
       return res.status(403).json({ message: 'Forbidden. You can only update your own profile.' });
     }
 
@@ -67,7 +67,7 @@ export const updateByUserId = async (req, res) => {
 
     // Separate User fields vs Worker fields
     const userUpdates = {};
-    const userFields = ['full_name', 'phone', 'socials'];
+    const userFields = ['full_name', 'phone', 'socials', 'avatar_url'];
     for (const field of userFields) {
       if (updates[field] !== undefined) {
         userUpdates[field] = updates[field];

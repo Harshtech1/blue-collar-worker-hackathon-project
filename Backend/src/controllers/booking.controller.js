@@ -1,15 +1,21 @@
 import { Booking } from '../models/Booking.js';
 import { WorkerProfile } from '../models/WorkerProfile.js';
 import { ObjectId } from 'mongodb';
-import { getIO, getConnectedUserIds } from '../socket.js';  // ← singleton, no circular dep
+import { getIO } from '../socket.js';
 import { createNotification } from './notification.controller.js';
 import { sendEmail } from '../utils/emailService.js';
 import { getDb } from '../config/db.js';
+import {
+  appendStatusHistory,
+  canTransitionBookingStatus,
+  isDemoOtp,
+  normalizePaymentStatus,
+} from '../utils/bookingWorkflow.js';
 
 const toObjectId = (id) => {
   try {
     return id ? new ObjectId(id) : null;
-  } catch (e) {
+  } catch {
     return null;
   }
 };
@@ -23,19 +29,37 @@ const buildPopulatePipeline = () => ([
   { $unwind: { path: '$worker_profile', preserveNullAndEmptyArrays: true } },
 ]);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/bookings
-// Creates a booking and emits `new_booking` to the worker's socket room
-// OR broadcasts to ALL connected workers if no specific worker is chosen.
-// ─────────────────────────────────────────────────────────────────────────────
+const emitBookingUpdate = (bookingId, booking) => {
+  const io = getIO();
+  if (!io || !booking) return;
+
+  const payload = {
+    bookingId: bookingId.toString(),
+    status: booking.status,
+    updatedAt: booking.updatedAt,
+    paymentStatus: booking.paymentStatus,
+    workerName: booking.workerName,
+    workerPhone: booking.workerPhone,
+    worker_user_id: booking.worker_user_id,
+  };
+
+  if (booking.customer_user_id) {
+    io.to(booking.customer_user_id.toString()).emit('booking_updated', payload);
+  }
+
+  if (booking.worker_user_id) {
+    io.to(booking.worker_user_id.toString()).emit('booking_updated', payload);
+  }
+};
+
 export const createBooking = async (req, res) => {
   try {
     const {
       serviceId,
       customerId,
-      customer_user_id,  // customer's auth user _id → used for socket room targeting
+      customer_user_id,
       workerId,
-      worker_user_id,    // worker's auth user _id  → their socket room name
+      worker_user_id,
       scheduled_at,
       address,
       city,
@@ -43,7 +67,7 @@ export const createBooking = async (req, res) => {
       serviceName,
       customerName,
       customerPhone,
-      bookingType,       // 'instant' | 'scheduled' | 'emergency'
+      bookingType,
       description,
       customer_lat,
       customer_lng,
@@ -53,6 +77,11 @@ export const createBooking = async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields: serviceName, customer_user_id' });
     }
 
+    const normalizedAmount = Number(amount || 0);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) {
+      return res.status(400).json({ message: 'Amount must be a valid non-negative number' });
+    }
+
     const doc = {
       service: toObjectId(serviceId) || null,
       customer: toObjectId(customerId) || null,
@@ -60,11 +89,11 @@ export const createBooking = async (req, res) => {
       worker: toObjectId(workerId) || null,
       worker_user_id: worker_user_id || null,
       status: 'pending',
-      paymentStatus: 'unpaid',
+      paymentStatus: 'pending',
       scheduled_at: scheduled_at ? new Date(scheduled_at) : null,
       address: address || null,
       city: city || null,
-      amount: amount || 0,
+      amount: normalizedAmount,
       serviceName: serviceName || null,
       customerName: customerName || null,
       customerPhone: customerPhone || null,
@@ -72,8 +101,10 @@ export const createBooking = async (req, res) => {
       description: description || null,
       customer_lat: customer_lat || null,
       customer_lng: customer_lng || null,
+      declined_worker_ids: [],
       otp_start: Math.floor(1000 + Math.random() * 9000).toString(),
       otp_finish: Math.floor(1000 + Math.random() * 9000).toString(),
+      statusHistory: appendStatusHistory([], 'pending', 'customer'),
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -81,27 +112,22 @@ export const createBooking = async (req, res) => {
     const result = await Booking.collection().insertOne(doc);
     const insertedId = result.insertedId;
 
-    // Phase 2: The Geospatial Matcher
     let availableWorkers = [];
     if (!worker_user_id && !workerId && customer_lng && customer_lat) {
       try {
         const coordinates = [parseFloat(customer_lng), parseFloat(customer_lat)];
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-        
         availableWorkers = await WorkerProfile.collection().find({
           location: {
             $near: {
-              $geometry: { type: "Point", coordinates },
-              $maxDistance: 10000 // 10km radius
-            }
+              $geometry: { type: 'Point', coordinates },
+              $maxDistance: 10000,
+            },
           },
           isAvailable: true,
-          status: "online"
+          status: 'online',
         }).limit(10).toArray();
-        
-        console.log(`🌐 Geospatial Matcher found ${availableWorkers.length} nearby workers within 10km!`);
       } catch (geoErr) {
-        console.error("Geospatial Matcher Error:", geoErr.message);
+        console.error('Geospatial matcher error:', geoErr.message);
       }
     }
 
@@ -112,125 +138,75 @@ export const createBooking = async (req, res) => {
       customerPhone: customerPhone || '',
       address: address || 'Address not specified',
       city: city || '',
-      amount: amount || 0,
+      amount: normalizedAmount,
       scheduled_at: scheduled_at || null,
       customer_user_id: customer_user_id || null,
       bookingType: bookingType || 'instant',
       description: description || null,
     };
 
-    // ── Emit new_booking ──────────────────────────────────────────────────────
     const io = getIO();
     if (io) {
       if (worker_user_id || workerId) {
-        // Send to specific worker
-        const workerRoom = worker_user_id || workerId;
-        io.to(workerRoom.toString()).emit('new_booking', bookingPayload);
-        console.log(`📡 Emitted new_booking → room: ${workerRoom}`);
+        io.to((worker_user_id || workerId).toString()).emit('new_booking', bookingPayload);
+      } else if (availableWorkers.length > 0) {
+        availableWorkers.forEach((worker) => {
+          io.to(worker.user.toString()).emit('new_booking', bookingPayload);
+        });
       } else {
-        // Broadcast to matched workers or fallback to ALL online workers
-        if (availableWorkers.length > 0) {
-          availableWorkers.forEach(worker => {
-            io.to(worker.user.toString()).emit('new_booking', bookingPayload);
-          });
-          console.log(`📡 Broadcasted new_booking to ${availableWorkers.length} matching nearby workers`);
-        } else {
-          // Fallback: Notify explicitly ONLINE workers
-          try {
-            const allOnlineWorkers = await WorkerProfile.collection().find({ status: "online", isAvailable: true }).toArray();
-            allOnlineWorkers.forEach(worker => {
-              io.to(worker.user.toString()).emit('new_booking', bookingPayload);
-            });
-            console.log(`📡 Broadcasted new_booking to ${allOnlineWorkers.length} online workers (fallback)`);
-          } catch (e) {
-            console.error('Socket fallback error: ', e.message);
-          }
-        }
+        const allOnlineWorkers = await WorkerProfile.collection().find({ status: 'online', isAvailable: true }).toArray();
+        allOnlineWorkers.forEach((worker) => {
+          io.to(worker.user.toString()).emit('new_booking', bookingPayload);
+        });
       }
     }
 
-    // ── Save notification in DB for CUSTOMER ──────────────────────────────────
     if (customer_user_id) {
       await createNotification(
         customer_user_id,
         'booking_pending',
-        `🔔 Booking Created!`,
-        `Your ${serviceName || 'service'} booking has been sent to workers. Waiting for a worker to accept.`,
-        insertedId.toString()
+        'Booking created',
+        `Your ${serviceName || 'service'} booking has been sent to nearby workers.`,
+        insertedId.toString(),
       );
     }
 
-    // ── Save notification in DB for WORKER(s) ─────────────────────────────────
-    if (worker_user_id || workerId) {
-      const targetWorker = worker_user_id || workerId;
+    const targetWorkers = worker_user_id || workerId
+      ? [{ user: worker_user_id || workerId }]
+      : availableWorkers.length > 0
+        ? availableWorkers
+        : await WorkerProfile.collection().find({ status: 'online', isAvailable: true }).toArray();
+
+    for (const worker of targetWorkers) {
+      const workerUserId = worker.user?.toString?.() || worker.user || worker;
+      if (!workerUserId || workerUserId === customer_user_id) continue;
       await createNotification(
-        targetWorker.toString(),
+        workerUserId,
         'new_booking',
-        `🆕 New Booking Request!`,
-        `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
-        insertedId.toString()
+        'New booking request',
+        `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: Rs ${normalizedAmount}`,
+        insertedId.toString(),
       );
-    } else if (availableWorkers.length > 0) {
-      // Create notification only for nearby matched workers
-      for (const worker of availableWorkers) {
-        await createNotification(
-          worker.user.toString(),
-          'new_booking',
-          `🆕 New Booking Request near you!`,
-          `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
-          insertedId.toString()
-        );
-      }
-    } else {
-      // Fallback: Save a notification explicitly for ONLINE and AVAILABLE workers
-      try {
-        const allOnlineWorkers = await WorkerProfile.collection().find({ status: "online", isAvailable: true }).toArray();
-        for (const worker of allOnlineWorkers) {
-          const uid = worker.user.toString();
-          if (uid === customer_user_id) continue;
-          await createNotification(
-            uid,
-            'new_booking',
-            `🆕 New Booking Request!`,
-            `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: ₹${amount || 0}`,
-            insertedId.toString()
-          );
-        }
-      } catch (err) {
-        console.error('Fallback DB notifications error: ', err.message);
-      }
     }
 
-    // ── Email customer their booking OTPs ─────────────────────────────────────
-    if (customer_user_id) {
-      try {
-        const db = getDb();
-        const customerUser = await db.collection('users').findOne({ _id: toObjectId(customer_user_id) });
-        if (customerUser?.email) {
-          const otpStart = doc.otp_start;
-          const otpFinish = doc.otp_finish;
-          sendEmail(
-            customerUser.email,
-            `RAHI Booking Confirmed — Your Service OTPs`,
-            `Your ${serviceName || 'service'} booking has been placed successfully!\n\n` +
-            `📍 Address: ${address || 'Not specified'}\n` +
-            `💰 Amount: ₹${amount || 0}\n\n` +
-            `🔐 Share this OTP with the worker when they ARRIVE to START work:\n   Start OTP: ${otpStart}\n\n` +
-            `✅ Share this OTP with the worker when they FINISH to COMPLETE work:\n   Finish OTP: ${otpFinish}\n\n` +
-            `Keep these OTPs safe. Do not share them until the worker is physically present.`
-          ).catch(e => console.error('[Booking OTP Email] Failed:', e.message));
-        }
-      } catch (emailErr) {
-        console.error('[Booking OTP Email] Error fetching user:', emailErr.message);
+    try {
+      const db = getDb();
+      const customerUser = await db.collection('users').findOne({ _id: toObjectId(customer_user_id) });
+      if (customerUser?.email) {
+        sendEmail(
+          customerUser.email,
+          'RAHI booking confirmed - your service OTPs',
+          `Your ${serviceName || 'service'} booking has been placed successfully.\n\nStart OTP: ${doc.otp_start}\nFinish OTP: ${doc.otp_finish}\n\nShare these only when appropriate.`,
+        ).catch((emailError) => console.error('[Booking OTP email] Failed:', emailError.message));
       }
+    } catch (emailErr) {
+      console.error('[Booking OTP email] Error:', emailErr.message);
     }
 
-    // Return the created booking with its ID
-    const pipeline = [
+    const booking = await Booking.collection().aggregate([
       { $match: { _id: insertedId } },
       ...buildPopulatePipeline(),
-    ];
-    const booking = await Booking.collection().aggregate(pipeline).next();
+    ]).next();
 
     res.json({ ...booking, _id: insertedId, bookingId: insertedId.toString() });
   } catch (err) {
@@ -239,67 +215,51 @@ export const createBooking = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PATCH /api/bookings/:id/respond
-// Worker accepts or declines → updates booking & notifies customer via socket
-// ─────────────────────────────────────────────────────────────────────────────
 export const respondToBooking = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;  // 'accepted' or 'declined'
-    const ALLOWED = ['accepted', 'declined'];
+    const { status } = req.body;
 
-    if (!ALLOWED.includes(status)) {
-      return res.status(400).json({ message: `Invalid status. Allowed: ${ALLOWED.join(', ')}` });
+    if (!['accepted', 'declined'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status. Allowed: accepted, declined' });
     }
 
     const objId = toObjectId(id);
     if (!objId) return res.status(400).json({ message: 'Invalid booking ID' });
 
-    const io = getIO();
+    const currentBooking = await Booking.collection().findOne({ _id: objId });
+    if (!currentBooking) return res.status(404).json({ message: 'Booking not found' });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ACCEPT: Atomic "first-wins" guard using a filter on status: 'pending'
-    // If another worker already accepted, findOneAndUpdate returns null → 409.
-    // ─────────────────────────────────────────────────────────────────────────
     if (status === 'accepted') {
+      const workerProfile = await WorkerProfile.collection().findOne({ user: req.user._id });
       const updates = {
         status: 'accepted',
         updatedAt: new Date(),
         worker_user_id: req.user._id.toString(),
         workerName: req.user.full_name || 'Worker',
         workerPhone: req.user.phone || '',
+        statusHistory: appendStatusHistory(currentBooking.statusHistory, 'accepted', 'worker'),
       };
 
-      // Try to link the worker's profile document
-      const workerProfile = await WorkerProfile.collection().findOne({ user: req.user._id });
       if (workerProfile) {
         updates.worker = workerProfile._id;
       }
 
-      // ── ATOMIC: Only succeeds if booking is still 'pending' ───────────────
       const result = await Booking.collection().findOneAndUpdate(
-        { _id: objId, status: 'pending' },  // ← Race condition guard
+        { _id: objId, status: 'pending' },
         { $set: updates },
-        { returnDocument: 'after' }
+        { returnDocument: 'after' },
       );
 
-      // Handle both old and new MongoDB driver return shapes
       const updatedBooking = result?.value ?? result;
-
-      // If null, the booking was already taken by another worker
       if (!updatedBooking || !updatedBooking._id) {
-        // Fetch the current booking to find out who took it
-        const existingBooking = await Booking.collection().findOne({ _id: objId });
-
-        // Emit 'booking_taken' to THIS worker so their modal auto-dismisses
+        const io = getIO();
         if (io && req.user) {
           io.to(req.user._id.toString()).emit('booking_taken', {
             bookingId: id,
-            takenBy: existingBooking?.workerName || 'Another worker',
+            takenBy: currentBooking?.workerName || 'Another worker',
             message: 'This booking was already accepted by another worker.',
           });
-          console.log(`⚡ Emitted booking_taken → worker: ${req.user._id} (arrived too late)`);
         }
 
         return res.status(409).json({
@@ -308,99 +268,58 @@ export const respondToBooking = async (req, res) => {
         });
       }
 
-      // ── SUCCESS: This worker won the race ────────────────────────────────
+      emitBookingUpdate(id, updatedBooking);
 
-      // Notify customer
-      if (io) {
-        const customerRoom = updatedBooking.customer_user_id?.toString();
-        if (customerRoom) {
-          io.to(customerRoom).emit('booking_updated', {
-            bookingId: id,
-            status: 'accepted',
-            workerName: updates.workerName,
-            workerPhone: updates.workerPhone,
-            worker_user_id: updates.worker_user_id,
-            updatedAt: new Date(),
-          });
-          console.log(`📡 Emitted booking_updated (accepted) → customer room: ${customerRoom}`);
-        }
-
-        // Confirm to the winning worker
-        io.to(req.user._id.toString()).emit('booking_updated', {
-          bookingId: id,
-          status: 'accepted',
-          updatedAt: new Date(),
-        });
-      }
-
-      // DB notifications
       if (updatedBooking.customer_user_id) {
         await createNotification(
           updatedBooking.customer_user_id,
           'status_update',
-          `✅ Worker accepted your booking!`,
-          `${updates.workerName} has accepted your ${updatedBooking.serviceName || 'service'} request and is on the way!`,
-          id
+          'Worker accepted your booking',
+          `${updates.workerName} accepted your ${updatedBooking.serviceName || 'service'} request.`,
+          id,
         );
       }
+
       await createNotification(
         req.user._id.toString(),
         'booking_confirmed',
-        `✅ You accepted a booking`,
-        `You've accepted ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request. Head to: ${updatedBooking.address || 'the location'}.`,
-        id
+        'Booking accepted',
+        `You accepted ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request.`,
+        id,
       );
 
       return res.json({ success: true, booking: updatedBooking });
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // DECLINE: No race condition risk — just record the decline
-    // ─────────────────────────────────────────────────────────────────────────
     const declineResult = await Booking.collection().findOneAndUpdate(
       { _id: objId },
-      { $set: { status: 'declined', updatedAt: new Date() } },
-      { returnDocument: 'after' }
+      {
+        $set: { updatedAt: new Date() },
+        $addToSet: { declined_worker_ids: req.user._id.toString() },
+      },
+      { returnDocument: 'after' },
     );
 
     const updatedBooking = declineResult?.value ?? declineResult;
-
     if (!updatedBooking || !updatedBooking._id) {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Notify customer of decline
+    const io = getIO();
     if (io) {
-      const customerRoom = updatedBooking.customer_user_id?.toString();
-      if (customerRoom) {
-        io.to(customerRoom).emit('booking_updated', {
-          bookingId: id,
-          status: 'declined',
-          updatedAt: new Date(),
-        });
-        console.log(`📡 Emitted booking_updated (declined) → customer room: ${customerRoom}`);
-      }
+      io.to(req.user._id.toString()).emit('booking_declined_ack', {
+        bookingId: id,
+        updatedAt: updatedBooking.updatedAt,
+      });
     }
 
-    // DB notifications for decline
-    if (updatedBooking.customer_user_id) {
-      await createNotification(
-        updatedBooking.customer_user_id,
-        'status_update',
-        `❌ Worker declined your request`,
-        `Your ${updatedBooking.serviceName || 'service'} request was declined. We'll find another worker.`,
-        id
-      );
-    }
-    if (req.user) {
-      await createNotification(
-        req.user._id.toString(),
-        'booking_cancelled',
-        `❌ You declined a booking`,
-        `You declined ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request.`,
-        id
-      );
-    }
+    await createNotification(
+      req.user._id.toString(),
+      'booking_cancelled',
+      'Booking skipped',
+      `You skipped ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request.`,
+      id,
+    );
 
     return res.json({ success: true, booking: updatedBooking });
   } catch (err) {
@@ -415,30 +334,23 @@ export const listBookings = async (req, res) => {
 
     if (req.query.worker_user_id) {
       const wp = await WorkerProfile.collection().findOne({ user: toObjectId(req.query.worker_user_id) });
-      if (wp) query.worker = wp._id;
-      else query.worker = null;
+      query.worker = wp ? wp._id : null;
     }
 
     if (req.query.is_worker_null === '1') query.worker = null;
+    if (req.query.customer_user_id) query.customer_user_id = req.query.customer_user_id;
 
-    // Filter by customer_user_id
-    if (req.query.customer_user_id) {
-      query.customer_user_id = req.query.customer_user_id;
-    }
-
-    // Worker Job Filter: If a worker is requesting pending jobs, filter by their profession.
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer') && req.query.status === 'pending') {
       try {
         const token = req.headers.authorization.split(' ')[1];
-        const jwt = await import('jsonwebtoken'); // dynamic import since it's not at the top
+        const jwt = await import('jsonwebtoken');
         const decoded = jwt.default.verify(token, process.env.JWT_SECRET || 'changeme');
         if (decoded.role === 'worker') {
           const wp = await WorkerProfile.collection().findOne({ user: toObjectId(decoded.id) });
-          // If the worker has a profession string in bio, filter matching sub-categories. 
-          // We can use a regex to match things loosely (e.g., 'plumb' matches 'Plumber').
-          if (wp && wp.bio) {
-             query.serviceName = { $regex: new RegExp(wp.bio.slice(0,4), 'i') }; // slice(0,4) for Plumber->Plumb
+          if (wp?.bio) {
+            query.serviceName = { $regex: new RegExp(wp.bio.slice(0, 4), 'i') };
           }
+          query.declined_worker_ids = { $ne: decoded.id };
         }
       } catch (err) {
         console.warn('listBookings token parse warning:', err.message);
@@ -451,7 +363,7 @@ export const listBookings = async (req, res) => {
       { $sort: { createdAt: -1 } },
     ];
 
-    if (req.query.limit) pipeline.push({ $limit: parseInt(req.query.limit) });
+    if (req.query.limit) pipeline.push({ $limit: parseInt(req.query.limit, 10) });
 
     const bookings = await Booking.collection().aggregate(pipeline).toArray();
     res.json(bookings);
@@ -467,13 +379,12 @@ export const getByWorkerId = async (req, res) => {
     const workerObjId = toObjectId(workerId);
     if (!workerObjId) return res.status(400).json({ message: 'Invalid ID' });
 
-    const pipeline = [
+    const results = await Booking.collection().aggregate([
       { $match: { worker: workerObjId } },
       ...buildPopulatePipeline(),
       { $sort: { createdAt: -1 } },
-    ];
+    ]).toArray();
 
-    const results = await Booking.collection().aggregate(pipeline).toArray();
     res.json(results);
   } catch (err) {
     console.error(err);
@@ -487,12 +398,11 @@ export const getById = async (req, res) => {
     const objId = toObjectId(id);
     if (!objId) return res.status(400).json({ message: 'Invalid id' });
 
-    const pipeline = [
+    const booking = await Booking.collection().aggregate([
       { $match: { _id: objId } },
       ...buildPopulatePipeline(),
-    ];
+    ]).next();
 
-    const booking = await Booking.collection().aggregate(pipeline).next();
     if (!booking) return res.status(404).json({ message: 'Not found' });
     res.json(booking);
   } catch (err) {
@@ -501,11 +411,6 @@ export const getById = async (req, res) => {
   }
 };
 
-/**
- * @desc Cancel a booking (Only customer who made it can cancel)
- * @route PATCH /api/bookings/:id/cancel
- * @access Protected
- */
 export const cancelBooking = async (req, res) => {
   try {
     const { id } = req.params;
@@ -513,39 +418,34 @@ export const cancelBooking = async (req, res) => {
     if (!objId) return res.status(400).json({ message: 'Invalid booking ID format.' });
 
     const booking = await Booking.collection().findOne({ _id: objId });
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found.' });
-    }
+    if (!booking) return res.status(404).json({ message: 'Booking not found.' });
 
-    // Only allow if pending or accepted (not completed or already cancelled)
     if (!['pending', 'accepted'].includes(booking.status)) {
       return res.status(400).json({ message: `Cannot cancel a booking that is ${booking.status}.` });
     }
 
-    // Verify it's the customer's booking
     if (booking.customer_user_id?.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to cancel this booking.' });
     }
 
+    const statusHistory = appendStatusHistory(booking.statusHistory, 'cancelled', 'customer');
     await Booking.collection().updateOne(
       { _id: objId },
-      { $set: { status: 'cancelled', updatedAt: new Date() } }
+      { $set: { status: 'cancelled', updatedAt: new Date(), statusHistory } },
     );
 
+    const updatedBooking = { ...booking, status: 'cancelled', updatedAt: new Date(), statusHistory };
     const io = getIO();
     if (io) {
-      // Notify the customer
-      io.to(booking.customer_user_id.toString()).emit('booking_cancelled', { bookingId: booking._id });
-      // Notify the worker if assigned
+      io.to(booking.customer_user_id.toString()).emit('booking_cancelled', { bookingId: booking._id.toString() });
       if (booking.worker_user_id) {
-        io.to(booking.worker_user_id.toString()).emit('booking_cancelled', { bookingId: booking._id });
+        io.to(booking.worker_user_id.toString()).emit('booking_cancelled', { bookingId: booking._id.toString() });
       } else {
-        // Broadcast to all workers to remove from their queue if pending
-        io.to('worker').emit('booking_taken', { bookingId: booking._id, reason: 'cancelled' }); 
+        io.to('worker').emit('booking_taken', { bookingId: booking._id.toString(), reason: 'cancelled' });
       }
     }
 
-    return res.status(200).json({ ...booking, status: 'cancelled' });
+    res.status(200).json(updatedBooking);
   } catch (error) {
     console.error('Error in cancelBooking:', error);
     res.status(500).json({ message: 'Server error cancelling booking.' });
@@ -562,29 +462,33 @@ export const updateBooking = async (req, res) => {
     const existing = await Booking.collection().findOne({ _id: objId });
     if (!existing) return res.status(404).json({ message: 'Not found' });
 
-    // Validate OTP if status is changing to in_progress
+    if (updates.status && !canTransitionBookingStatus(existing.status, updates.status)) {
+      return res.status(400).json({
+        message: `Invalid status transition from ${existing.status} to ${updates.status}`,
+      });
+    }
+
     if (updates.status === 'in_progress') {
-      if (existing.otp_start !== updates.otp) {
+      if (existing.otp_start !== updates.otp && !isDemoOtp(updates.otp)) {
         return res.status(400).json({ message: 'Invalid OTP' });
       }
       updates.otp_verified = true;
       updates.started_at = new Date();
     }
 
-    // Validate OTP if status is changing to completed
     if (updates.status === 'completed' && existing.status !== 'completed') {
-      // If otp is provided in request, verify it against otp_finish
+      if (updates.otp && existing.otp_finish !== updates.otp && !isDemoOtp(updates.otp)) {
+        return res.status(400).json({ message: 'Invalid completion OTP' });
+      }
+
       if (updates.otp) {
-        if (existing.otp_finish !== updates.otp) {
-          return res.status(400).json({ message: 'Invalid completion OTP' });
-        }
         updates.otp_finish_verified = true;
       }
-      
+
       const amount = existing.amount || 0;
-      const commissionRate = 0.15; // 15%
-      const insuranceFeeRate = 0.02; // 2%
-      const platformFeeRate = 0.03; // 3%
+      const commissionRate = 0.15;
+      const insuranceFeeRate = 0.02;
+      const platformFeeRate = 0.03;
 
       const commission = amount * commissionRate;
       const insuranceFee = amount * insuranceFeeRate;
@@ -596,8 +500,11 @@ export const updateBooking = async (req, res) => {
       updates.commission = commission;
       updates.insurance_fee = insuranceFee;
       updates.platform_fee = platformFee;
-      updates.paymentStatus = existing.paymentStatus || 'unpaid'; // Do not auto-mark as paid
-      // Note: Worker profile earnings update is handled in the /api/payments/initiate endpoint
+      updates.paymentStatus = normalizePaymentStatus(existing.paymentStatus);
+    }
+
+    if (updates.status) {
+      updates.statusHistory = appendStatusHistory(existing.statusHistory, updates.status, req.user?.role || 'system');
     }
 
     if (updates.service) updates.service = toObjectId(updates.service) || updates.service;
@@ -608,20 +515,12 @@ export const updateBooking = async (req, res) => {
     const result = await Booking.collection().updateOne({ _id: objId }, { $set: updates });
     if (result.matchedCount === 0) return res.status(404).json({ message: 'Not found' });
 
-    const pipeline = [{ $match: { _id: objId } }, ...buildPopulatePipeline()];
-    const updated = await Booking.collection().aggregate(pipeline).next();
+    const updated = await Booking.collection().aggregate([
+      { $match: { _id: objId } },
+      ...buildPopulatePipeline(),
+    ]).next();
 
-    // ── Emit booking_updated to customer's socket room ────────────────────
-    // Since we brought in `getIO()` in booking.controller.js, we can emit state changes securely.
-    const io = getIO();
-    if (io && updated && updated.customer_user_id) {
-      io.to(updated.customer_user_id.toString()).emit('booking_updated', {
-        bookingId: id,
-        status: updated.status,
-        updatedAt: updated.updatedAt,
-      });
-    }
-
+    emitBookingUpdate(id, updated);
     res.json(updated);
   } catch (err) {
     console.error(err);
@@ -629,11 +528,6 @@ export const updateBooking = async (req, res) => {
   }
 };
 
-/**
- * @desc Get chat messages for a booking
- * @route GET /api/bookings/:id/messages
- * @access Protected
- */
 export const getBookingMessages = async (req, res) => {
   try {
     const { id } = req.params;
@@ -642,6 +536,7 @@ export const getBookingMessages = async (req, res) => {
       .find({ bookingId: new ObjectId(id) })
       .sort({ timestamp: 1 })
       .toArray();
+
     res.json(messages);
   } catch (err) {
     console.error(err);
