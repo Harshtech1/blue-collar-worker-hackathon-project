@@ -564,6 +564,7 @@ export const getBookingMessages = async (req, res) => {
       .sort({ timestamp: 1 })
       .toArray();
 
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.json(messages.map(serializeChatMessage));
   } catch (err) {
     console.error(err);

@@ -23,6 +23,8 @@ services:
         sync: false
       - key: SMTP_PORT
         sync: false
+      - key: CLIENT_URL
+        value: https://blue-collar-worker-hackathon-projec.vercel.app,http://localhost:5173
       - key: NODE_ENV
         value: production
       - key: RESEND_API_KEY

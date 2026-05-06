@@ -187,6 +187,7 @@ export default function ChatDrawer({
       }
 
       const res = await fetch(`${API}/bookings/${bookingId}/messages`, {
+        cache: 'no-store',
         headers: { Authorization: `Bearer ${token}` },
       });
 

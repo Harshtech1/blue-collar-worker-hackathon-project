@@ -80,6 +80,12 @@ connectDB()
         timestamp: new Date(),
         socketio: "active",
         database: dbReady ? "connected" : "offline-demo",
+        deployment: {
+          provider: process.env.RENDER ? "render" : "local-or-custom",
+          service: process.env.RENDER_SERVICE_NAME || null,
+          commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+          branch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || null,
+        },
       });
     });
 
