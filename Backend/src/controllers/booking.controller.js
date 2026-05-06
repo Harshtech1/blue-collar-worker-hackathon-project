@@ -20,6 +20,17 @@ const toObjectId = (id) => {
   }
 };
 
+const asString = (value) => value?.toString?.() || value || '';
+
+const serializeChatMessage = (message) => ({
+  ...message,
+  _id: asString(message._id),
+  bookingId: asString(message.bookingId),
+  senderId: asString(message.senderId),
+  receiverId: asString(message.receiverId),
+  timestamp: message.timestamp instanceof Date ? message.timestamp.toISOString() : message.timestamp,
+});
+
 const buildPopulatePipeline = () => ([
   { $lookup: { from: 'services', localField: 'service', foreignField: '_id', as: 'service' } },
   { $unwind: { path: '$service', preserveNullAndEmptyArrays: true } },
@@ -531,13 +542,29 @@ export const updateBooking = async (req, res) => {
 export const getBookingMessages = async (req, res) => {
   try {
     const { id } = req.params;
+    const bookingObjectId = toObjectId(id);
+    if (!bookingObjectId) return res.status(400).json({ message: 'Invalid booking ID' });
+
     const db = getDb();
+    const booking = await Booking.collection().findOne({ _id: bookingObjectId });
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+
+    const requesterId = asString(req.user?._id);
+    const participants = [
+      asString(booking.customer_user_id),
+      asString(booking.worker_user_id),
+    ].filter(Boolean);
+
+    if (req.user?.role !== 'admin' && requesterId && !participants.includes(requesterId)) {
+      return res.status(403).json({ message: 'Not authorized for this booking chat' });
+    }
+
     const messages = await db.collection('chat_messages')
-      .find({ bookingId: new ObjectId(id) })
+      .find({ bookingId: bookingObjectId })
       .sort({ timestamp: 1 })
       .toArray();
 
-    res.json(messages);
+    res.json(messages.map(serializeChatMessage));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });

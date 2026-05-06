@@ -1,13 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Send, MessageSquare, X, Smartphone, MapPin, 
-  Clock, CheckCheck, Smile, Paperclip 
-} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { CheckCheck, MessageSquare, Send, Smile, Wifi, WifiOff, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
-import { useLanguage } from '@/contexts/LanguageContext';
 import { API } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -18,8 +14,9 @@ interface Message {
   receiverId: string;
   text: string;
   timestamp: string;
-  status: string;
+  status: 'pending' | 'sent' | 'failed' | 'delivered' | 'read';
   bookingId?: string;
+  clientMessageId?: string;
 }
 
 interface ChatDrawerProps {
@@ -31,196 +28,280 @@ interface ChatDrawerProps {
   otherUserName: string;
 }
 
-const QUICK_REPLIES = {
-  en: [
-    "I am at the gate.",
-    "Please send me your location via WhatsApp.",
-    "How much time will it take?",
-    "I'll be there in 5 minutes.",
-    "Is there parking available?"
-  ],
-  hi: [
-    "मैं गेट पर हूँ।",
-    "कृपया मुझे व्हाट्सएप पर लोकेशन भेजें।",
-    "इसमें कितना समय लगेगा?",
-    "मैं 5 मिनट में वहां पहुंचूंगा।",
-    "क्या वहां पार्किंग उपलब्ध है?"
-  ],
-  pa: [
-    "ਮੈਂ ਗੇਟ ਤੇ ਹਾਂ।",
-    "ਕਿਰਪਾ ਕਰਕੇ ਮੈਨੂੰ ਵਟਸਐਪ 'ਤੇ ਲੋਕੇਸ਼ਨ ਭੇਜੋ।",
-    "ਇਸ ਵਿੱਚ ਕਿੰਨਾ ਸਮਾਂ ਲੱਗੇਗਾ?",
-    "ਮੈਂ 5 ਮਿੰਟ ਵਿੱਚ ਉੱਥੇ ਪਹੁੰਚ ਜਾਵਾਂਗਾ।",
-    "ਕੀ ਉੱਥੇ ਪਾਰਕਿੰਗ ਉਪਲਬਧ ਹੈ?"
-  ]
+const QUICK_REPLIES = [
+  'I am at the gate.',
+  'I am on my way.',
+  'Please share the exact landmark.',
+  'I will reach in 5 minutes.',
+  'Can you confirm the OTP when I arrive?',
+];
+
+const makeClientMessageId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
-export default function ChatDrawer({ 
-  isOpen, 
-  onClose, 
-  bookingId, 
-  currentUserId, 
-  otherUserId, 
-  otherUserName 
+const normalizeMessage = (message: Message): Message => ({
+  ...message,
+  _id: String(message._id || message.clientMessageId || makeClientMessageId()),
+  bookingId: message.bookingId ? String(message.bookingId) : message.bookingId,
+  senderId: String(message.senderId || ''),
+  receiverId: String(message.receiverId || ''),
+  timestamp: message.timestamp || new Date().toISOString(),
+  status: message.status || 'sent',
+});
+
+const upsertMessage = (messages: Message[], incoming: Message) => {
+  const normalized = normalizeMessage(incoming);
+  const existingIndex = messages.findIndex((message) => {
+    if (normalized._id && message._id === normalized._id) return true;
+    if (normalized.clientMessageId && message.clientMessageId === normalized.clientMessageId) return true;
+    return false;
+  });
+
+  if (existingIndex === -1) return [...messages, normalized];
+
+  return messages.map((message, index) => (
+    index === existingIndex ? { ...message, ...normalized, status: normalized.status || 'sent' } : message
+  ));
+};
+
+export default function ChatDrawer({
+  isOpen,
+  onClose,
+  bookingId,
+  currentUserId,
+  otherUserId,
+  otherUserName,
 }: ChatDrawerProps) {
-  const { socket } = useSocket();
-  const { language } = useLanguage();
+  const { user } = useAuth();
+  const { socket, isConnected } = useSocket();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [chatReady, setChatReady] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const effectiveCurrentUserId = useMemo(
+    () => currentUserId || user?.id || user?._id || localStorage.getItem('userId') || '',
+    [currentUserId, user?.id, user?._id],
+  );
+
+  const canSend = Boolean(socket && isConnected && bookingId && effectiveCurrentUserId && inputText.trim());
+
   useEffect(() => {
-    if (isOpen) {
-      fetchMessages();
-    }
+    if (!isOpen) return;
+    fetchMessages();
   }, [isOpen, bookingId]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !isOpen || !bookingId) return;
+
+    setChatReady(false);
+    socket.emit('join_booking_chat', { bookingId, userId: effectiveCurrentUserId });
+
+    const handleJoined = (payload: { bookingId?: string }) => {
+      if (payload.bookingId === bookingId) setChatReady(true);
+    };
 
     const handleReceiveMessage = (message: Message) => {
-      if (message.bookingId === bookingId) {
-        setMessages(prev => [...prev, message]);
-        // Play notification sound
-        new Audio('/sounds/notification.mp3').play().catch(e => {});
+      if (message.bookingId !== bookingId) return;
+      setMessages((prev) => upsertMessage(prev, message));
+
+      if (message.senderId !== effectiveCurrentUserId) {
+        new Audio('/sounds/notification.mp3').play().catch(() => {});
       }
     };
 
-    socket.on('receive_message', handleReceiveMessage);
-    return () => {
-      socket.off('receive_message', handleReceiveMessage);
+    const handleMessageSent = (message: Message) => {
+      if (message.bookingId !== bookingId) return;
+      setMessages((prev) => upsertMessage(prev, { ...message, status: 'sent' }));
     };
-  }, [socket, bookingId]);
+
+    const handleChatError = (payload: { bookingId?: string; clientMessageId?: string; message?: string }) => {
+      if (payload.bookingId && payload.bookingId !== bookingId) return;
+      if (payload.clientMessageId) {
+        setMessages((prev) => prev.map((message) => (
+          message.clientMessageId === payload.clientMessageId
+            ? { ...message, status: 'failed' }
+            : message
+        )));
+      }
+      toast.error(payload.message || 'Chat is temporarily unavailable.');
+    };
+
+    socket.on('chat_joined', handleJoined);
+    socket.on('receive_message', handleReceiveMessage);
+    socket.on('message_sent', handleMessageSent);
+    socket.on('chat_error', handleChatError);
+
+    return () => {
+      socket.off('chat_joined', handleJoined);
+      socket.off('receive_message', handleReceiveMessage);
+      socket.off('message_sent', handleMessageSent);
+      socket.off('chat_error', handleChatError);
+    };
+  }, [socket, isOpen, bookingId, effectiveCurrentUserId]);
 
   const fetchMessages = async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API}/bookings/${bookingId}/messages`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data);
+      if (!token || !bookingId) {
+        setMessages([]);
+        return;
       }
+
+      const res = await fetch(`${API}/bookings/${bookingId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.message || 'Unable to load chat history');
+      }
+
+      const data = await res.json();
+      setMessages(Array.isArray(data) ? data.map(normalizeMessage) : []);
     } catch (err) {
       console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Unable to load chat history');
     } finally {
       setLoading(false);
     }
   };
 
   const handleSendMessage = (text?: string) => {
-    const finalText = text || inputText;
-    if (!finalText.trim() || !socket) return;
+    const finalText = (text || inputText).trim();
+    if (!finalText || !socket || !bookingId || !effectiveCurrentUserId) return;
 
-    const newMessage = {
+    if (!isConnected) {
+      toast.error('Chat is reconnecting. Please try again in a moment.');
+      return;
+    }
+
+    const clientMessageId = makeClientMessageId();
+    const optimisticMessage: Message = {
+      _id: clientMessageId,
+      clientMessageId,
       bookingId,
-      senderId: currentUserId,
-      receiverId: otherUserId,
+      senderId: effectiveCurrentUserId,
+      receiverId: otherUserId || '',
       text: finalText,
       timestamp: new Date().toISOString(),
-      status: 'sent'
+      status: 'pending',
     };
 
-    socket.emit('send_message', newMessage);
-    
-    // Add to local state manually as sender
-    setMessages(prev => [...prev, { ...newMessage, _id: Date.now().toString() } as Message]);
+    setMessages((prev) => upsertMessage(prev, optimisticMessage));
     setInputText('');
+
+    socket.emit('send_message', {
+      bookingId,
+      senderId: effectiveCurrentUserId,
+      receiverId: otherUserId || undefined,
+      text: finalText,
+      clientMessageId,
+    });
   };
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[2000]"
+            className="fixed inset-0 z-[2000] bg-slate-950/65 backdrop-blur-sm"
           />
-          <motion.div 
+          <motion.div
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed top-0 right-0 h-full w-full max-w-md bg-slate-50 shadow-2xl z-[2001] flex flex-col"
+            transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+            className="fixed right-0 top-0 z-[2001] flex h-full w-full max-w-md flex-col bg-slate-50 shadow-2xl"
           >
-            {/* Header */}
-            <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                  {otherUserName.charAt(0)}
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-800">{otherUserName}</h3>
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Online</span>
+            <div className="border-b border-slate-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-base font-black text-white">
+                    {(otherUserName || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-900">{otherUserName || 'RAHI Partner'}</h3>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      {isConnected ? (
+                        <Wifi className="h-3.5 w-3.5 text-emerald-500" />
+                      ) : (
+                        <WifiOff className="h-3.5 w-3.5 text-amber-500" />
+                      )}
+                      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                        {isConnected ? (chatReady ? 'Live chat ready' : 'Connecting room') : 'Reconnecting'}
+                      </span>
+                    </div>
                   </div>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onClose}
+                  className="rounded-full hover:bg-rose-50 hover:text-rose-500"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
               </div>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={onClose}
-                className="rounded-full hover:bg-rose-50 hover:text-rose-500 transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </Button>
             </div>
 
-            {/* Messages Feed */}
-            <div 
-              ref={scrollRef}
-              className="flex-1 overflow-y-auto p-4 space-y-4 scroll-smooth"
-            >
+            <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-4 scroll-smooth">
               {loading ? (
-                <div className="h-full flex items-center justify-center text-slate-400">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+                <div className="flex h-full items-center justify-center text-slate-400">
+                  <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-slate-900" />
                 </div>
               ) : messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-50">
-                  <MessageSquare className="h-12 w-12 mb-4 text-slate-300" />
-                  <p className="font-medium text-slate-500">No messages yet. Send a quick reply to start coordinating.</p>
+                <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+                  <MessageSquare className="mb-4 h-12 w-12 text-slate-300" />
+                  <p className="text-sm font-bold text-slate-500">No messages yet.</p>
+                  <p className="mt-2 text-xs font-medium leading-5 text-slate-400">
+                    Send a quick coordination update so the customer and worker stay aligned.
+                  </p>
                 </div>
               ) : (
                 messages.map((msg, idx) => {
-                  const isMine = msg.senderId === currentUserId;
+                  const isMine = msg.senderId === effectiveCurrentUserId;
                   return (
                     <motion.div
-                      key={msg._id || idx}
-                      initial={{ scale: 0.8, opacity: 0, y: 10 }}
+                      key={msg._id || msg.clientMessageId || idx}
+                      initial={{ scale: 0.96, opacity: 0, y: 8 }}
                       animate={{ scale: 1, opacity: 1, y: 0 }}
-                      className={cn(
-                        "flex w-full mb-2",
-                        isMine ? "justify-end" : "justify-start"
-                      )}
+                      className={cn('flex w-full', isMine ? 'justify-end' : 'justify-start')}
                     >
-                      <div className={cn(
-                        "max-w-[80%] p-3 rounded-2xl shadow-sm",
-                        isMine 
-                          ? "bg-primary text-white rounded-tr-none" 
-                          : "bg-white text-slate-800 rounded-tl-none border border-slate-100"
-                      )}>
-                        <p className="text-sm font-medium leading-relaxed">{msg.text}</p>
-                        <div className={cn(
-                          "flex items-center gap-1 mt-1 justify-end",
-                          isMine ? "text-white/60" : "text-slate-400"
-                        )}>
-                          <span className="text-[8px] font-bold">
+                      <div
+                        className={cn(
+                          'max-w-[82%] rounded-3xl px-4 py-3 shadow-sm',
+                          isMine
+                            ? 'rounded-tr-md bg-slate-950 text-white'
+                            : 'rounded-tl-md border border-slate-200 bg-white text-slate-800',
+                          msg.status === 'failed' && 'ring-2 ring-rose-300',
+                        )}
+                      >
+                        <p className="text-sm font-semibold leading-relaxed">{msg.text}</p>
+                        <div className={cn('mt-2 flex items-center justify-end gap-1', isMine ? 'text-white/60' : 'text-slate-400')}>
+                          <span className="text-[10px] font-black">
                             {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
-                          {isMine && <CheckCheck className="h-3 w-3" />}
+                          {isMine && (
+                            msg.status === 'failed'
+                              ? <span className="text-[10px] font-black text-rose-200">Failed</span>
+                              : <CheckCheck className={cn('h-3.5 w-3.5', msg.status === 'pending' && 'opacity-40')} />
+                          )}
                         </div>
                       </div>
                     </motion.div>
@@ -229,14 +310,14 @@ export default function ChatDrawer({
               )}
             </div>
 
-            {/* Quick Replies Drawer */}
-            <div className="px-4 py-3 bg-white border-t border-slate-100">
-              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide no-scrollbar">
-                {(QUICK_REPLIES[language as keyof typeof QUICK_REPLIES] || QUICK_REPLIES.en).map((reply, idx) => (
+            <div className="border-t border-slate-100 bg-white px-4 py-3">
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                {QUICK_REPLIES.map((reply) => (
                   <button
-                    key={idx}
+                    key={reply}
                     onClick={() => handleSendMessage(reply)}
-                    className="whitespace-nowrap px-3 py-1.5 bg-slate-100 hover:bg-primary/10 hover:text-primary rounded-full text-[11px] font-bold text-slate-600 transition-all active:scale-95 border border-slate-200/50"
+                    disabled={!socket || !isConnected || !effectiveCurrentUserId}
+                    className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-[11px] font-black text-slate-600 transition hover:border-slate-900 hover:bg-slate-900 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {reply}
                   </button>
@@ -244,27 +325,26 @@ export default function ChatDrawer({
               </div>
             </div>
 
-            {/* Input Area */}
-            <div className="p-4 bg-white border-t border-slate-200">
-              <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-full border border-slate-200">
-                <Button variant="ghost" size="icon" className="rounded-full text-slate-400 hover:text-primary shrink-0">
+            <div className="border-t border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 p-1.5">
+                <Button variant="ghost" size="icon" className="shrink-0 rounded-full text-slate-400 hover:text-slate-900">
                   <Smile className="h-5 w-5" />
                 </Button>
-                <input 
+                <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder={language === 'hi' ? 'संदेश लिखें...' : 'Type a message...'}
-                  className="flex-1 bg-transparent border-none focus:ring-0 text-sm font-medium px-2 py-2 text-slate-700 outline-none"
+                  placeholder={isConnected ? 'Type a message...' : 'Reconnecting chat...'}
+                  className="flex-1 border-none bg-transparent px-2 py-2 text-sm font-semibold text-slate-700 outline-none placeholder:text-slate-400"
                 />
-                <Button 
+                <Button
                   onClick={() => handleSendMessage()}
-                  disabled={!inputText.trim()}
-                  size="icon" 
+                  disabled={!canSend}
+                  size="icon"
                   className={cn(
-                    "rounded-full h-10 w-10 shrink-0 shadow-lg transition-transform active:scale-90",
-                    !inputText.trim() ? "bg-slate-300" : "bg-primary hover:bg-primary/90"
+                    'h-10 w-10 shrink-0 rounded-full shadow-lg transition active:scale-95',
+                    canSend ? 'bg-slate-950 hover:bg-slate-800' : 'bg-slate-300',
                   )}
                 >
                   <Send className="h-4 w-4" />

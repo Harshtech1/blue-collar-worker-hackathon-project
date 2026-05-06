@@ -1,63 +1,57 @@
-/**
- * useSocket.ts
- * ─────────────────────────────────────────────────────────────────────────────
- * Shared Socket.IO client hook.
- * Usage: const { socket } = useSocket();
- *
- * The hook:
- *  1. Creates a single socket connection per app session.
- *  2. Automatically joins the user's private room on connect.
- *  3. Reconnects and re-joins if the userId changes (login/logout).
- *  4. Cleans up on unmount.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from '@/contexts/AuthContext';
 import { API_ROOT as BACKEND_URL } from '@/lib/constants';
 
-// BACKEND_URL is now imported from constants.ts
-
-// Module-level singleton so we don't create multiple connections
 let socketSingleton: Socket | null = null;
 
 export const useSocket = () => {
   const { user, profile } = useAuth();
-  const socketRef = useRef<Socket | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(socketSingleton);
+  const [isConnected, setIsConnected] = useState(() => socketSingleton?.connected || false);
 
   useEffect(() => {
-    // Create socket only once
     if (!socketSingleton) {
       socketSingleton = io(BACKEND_URL, {
         transports: ['websocket', 'polling'],
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
+        reconnectionAttempts: 8,
+        reconnectionDelay: 800,
       });
     }
 
-    socketRef.current = socketSingleton;
+    const activeSocket = socketSingleton;
+    setSocket(activeSocket);
+    setIsConnected(activeSocket.connected);
 
-    // Join the user's private room whenever we have a userId
-    const userId = user?.id || user?._id;
-    const role = profile?.role || 'customer';
-    if (userId && socketSingleton.connected) {
-      socketSingleton.emit('join', { userId, role });
+    const joinPrivateRoom = () => {
+      const userId = user?.id || user?._id || localStorage.getItem('userId');
+      const role = profile?.role || user?.role || 'customer';
+
+      if (userId) {
+        activeSocket.emit('join', { userId, role });
+        console.log(`Socket joined private room: ${userId} (${role})`);
+      }
+    };
+
+    const handleConnect = () => {
+      setIsConnected(true);
+      joinPrivateRoom();
+    };
+
+    const handleDisconnect = () => setIsConnected(false);
+
+    if (activeSocket.connected) {
+      joinPrivateRoom();
     }
 
-    socketSingleton.on('connect', () => {
-      const uid = user?.id || user?._id;
-      const r = profile?.role || 'customer';
-      if (uid) {
-        socketSingleton?.emit('join', { userId: uid, role: r });
-        console.log(`🔌 Socket connected — joined room: ${uid} (${r})`);
-      }
-    });
+    activeSocket.on('connect', handleConnect);
+    activeSocket.on('disconnect', handleDisconnect);
 
     return () => {
-      // Don't disconnect on unmount — keep the singleton alive
-      socketSingleton?.off('connect');
+      activeSocket.off('connect', handleConnect);
+      activeSocket.off('disconnect', handleDisconnect);
     };
-  }, [user]);
+  }, [user?.id, user?._id, user?.role, profile?.role]);
 
-  return { socket: socketRef.current };
+  return { socket, isConnected };
 };
