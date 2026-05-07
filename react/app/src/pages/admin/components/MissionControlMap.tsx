@@ -1033,39 +1033,38 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setShowSectorOverlays((current) => {
-                      const nextValue = !current;
-                      setShowMoatOverlay(nextValue);
-                      return nextValue;
-                    });
+                    setMapViewMode("terrain");
+                    setShowSectorOverlays(true);
+                    setShowMoatOverlay(true);
+                    onMapStyleChange?.("terrain");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showSectorOverlays
+                    mapViewMode === "terrain"
                       ? "bg-sky-50 text-sky-700"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Sector Overlays</span>
-                  <span>{showSectorOverlays ? "On" : "Off"}</span>
+                  <span>Infrastructure Overlay</span>
+                  <span>{mapViewMode === "terrain" ? "On" : "Off"}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setMapViewMode("satellite");
+                    setMapViewMode("high-contrast");
                     setShowSectorOverlays(false);
                     setShowMoatOverlay(false);
-                    onMapStyleChange?.("satellite");
+                    onMapStyleChange?.("high-contrast");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "satellite"
+                    mapViewMode === "high-contrast"
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Satellite</span>
-                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
+                  <span>High-Contrast Dark</span>
+                  <span>{mapViewMode === "high-contrast" ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}
