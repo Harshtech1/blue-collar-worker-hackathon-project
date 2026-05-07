@@ -186,3 +186,33 @@ export const analyzeAreaDensity = async (req, res) => {
     res.status(500).json({ message: "Density analysis failed" });
   }
 };
+
+export const runSimulationBatch = async (req, res) => {
+  try {
+    const configuredAnalyticsUrl = process.env.ANALYTICS_SERVICE_URL || "http://localhost:8000";
+    const analyticsUrl = /^https?:\/\//i.test(configuredAnalyticsUrl)
+      ? configuredAnalyticsUrl
+      : `http://${configuredAnalyticsUrl}`;
+
+    const response = await fetch(`${analyticsUrl}/simulate-density-batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+
+    const payload = await response.json();
+    if (!response.ok) {
+      return res.status(response.status).json({
+        message: payload.detail || payload.message || "Simulation batch failed in analytics service",
+      });
+    }
+
+    return res.json(payload);
+  } catch (error) {
+    console.error("runSimulationBatch Error:", error);
+    return res.status(502).json({
+      message: "Simulation analytics service is unavailable",
+      detail: error instanceof Error ? error.message : "Unknown analytics error",
+    });
+  }
+};

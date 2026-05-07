@@ -31,13 +31,23 @@ import {
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  CircleMarker,
+  MapContainer,
+  Polygon,
+  TileLayer,
+  Tooltip as LeafletTooltip,
+} from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 import { toast } from "sonner";
 import { API } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { SimulationEngine } from "./SimulationEngine";
+import { generateSimulationBatch, sectorSeeds } from "@/utils/simulationData";
 
 interface DensityAnalysis {
   area: string;
@@ -121,28 +131,51 @@ interface HeroSignalData {
   tone: HeroTone;
 }
 
+interface IntelligenceTabProps {
+  routeZoneId?: string;
+  onZoneChange?: (zoneId: string) => void;
+}
+
+interface CommandMapZone {
+  id: string;
+  label: string;
+  city: string;
+  center: [number, number];
+  polygon: [number, number][];
+}
+
+interface ScenarioSnapshot {
+  salariedCore: number;
+  freelancerPool: number;
+  totalWorkers: number;
+  densityScore: number;
+  priceMultiplier: number;
+  projectedProfit: number;
+  qualityScore: number;
+  responseMinutes: number;
+}
+
+interface SimulationPreviewPoint {
+  id: string;
+  zoneId: string;
+  label: string;
+  position: [number, number];
+  serviceType: string;
+  estimatedValue: number;
+  isEmergency: boolean;
+}
+
 const sectorSignals: SectorSignal[] = [
   {
     id: "all",
-    label: "All Active Zones",
-    city: "RAHI launch cluster",
-    orders: 34,
-    workers: 16,
-    predicted: 41,
-    confidence: 0.86,
-    emergency: 5,
-    spend: 12800,
-  },
-  {
-    id: "sector-15-noida",
-    label: "Sector 15",
-    city: "Noida",
-    orders: 29,
-    workers: 9,
-    predicted: 37,
-    confidence: 0.89,
-    emergency: 4,
-    spend: 9400,
+    label: "All Agra Zones",
+    city: "Agra operations cluster",
+    orders: 129,
+    workers: 76,
+    predicted: 157,
+    confidence: 0.88,
+    emergency: 17,
+    spend: 64800,
   },
   {
     id: "agra-cantt",
@@ -156,15 +189,81 @@ const sectorSignals: SectorSignal[] = [
     spend: 5200,
   },
   {
-    id: "greater-noida-west",
-    label: "Greater Noida West",
-    city: "Greater Noida",
-    orders: 8,
+    id: "taj-ganj",
+    label: "Taj Ganj",
+    city: "Agra",
+    orders: 24,
+    workers: 11,
+    predicted: 32,
+    confidence: 0.91,
+    emergency: 4,
+    spend: 7600,
+  },
+  {
+    id: "fatehabad-road",
+    label: "Fatehabad Road",
+    city: "Agra",
+    orders: 20,
+    workers: 10,
+    predicted: 27,
+    confidence: 0.87,
+    emergency: 3,
+    spend: 6800,
+  },
+  {
+    id: "civil-lines",
+    label: "Civil Lines",
+    city: "Agra",
+    orders: 14,
+    workers: 9,
+    predicted: 18,
+    confidence: 0.84,
+    emergency: 2,
+    spend: 4300,
+  },
+  {
+    id: "sikandra",
+    label: "Sikandra",
+    city: "Agra",
+    orders: 10,
     workers: 12,
-    predicted: 10,
-    confidence: 0.78,
+    predicted: 13,
+    confidence: 0.8,
+    emergency: 1,
+    spend: 3600,
+  },
+  {
+    id: "dayalbagh",
+    label: "Dayal Bagh",
+    city: "Agra",
+    orders: 9,
+    workers: 8,
+    predicted: 12,
+    confidence: 0.79,
     emergency: 1,
     spend: 3100,
+  },
+  {
+    id: "trans-yamuna",
+    label: "Trans Yamuna",
+    city: "Agra",
+    orders: 16,
+    workers: 9,
+    predicted: 22,
+    confidence: 0.83,
+    emergency: 3,
+    spend: 5400,
+  },
+  {
+    id: "shamshabad-road",
+    label: "Shamshabad Road",
+    city: "Agra",
+    orders: 8,
+    workers: 7,
+    predicted: 12,
+    confidence: 0.77,
+    emergency: 1,
+    spend: 2900,
   },
 ];
 
@@ -206,7 +305,7 @@ const demoInvestorAnalytics: InvestorAnalytics = {
     {
       bookingId: "demo-escalation-2",
       serviceName: "Deep Cleaning",
-      areaId: "sector-15-noida",
+      areaId: "fatehabad-road",
       suggestedPriceMultiplier: 1.15,
       reason: "No ranked workers were available in the selected zone.",
     },
@@ -267,6 +366,47 @@ const timeLensMeta: Record<TimeLens, { label: string; descriptor: string }> = {
   "7d": { label: "7D", descriptor: "weekly pattern" },
   "30d": { label: "30D", descriptor: "monthly outlook" },
 };
+
+const AGRA_MAP_CENTER: [number, number] = [27.19, 78.02];
+
+const commandMapZones: CommandMapZone[] = sectorSeeds.map((seed) => ({
+  id: seed.id,
+  label: seed.label,
+  city: seed.city,
+  center: [
+    Number(((seed.latRange[0] + seed.latRange[1]) / 2).toFixed(4)),
+    Number(((seed.lngRange[0] + seed.lngRange[1]) / 2).toFixed(4)),
+  ],
+  polygon: [
+    [seed.latRange[0], seed.lngRange[0]],
+    [seed.latRange[0], seed.lngRange[1]],
+    [seed.latRange[1], seed.lngRange[1]],
+    [seed.latRange[1], seed.lngRange[0]],
+  ],
+}));
+
+const previewSignalBatch = generateSimulationBatch({ batchIndex: 0, batchSize: 240 });
+
+const previewSignalZoneMap = Object.fromEntries(
+  sectorSignals.map((sector) => [sector.label, sector.id]),
+);
+
+const previewSignals: SimulationPreviewPoint[] = previewSignalBatch
+  .map((point, index) => {
+    const zoneId = previewSignalZoneMap[point.areaSector];
+    if (!zoneId) return null;
+
+    return {
+      id: `preview-${index}`,
+      zoneId,
+      label: point.areaSector,
+      position: [point.lat, point.lng] as [number, number],
+      serviceType: point.serviceType,
+      estimatedValue: point.estimatedValue,
+      isEmergency: point.isEmergency,
+    } satisfies SimulationPreviewPoint;
+  })
+  .filter((point): point is SimulationPreviewPoint => Boolean(point));
 
 const getPriceMultiplier = (density: number) => (
   Number(Math.min(1.5, Math.max(0.85, 1 + (0.25 * (density - 1.2)))).toFixed(2))
@@ -342,6 +482,56 @@ const formatTime = (value: Date | null) => (
     ? value.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
     : "--:--"
 );
+
+const clampNumber = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
+
+const getDensityTone = (density: number) => {
+  if (density >= 2.1) return { fill: "#ef4444", stroke: "#b91c1c", label: "Critical density" };
+  if (density >= 1.6) return { fill: "#f97316", stroke: "#c2410c", label: "High density" };
+  if (density >= 1.15) return { fill: "#6366f1", stroke: "#4338ca", label: "Balanced density" };
+  return { fill: "#0ea5e9", stroke: "#0369a1", label: "Freelancer-led" };
+};
+
+const buildScenarioSnapshot = (
+  sector: SectorSignal,
+  analysis: DensityAnalysis,
+  salariedCore: number,
+): ScenarioSnapshot => {
+  const baselineCore = Math.max(1, Math.round(analysis.current_workers * analysis.salaried_ratio));
+  const baselineFreelancers = Math.max(1, analysis.current_workers - baselineCore);
+  const extraDemand = Math.max(0, analysis.predicted_demand - analysis.current_orders);
+  const freelancerBuffer = baselineFreelancers + Math.max(0, Math.round(extraDemand / 6));
+  const addedCore = Math.max(0, salariedCore - baselineCore);
+  const totalWorkers = Math.max(analysis.current_workers, salariedCore + freelancerBuffer + addedCore);
+  const densityScore = Number((analysis.predicted_demand / Math.max(1, totalWorkers)).toFixed(2));
+  const priceMultiplier = getPriceMultiplier(densityScore);
+  const averageTicket = Math.round(780 * priceMultiplier);
+  const projectedRevenue = analysis.predicted_demand * averageTicket;
+  const fixedPayroll = salariedCore * 1450;
+  const freelancerPayout = freelancerBuffer * 430;
+  const projectedProfit = Math.round(projectedRevenue - fixedPayroll - freelancerPayout - sector.spend);
+  const qualityScore = Math.round(clampNumber(
+    74
+      + (salariedCore * 1.8)
+      - Math.max(0, (densityScore - 1.2) * 12)
+      + (analysis.confidence_score * 7)
+      - (analysis.emergency_orders * 0.9),
+    56,
+    98,
+  ));
+  const responseMinutes = Math.round(clampNumber(34 - (salariedCore * 0.9) + (densityScore * 4.2), 8, 46));
+
+  return {
+    salariedCore,
+    freelancerPool: freelancerBuffer,
+    totalWorkers,
+    densityScore,
+    priceMultiplier,
+    projectedProfit,
+    qualityScore,
+    responseMinutes,
+  };
+};
 
 const buildDemandSeries = (
   analytics: InvestorAnalytics,
@@ -1461,6 +1651,8 @@ export function IntelligenceTab() {
         <LensCard title="Predictive Lens" body="Forecast controls now react to time windows so admins can move between intraday pulse and monthly planning." icon={Cpu} />
         <LensCard title="Trust Lens" body="Worker quality and escalation actions sit inside the same surface, so service trust becomes something the admin can actively steer." icon={Clock3} />
       </section>
+
+      <SimulationEngine />
     </div>
   );
 }

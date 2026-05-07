@@ -218,7 +218,7 @@ const App = () => {
                     <Route path="/" element={<RoleBasedHome />} />
 
                     {/* Admin Portal - Hidden Route */}
-                    <Route path="/admin-portal-2026" element={<AdminDashboard />} />
+                    <Route path="/admin-portal-2026/*" element={<AdminDashboard />} />
 
                     <Route path="/login" element={<EnhancedLogin />} />
                     <Route path="/register" element={<Register />} />

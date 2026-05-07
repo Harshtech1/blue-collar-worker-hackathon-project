@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
   BarChart3,
@@ -53,6 +54,36 @@ const ADMIN_EMAIL_OPTIONS = [
 ];
 
 const DEMO_ADMIN_TOKEN = "rahi-demo-admin-token";
+const ADMIN_ROUTE_PREFIX = "/admin-portal-2026";
+
+const ADMIN_TABS: AdminTab[] = [
+  "overview",
+  "users",
+  "workers",
+  "bookings",
+  "finance",
+  "heatmap",
+  "intelligence",
+  "system",
+  "bugs",
+  "audit",
+  "settings",
+];
+
+const isAdminTab = (value: string | undefined): value is AdminTab => (
+  Boolean(value) && ADMIN_TABS.includes(value as AdminTab)
+);
+
+const getAdminRouteState = (pathname: string) => {
+  const trimmed = pathname.startsWith(ADMIN_ROUTE_PREFIX)
+    ? pathname.slice(ADMIN_ROUTE_PREFIX.length)
+    : pathname;
+  const segments = trimmed.split("/").filter(Boolean);
+  const routeTab = isAdminTab(segments[0]) ? segments[0] : "overview";
+  const routeZoneId = routeTab === "intelligence" ? (segments[1] || "agra-cantt") : null;
+
+  return { routeTab, routeZoneId };
+};
 
 const demoUsers = [
   { _id: "demo-customer-1", name: "Aarav Sharma", email: "aarav@example.com", phone: "+91 98765 43210", role: "customer", createdAt: new Date().toISOString() },
@@ -74,15 +105,19 @@ const demoBookings: Booking[] = [
 /* ================= COMPONENT ================= */
 
 export default function AdminDashboard() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { routeTab, routeZoneId } = useMemo(
+    () => getAdminRouteState(location.pathname),
+    [location.pathname],
+  );
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("adminToken"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<AdminTab>(() => (
-    localStorage.getItem("adminDemoMode") === "true" ? "intelligence" : "overview"
-  ));
+  const [activeTab, setActiveTab] = useState<AdminTab>(() => routeTab);
 
   const [stats, setStats] = useState<DashboardStats>({
     totalUsers: 0,
@@ -112,6 +147,16 @@ export default function AdminDashboard() {
 
 
   /* ================= AUTH ================= */
+
+  useEffect(() => {
+    setActiveTab(routeTab);
+  }, [routeTab]);
+
+  useEffect(() => {
+    if (routeTab === "intelligence" && location.pathname === `${ADMIN_ROUTE_PREFIX}/intelligence`) {
+      navigate(`${ADMIN_ROUTE_PREFIX}/intelligence/${routeZoneId || "agra-cantt"}`, { replace: true });
+    }
+  }, [location.pathname, navigate, routeTab, routeZoneId]);
 
   useEffect(() => {
     // Check for existing admin session token
@@ -163,6 +208,7 @@ export default function AdminDashboard() {
     setEmail("demo@rahi.local");
     setIsAuthenticated(true);
     setActiveTab("intelligence");
+    navigate(`${ADMIN_ROUTE_PREFIX}/intelligence/agra-cantt`);
     loadDemoDashboardData();
   };
 
@@ -196,6 +242,27 @@ export default function AdminDashboard() {
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminDemoMode");
     setIsAuthenticated(false);
+  };
+
+  const handleTabChange = (tab: AdminTab) => {
+    setActiveTab(tab);
+
+    if (tab === "overview") {
+      navigate(ADMIN_ROUTE_PREFIX);
+      return;
+    }
+
+    if (tab === "intelligence") {
+      navigate(`${ADMIN_ROUTE_PREFIX}/intelligence/${routeZoneId || "agra-cantt"}`);
+      return;
+    }
+
+    navigate(`${ADMIN_ROUTE_PREFIX}/${tab}`);
+  };
+
+  const handleIntelligenceZoneChange = (zoneId: string) => {
+    setActiveTab("intelligence");
+    navigate(`${ADMIN_ROUTE_PREFIX}/intelligence/${zoneId}`);
   };
 
   /* ================= DATA FETCH ================= */
@@ -559,7 +626,7 @@ export default function AdminDashboard() {
     <div className="min-h-screen bg-slate-50 flex">
       <AdminSidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         onLogout={handleLogout}
       />
 
@@ -580,7 +647,7 @@ export default function AdminDashboard() {
 
         <div className="p-8">
           {activeTab === "overview" && (
-            <OverviewTab stats={stats} loading={loading} setActiveTab={setActiveTab} chartData={chartData} activities={activities} />
+            <OverviewTab stats={stats} loading={loading} setActiveTab={handleTabChange} chartData={chartData} activities={activities} />
           )}
           {activeTab === "users" && (
             <DataTable 
@@ -715,7 +782,12 @@ export default function AdminDashboard() {
           )}
           {activeTab === "finance" && <FinanceTab revenue={stats.totalRevenue} bookings={bookingsList} />}
           {activeTab === "heatmap" && <HeatmapTab token={localStorage.getItem("adminToken") || ""} />}
-          {activeTab === "intelligence" && <IntelligenceTab />}
+          {activeTab === "intelligence" && (
+            <IntelligenceTab
+              routeZoneId={routeZoneId || "agra-cantt"}
+              onZoneChange={handleIntelligenceZoneChange}
+            />
+          )}
           {activeTab === "system" && <SystemTab />}
           {activeTab === "bugs" && <BugsTab />}
 
