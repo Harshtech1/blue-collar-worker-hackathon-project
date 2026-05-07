@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readEnvValue } from "../utils/envRuntime.js";
 
 export const STRATEGY_AGENT_SYSTEM_PROMPT = `### ROLE: RAHI STRATEGY AGENT (EXPERT LOGISTICS COO)
 You are the senior strategic advisor for RAHI, a density-optimized blue-collar marketplace. Your goal is to maximize Service Reliability while minimizing Fixed Cost Burn.
@@ -35,11 +36,40 @@ Return valid JSON with:
 
 Respond only with JSON.`;
 
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
+const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
+const DEFAULT_STRATEGY_MAX_TOKENS = 500;
+
+class ProviderRequestError extends Error {
+  constructor(provider, status, message) {
+    super(message);
+    this.name = "ProviderRequestError";
+    this.provider = provider;
+    this.status = status;
+  }
+}
+const PROVIDER_HEALTH_CACHE_TTL_MS = 60_000;
+
+const createProviderState = (provider, model, configured) => ({
+  provider,
+  model,
+  configured,
+  status: configured ? "unknown" : "missing",
+  lastCheckedAt: null,
+  lastError: configured ? null : `${provider.toUpperCase()}_API_KEY is not configured`,
+});
+
+const providerHealthState = {
+  groq: createProviderState("groq", getGroqModel(), Boolean(getGroqApiKey())),
+  gemini: createProviderState("gemini", getGeminiModel(), Boolean(getGeminiApiKey())),
+};
+
+let lastProviderProbeAt = 0;
+let activeProviderProbe = null;
 
 const StrategyPayloadSchema = z.object({
   analysisMode: z.enum(["strategy_brief", "financial_audit", "investor_summary"]).optional().default("strategy_brief"),
+  purpose: z.enum(["zone_brief", "expansion_brief"]).optional().default("zone_brief"),
   scenarioType: z.enum(["baseline", "monsoon", "supply_crunch", "price_war"]).optional().default("baseline"),
   routePath: z.string().optional().default("/admin-portal-2026/intelligence"),
   zoneId: z.string().optional().default("unknown-zone"),
@@ -149,23 +179,31 @@ const strategyJsonSchema = {
   additionalProperties: false,
 };
 
-const geminiStrategySchema = {
-  type: "OBJECT",
-  properties: {
-    signal: { type: "STRING" },
-    reasoning: { type: "STRING" },
-    procedures: {
-      type: "ARRAY",
-      items: { type: "STRING" },
-    },
-    counterPositioningMove: { type: "STRING" },
-    auditLog: { type: "STRING" },
-  },
-  required: ["signal", "reasoning", "procedures"],
-  propertyOrdering: ["signal", "reasoning", "procedures", "counterPositioningMove", "auditLog"],
-};
-
 const formatCurrency = (value) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+
+function getGroqApiKey() {
+  return readEnvValue("GROQ_API_KEY");
+}
+
+function getGeminiApiKey() {
+  return readEnvValue("GEMINI_API_KEY", "GOOGLE_API_KEY", "VITE_GEMINI_API_KEY");
+}
+
+function getGroqModel() {
+  return readEnvValue("GROQ_MODEL") || DEFAULT_GROQ_MODEL;
+}
+
+function getGeminiModel() {
+  return (readEnvValue("GEMINI_MODEL") || DEFAULT_GEMINI_MODEL).replace(/^models\//, "");
+}
+
+function getStrategyMaxTokens() {
+  const configured = Number(readEnvValue("STRATEGY_MAX_TOKENS"));
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.min(Math.round(configured), 1200);
+  }
+  return DEFAULT_STRATEGY_MAX_TOKENS;
+}
 
 const getDensityBand = (density) => {
   if (density > 2.5) return "high_density";
@@ -215,6 +253,171 @@ const buildCompetitorAuditLog = (payload, counterMove) => {
   return `[STRATEGY] ${counterMove}${primarySignal ? ` Trigger: ${primarySignal}` : ""}`;
 };
 
+const refreshProviderConfigState = () => {
+  providerHealthState.groq.configured = Boolean(getGroqApiKey());
+  providerHealthState.groq.model = getGroqModel();
+  if (!providerHealthState.groq.configured) {
+    providerHealthState.groq.status = "missing";
+    providerHealthState.groq.lastError = "GROQ_API_KEY is not configured";
+  }
+
+  providerHealthState.gemini.configured = Boolean(getGeminiApiKey());
+  providerHealthState.gemini.model = getGeminiModel();
+  if (!providerHealthState.gemini.configured) {
+    providerHealthState.gemini.status = "missing";
+    providerHealthState.gemini.lastError = "GEMINI_API_KEY is not configured";
+  }
+};
+
+const classifyProviderStatus = (statusCode, errorMessage = "") => {
+  if (statusCode === 401) return "unauthorized";
+  if (statusCode === 403) return "forbidden";
+  if (statusCode === 429) return "quota_limited";
+  if (statusCode >= 200 && statusCode < 300) return "ready";
+
+  const normalized = String(errorMessage || "").toLowerCase();
+  if (normalized.includes("invalid api key") || normalized.includes("authentication") || normalized.includes("unauthorized")) {
+    return "unauthorized";
+  }
+  if (normalized.includes("quota") || normalized.includes("rate limit") || normalized.includes("resource exhausted")) {
+    return "quota_limited";
+  }
+
+  return "error";
+};
+
+const recordProviderHealth = (provider, status, errorMessage = null) => {
+  const state = providerHealthState[provider];
+  if (!state) return;
+
+  state.status = status;
+  state.lastCheckedAt = new Date().toISOString();
+  state.lastError = errorMessage || null;
+};
+
+const summarizeProviderHealth = () => {
+  refreshProviderConfigState();
+
+  const providers = Object.values(providerHealthState).map((state) => ({
+    provider: state.provider,
+    model: state.model,
+    configured: state.configured,
+    status: state.status,
+    lastCheckedAt: state.lastCheckedAt,
+    lastError: state.lastError,
+  }));
+
+  const readyProviders = providers.filter((provider) => provider.status === "ready");
+  const fallbackMode = readyProviders.length === 0;
+  const primaryProvider = readyProviders[0]?.provider || null;
+  const warningProvider = providers.find((provider) => provider.status === "unauthorized" || provider.status === "quota_limited") || null;
+
+  let summary = fallbackMode
+    ? "Cloud Engine: Fallback Mode"
+    : `Cloud Engine: ${primaryProvider?.toUpperCase()} Ready`;
+
+  if (warningProvider?.status === "unauthorized") {
+    summary = `Cloud Engine: Fallback Mode (${warningProvider.provider.toUpperCase()} 401)`;
+  } else if (warningProvider?.status === "quota_limited") {
+    summary = `Cloud Engine: Fallback Mode (${warningProvider.provider.toUpperCase()} 429)`;
+  }
+
+  return {
+    mode: fallbackMode ? "fallback" : "ready",
+    summary,
+    primaryProvider,
+    providers,
+  };
+};
+
+const probeGroqHealth = async () => {
+  const groqApiKey = getGroqApiKey();
+  const groqModel = getGroqModel();
+
+  if (!groqApiKey) {
+    recordProviderHealth("groq", "missing", "GROQ_API_KEY is not configured");
+    return;
+  }
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/models", {
+      headers: {
+        Authorization: `Bearer ${groqApiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const message = payload?.error?.message || payload?.message || `Groq health check failed with ${response.status}`;
+      recordProviderHealth("groq", classifyProviderStatus(response.status, message), message);
+      return;
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    const availableModels = Array.isArray(payload?.data) ? payload.data.map((model) => model?.id).filter(Boolean) : [];
+    if (!availableModels.includes(groqModel)) {
+      recordProviderHealth("groq", "error", `${groqModel} is not available for this Groq account.`);
+      return;
+    }
+
+    recordProviderHealth("groq", "ready");
+  } catch (error) {
+    recordProviderHealth("groq", "error", error instanceof Error ? error.message : "Unknown Groq health error");
+  }
+};
+
+const probeGeminiHealth = async () => {
+  const geminiApiKey = getGeminiApiKey();
+  const geminiModel = getGeminiModel();
+
+  if (!geminiApiKey) {
+    recordProviderHealth("gemini", "missing", "GEMINI_API_KEY is not configured");
+    return;
+  }
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}?key=${geminiApiKey}`);
+
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const message = payload?.error?.message || `Gemini health check failed with ${response.status}`;
+      recordProviderHealth("gemini", classifyProviderStatus(response.status, message), message);
+      return;
+    }
+
+    recordProviderHealth("gemini", "ready");
+  } catch (error) {
+    recordProviderHealth("gemini", "error", error instanceof Error ? error.message : "Unknown Gemini health error");
+  }
+};
+
+export const getStrategyProviderHealth = async ({ force = false, probe = true } = {}) => {
+  refreshProviderConfigState();
+
+  if (!probe) {
+    return summarizeProviderHealth();
+  }
+
+  const now = Date.now();
+  const shouldProbe = force || !lastProviderProbeAt || (now - lastProviderProbeAt) > PROVIDER_HEALTH_CACHE_TTL_MS;
+
+  if (shouldProbe) {
+    if (!activeProviderProbe) {
+      activeProviderProbe = Promise.allSettled([
+        probeGroqHealth(),
+        probeGeminiHealth(),
+      ]).finally(() => {
+        lastProviderProbeAt = Date.now();
+        activeProviderProbe = null;
+      });
+    }
+
+    await activeProviderProbe;
+  }
+
+  return summarizeProviderHealth();
+};
+
 const normalizeProcedures = (procedures, payload) => {
   const defaults = buildFallbackStrategy(payload).procedures;
   const safe = Array.isArray(procedures) ? procedures.filter(Boolean).map((item) => String(item).trim()) : [];
@@ -244,6 +447,9 @@ const buildPrompt = (payload) => {
     : payload.analysisMode === "financial_audit"
       ? "You are running a unit-economics audit. Focus on CAC vs LTV, contribution margin, daily burn, and the correct salaried-to-freelancer mix."
       : "You are generating an operating brief for the command center.";
+  const purposeInstruction = payload.purpose === "expansion_brief"
+    ? "A zero-click market-entry reveal is active. Lead with unit-economic sustainability first, then staffing structure, then competitor-aware positioning. Procedures must read like a 3-step Expansion Playbook."
+    : "The standard zone-brief workflow is active.";
   const scenarioInstruction = activeScenario === "supply_crunch"
     ? "A supply crunch stress test is active. Prioritize service preservation over growth. Your plan should suspend non-essential bookings, reroute salaried core into high-density zones, and treat 1.5x payout protection as acceptable."
     : activeScenario === "monsoon"
@@ -258,6 +464,7 @@ const buildPrompt = (payload) => {
   return [
     "Analyze this RAHI zone and return JSON only.",
     modeInstruction,
+    purposeInstruction,
     scenarioInstruction,
     competitorInstruction,
     payload.userQuestion ? `CEO Question: ${payload.userQuestion}` : "CEO Question: none",
@@ -265,6 +472,7 @@ const buildPrompt = (payload) => {
     "Zone Context:",
     JSON.stringify({
       analysisMode: payload.analysisMode,
+      purpose: payload.purpose,
       scenarioType: activeScenario,
       routePath: payload.routePath,
       zoneId: payload.zoneId,
@@ -348,12 +556,19 @@ const finalizeStrategy = (raw, payload) => {
 };
 
 const parseGroqResponse = async (response) => {
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data?.error?.message || data?.message || `Groq request failed with ${response.status}`);
+    throw new ProviderRequestError(
+      "groq",
+      response.status,
+      data?.error?.message || data?.message || `Groq request failed with ${response.status}`,
+    );
   }
 
   const text = data?.choices?.[0]?.message?.content || "";
+  if (!text.trim()) {
+    throw new ProviderRequestError("groq", response.status, "Groq returned an empty response");
+  }
   return {
     text,
     raw: data,
@@ -361,12 +576,19 @@ const parseGroqResponse = async (response) => {
 };
 
 const parseGeminiResponse = async (response) => {
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data?.error?.message || `Gemini request failed with ${response.status}`);
+    throw new ProviderRequestError(
+      "gemini",
+      response.status,
+      data?.error?.message || `Gemini request failed with ${response.status}`,
+    );
   }
 
   const text = data?.candidates?.[0]?.content?.parts?.map((part) => part?.text || "").join("").trim() || "";
+  if (!text) {
+    throw new ProviderRequestError("gemini", response.status, "Gemini returned an empty response");
+  }
   return {
     text,
     raw: data,
@@ -374,75 +596,101 @@ const parseGeminiResponse = async (response) => {
 };
 
 const callGroqStrategy = async (payload) => {
-  if (!process.env.GROQ_API_KEY) {
+  const groqApiKey = getGroqApiKey();
+  const groqModel = getGroqModel();
+
+  if (!groqApiKey) {
+    recordProviderHealth("groq", "missing", "GROQ_API_KEY is not configured");
     throw new Error("GROQ_API_KEY is not configured");
   }
 
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: STRATEGY_AGENT_SYSTEM_PROMPT },
-        { role: "user", content: buildPrompt(payload) },
-      ],
-    }),
-  });
-
-  const { text } = await parseGroqResponse(response);
-  return {
-    strategy: finalizeStrategy(extractJson(text), payload),
-    provider: "groq",
-    model: GROQ_MODEL,
-    rawText: text,
-  };
-};
-
-const callGeminiStrategy = async (payload) => {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured");
-  }
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    {
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${groqApiKey}`,
       },
       body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: STRATEGY_AGENT_SYSTEM_PROMPT }],
-        },
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: buildPrompt(payload) }],
-          },
+        model: groqModel,
+        temperature: 0.2,
+        max_completion_tokens: getStrategyMaxTokens(),
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: STRATEGY_AGENT_SYSTEM_PROMPT },
+          { role: "user", content: buildPrompt(payload) },
         ],
-        generationConfig: {
-          temperature: 0.2,
-          topP: 0.8,
-          response_mime_type: "application/json",
-          response_schema: geminiStrategySchema,
-        },
       }),
-    },
-  );
+    });
 
-  const { text } = await parseGeminiResponse(response);
-  return {
-    strategy: finalizeStrategy(extractJson(text), payload),
-    provider: "gemini",
-    model: GEMINI_MODEL,
-    rawText: text,
-  };
+    const { text } = await parseGroqResponse(response);
+    recordProviderHealth("groq", "ready");
+    return {
+      strategy: finalizeStrategy(extractJson(text), payload),
+      provider: "groq",
+      model: groqModel,
+      rawText: text,
+    };
+  } catch (error) {
+    const status = error instanceof ProviderRequestError ? error.status : 0;
+    const message = error instanceof Error ? error.message : "Unknown Groq strategy error";
+    recordProviderHealth("groq", classifyProviderStatus(status, message), message);
+    throw error;
+  }
+};
+
+const callGeminiStrategy = async (payload) => {
+  const geminiApiKey = getGeminiApiKey();
+  const geminiModel = getGeminiModel();
+
+  if (!geminiApiKey) {
+    recordProviderHealth("gemini", "missing", "GEMINI_API_KEY is not configured");
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: STRATEGY_AGENT_SYSTEM_PROMPT }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: buildPrompt(payload) }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            topP: 0.8,
+            maxOutputTokens: getStrategyMaxTokens(),
+            responseMimeType: "application/json",
+            responseJsonSchema: strategyJsonSchema,
+          },
+        }),
+      },
+    );
+
+    const { text } = await parseGeminiResponse(response);
+    recordProviderHealth("gemini", "ready");
+    return {
+      strategy: finalizeStrategy(extractJson(text), payload),
+      provider: "gemini",
+      model: geminiModel,
+      rawText: text,
+    };
+  } catch (error) {
+    const status = error instanceof ProviderRequestError ? error.status : 0;
+    const message = error instanceof Error ? error.message : "Unknown Gemini strategy error";
+    recordProviderHealth("gemini", classifyProviderStatus(status, message), message);
+    throw error;
+  }
 };
 
 export const buildFallbackStrategy = (input) => {
@@ -460,6 +708,27 @@ export const buildFallbackStrategy = (input) => {
   const isPriceWarQuestion = /price\s*war|discount|competitor|month|30/i.test(payload.userQuestion || "");
   const twoDayBurn = overallBurn * 2;
   const oneMonthBurn = overallBurn * 30;
+
+  if (payload.purpose === "expansion_brief") {
+    const launchLabel = payload.zoneLabel || `${payload.city} Launch Corridor`;
+    const launchCac = formatCurrency(payload.financials?.acquisitionCost || worstBurnZone?.acquisitionCost || 0);
+    const launchMarginLift = formatCurrency(Math.max(0, marginLift));
+    const launchMix = densityBand === "high_density"
+      ? "salaried-core pilot"
+      : densityBand === "low_density"
+        ? "verified-freelancer reserve"
+        : "hybrid launch mix";
+
+    return {
+      signal: `New geography detected: ${payload.city} is ready for a burn-first market-entry read, and ${launchLabel} is the active launch corridor at D=${payload.densityScore.toFixed(2)}.`,
+      reasoning: `Expansion mode protects runway before it chases share. ${payload.city} is being scored as a ${densityBand.replace("_", " ")} launch, CAC is ${launchCac}, and the current density signal says the first move should validate contribution discipline before broad hiring.${hasCompetitorPressure(payload) ? " Competitor pressure is real, but it is a second-order layer after burn control." : ""}`,
+      procedures: [
+        `Open ${launchLabel} with a ${launchMix} inside the current ${payload.radiusKm} km command radius, not a city-wide hiring wave.`,
+        `Cap launch burn by holding acquisition near ${launchCac} and release more salaried capacity only if margin lift stays above ${launchMarginLift}.`,
+        `Keep a growth reserve for ${payload.city}: expand into ${hottestSector} only after audit coverage stays above 85% and density holds above ${densityBand === "low_density" ? "1.10" : densityBand === "high_density" ? "2.30" : "1.80"} for consecutive reviews.`,
+      ],
+    };
+  }
 
   if (activeScenario === "monsoon" && payload.analysisMode === "investor_summary") {
     return {
@@ -667,19 +936,15 @@ export const buildFallbackStrategy = (input) => {
 
 export const analyzeStrategyWithLLM = async (input) => {
   const payload = StrategyPayloadSchema.parse(input);
-  const preferred = payload.providerPreference
-    || (payload.deepDive ? "gemini" : "groq");
-
-  const providers = preferred === "gemini"
-    ? [callGeminiStrategy, callGroqStrategy]
-    : [callGroqStrategy, callGeminiStrategy];
+  const providers = [callGroqStrategy, callGeminiStrategy];
 
   for (const provider of providers) {
     try {
       return await provider(payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown LLM error";
-      console.warn("[strategy-llm]", message);
+      const providerLabel = error instanceof ProviderRequestError ? `${error.provider}:${error.status}` : provider.name;
+      console.warn("[strategy-llm]", providerLabel, message);
     }
   }
 
@@ -704,4 +969,4 @@ export const analyzeStrategyWithLLM = async (input) => {
   };
 };
 
-export const hasStrategyProviderConfigured = () => Boolean(process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY);
+export const hasStrategyProviderConfigured = () => Boolean(getGroqApiKey() || getGeminiApiKey());
