@@ -211,10 +211,8 @@ export default function AdminDashboard() {
   const [mapStyle, setMapStyle] = useState<AdminMapStyle>(((): AdminMapStyle => {
     const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
     if (persisted === "road") return "road";
-    if (persisted === "satellite" || persisted === "terrain") {
-      return "satellite";
-    }
-    if (persisted === "night-ops" || persisted === "high-contrast") return "satellite";
+    if (persisted === "terrain" || persisted === "satellite") return "satellite";
+    if (persisted === "high-contrast" || persisted === "night-ops") return "night-ops";
 
     return "road";
   })());
