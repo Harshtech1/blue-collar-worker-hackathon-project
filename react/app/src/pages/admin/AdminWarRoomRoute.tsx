@@ -1,1 +1,1 @@
-export { AdminWarRoomPage as default } from "./AdminRoutePages";
+export { AdminWarRoomPage as default } from "./AdminMissionPages";

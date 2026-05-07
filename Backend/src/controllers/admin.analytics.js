@@ -71,8 +71,16 @@ export const getInvestorAnalytics = async (_req, res) => {
     }, {});
 
     const revenue = completed.reduce((sum, booking) => sum + toNumber(booking.amount ?? booking.total_price), 0);
-    const platformCommission = Math.round(revenue * 0.15);
+    const completedJobs = completed.length;
+    const avgTicket = completedJobs > 0 ? Math.round(revenue / completedJobs) : 0;
+    const ledgerCommission = completed.reduce((sum, booking) => sum + toNumber(booking.commission), 0);
+    const hasLedgerCommission = ledgerCommission > 0;
+    const platformCommission = hasLedgerCommission ? Math.round(ledgerCommission) : Math.round(revenue * 0.15);
     const workerEarnings = Math.max(0, revenue - platformCommission);
+    const marketingCacPerJob = completedJobs > 0 ? Math.round((revenue * 0.028) / completedJobs) : 0;
+    const incentivesPerJob = completedJobs > 0 ? Math.round((revenue * 0.012) / completedJobs) : 0;
+    const commissionPerJob = completedJobs > 0 ? Math.round(platformCommission / completedJobs) : 0;
+    const netProfitPerJob = commissionPerJob - (marketingCacPerJob + incentivesPerJob);
 
     const workerQuality = workers
       .map((worker) => {
@@ -102,6 +110,7 @@ export const getInvestorAnalytics = async (_req, res) => {
       data: {
         summary: {
           totalBookings: bookings.length,
+          completedJobs,
           completionRate: bookings.length > 0 ? Number(((completed.length / bookings.length) * 100).toFixed(1)) : 0,
           cancellationRate: bookings.length > 0 ? Number(((cancelled.length / bookings.length) * 100).toFixed(1)) : 0,
           churnRate,
@@ -109,6 +118,15 @@ export const getInvestorAnalytics = async (_req, res) => {
           revenue,
           workerEarnings,
           platformCommission,
+          unitEconomics: {
+            avgTicket,
+            commissionPerJob,
+            marketingCacPerJob,
+            incentivesPerJob,
+            netProfitPerJob,
+            totalCommission: platformCommission,
+            source: hasLedgerCommission ? 'booking-ledger + live ops model' : 'live revenue + ops model',
+          },
         },
         demandForecast: buildDemandForecast(bookings),
         cancellationReasons: Object.entries(cancellationReasons).map(([reason, count]) => ({ reason, count })),

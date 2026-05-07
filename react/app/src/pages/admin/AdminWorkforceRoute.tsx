@@ -1,1 +1,1 @@
-export { AdminWorkforcePage as default } from "./AdminRoutePages";
+export { AdminWorkforcePage as default } from "./AdminMissionPages";

@@ -76,6 +76,20 @@ const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 const toDegrees = (radians: number) => (radians * 180) / Math.PI;
 const EARTH_RADIUS_KM = 6371;
 const MAP_LABEL_FONT = "\"Inter\", \"Plus Jakarta Sans\", system-ui, sans-serif";
+const MARKET_TIER_BADGES: Record<string, string> = {
+  agra: "TIER-2",
+  chandigarh: "TIER-2",
+  chennai: "TIER-1",
+  bengaluru: "TIER-1",
+  kolkata: "TIER-1",
+  mumbai: "TIER-1",
+  "new-delhi": "TIER-1",
+  dubai: "GLOBAL",
+  singapore: "GLOBAL",
+  london: "GLOBAL",
+  "new-york": "GLOBAL",
+  "sao-paulo": "GLOBAL",
+};
 
 const hashString = (value: string) => (
   Array.from(value).reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, 7)
@@ -305,7 +319,7 @@ export function MissionControlMap({
   );
 
   const activePressureColor = "#0F172A";
-  const defaultZoom = usingGlobalCityScope ? 11 : 12;
+  const defaultZoom = usingGlobalCityScope ? 11.4 : 12.6;
   const [viewportTelemetry, setViewportTelemetry] = useState<ViewportTelemetry>({
     center: highlightedZone.center,
     zoom: defaultZoom,
@@ -391,6 +405,13 @@ export function MissionControlMap({
     () => formatAltitude(estimateObservationAltitude(viewportTelemetry.center[0], viewportTelemetry.zoom)),
     [viewportTelemetry.center, viewportTelemetry.zoom],
   );
+
+  const marketBadgeLabel = useMemo(() => {
+    const activeCityLabel = selectedGlobalCity?.label || highlightedZone.city || "Agra";
+    const activeCityId = selectedGlobalCity?.id || DEFAULT_SIMULATION_CITY_ID;
+    const tierBadge = MARKET_TIER_BADGES[activeCityId] || "LIVE";
+    return `MARKET: ${activeCityLabel.toUpperCase()} (${tierBadge})`;
+  }, [highlightedZone.city, selectedGlobalCity]);
 
   return (
     <div className={cn("relative h-full w-full overflow-hidden rounded-[1.35rem] border-2 border-slate-200 bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.18)]", className)}>
@@ -498,12 +519,8 @@ export function MissionControlMap({
             onViewportChange={setViewportTelemetry}
           />
           <TileLayer
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            attribution="Tiles &copy; Esri"
-          />
-          <TileLayer
-            url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places_Alternate/MapServer/tile/{z}/{y}/{x}"
-            attribution="Labels &copy; Esri"
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            attribution="&copy; OpenStreetMap contributors &copy; CARTO"
           />
 
           <Pane name="sector-boxes" style={{ zIndex: 418 }}>
@@ -681,8 +698,8 @@ export function MissionControlMap({
         <div className="absolute right-3 top-3 h-5 w-5 border-r border-t border-slate-300/90" />
         <div className="absolute bottom-3 left-3 h-5 w-5 border-b border-l border-slate-300/90" />
         <div className="absolute bottom-3 right-3 h-5 w-5 border-b border-r border-slate-300/90" />
-        <div className="absolute left-4 top-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
-          {usingGlobalCityScope ? "Operations map" : "Market operations map"}
+        <div className="absolute left-4 top-4 rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_14px_32px_-20px_rgba(15,23,42,0.22)]">
+          {marketBadgeLabel}
         </div>
         <div className="absolute bottom-4 right-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
           LAT {viewportTelemetry.center[0].toFixed(4)} | LNG {viewportTelemetry.center[1].toFixed(4)} | ALT {coordinateAltitude} | Z {viewportTelemetry.zoom.toFixed(1)}

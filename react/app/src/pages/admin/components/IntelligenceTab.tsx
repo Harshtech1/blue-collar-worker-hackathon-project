@@ -39,11 +39,14 @@ import {
   Circle,
   CircleMarker,
   MapContainer,
+  Marker,
   Polygon,
   TileLayer,
   Tooltip as LeafletTooltip,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { toast } from "sonner";
 import { API } from "@/lib/constants";
@@ -166,6 +169,11 @@ interface CommandMapZone {
   city: string;
   center: [number, number];
   polygon: [number, number][];
+}
+
+interface CommandViewportTelemetry {
+  center: [number, number];
+  zoom: number;
 }
 
 interface ExpansionSignalSnapshot {
@@ -433,6 +441,7 @@ const strategyTone = {
 };
 
 const monoMetricFont = "\"JetBrains Mono\", \"Fira Code\", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+const mapLabelFont = "\"Inter\", \"Plus Jakarta Sans\", system-ui, sans-serif";
 
 const modeMeta: Record<IntelligenceMode, {
   label: string;
@@ -501,6 +510,21 @@ const commandMapZones: CommandMapZone[] = sectorSeeds.map((seed) => ({
     [seed.latRange[1], seed.lngRange[0]],
   ],
 }));
+
+const estimateObservationAltitude = (latitude: number, zoom: number) => {
+  const earthCircumference = 40075016.686;
+  const latAdjustment = Math.cos((latitude * Math.PI) / 180);
+  const metersPerPixel = (earthCircumference * latAdjustment) / Math.pow(2, zoom + 8);
+  return Math.max(80, metersPerPixel * 760);
+};
+
+const formatAltitude = (meters: number) => {
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(2)} km`;
+  }
+
+  return `${Math.round(meters)} m`;
+};
 
 const previewSignalBatch = generateSimulationBatch({ batchIndex: 0, batchSize: 240 });
 
@@ -1284,6 +1308,10 @@ export function IntelligenceTab({
   const [commandGeoSelection, setCommandGeoSelection] = useState<SimulationGeoSelectionPayload>(INITIAL_COMMAND_SELECTION);
   const [marketLeapState, setMarketLeapState] = useState<MarketLeapState | null>(null);
   const [selectedCoordinates, setSelectedCoordinates] = useState<{ lat: number; lng: number } | null>(null);
+  const [commandViewport, setCommandViewport] = useState<CommandViewportTelemetry>({
+    center: commandMapZones.find((zone) => zone.id === initialZoneId)?.center || AGRA_MAP_CENTER,
+    zoom: initialZoneId === "all" ? 11 : 12,
+  });
   const [logicLog, setLogicLog] = useState<LogicLogEntry[]>([
     {
       id: "logic-boot",
@@ -1753,6 +1781,78 @@ export function IntelligenceTab({
       ? AGRA_MAP_CENTER
       : activeMapZone.center;
   const commandMapZoom = isPinnedCommandMode ? 10 : selectedSectorId === "all" ? 11 : 12;
+  const commandWorkerCountsByZone = useMemo(() => {
+    const previewPool = isPinnedCommandMode ? globalPreviewSignals : visiblePreviewSignals;
+
+    const aggregatedPreviewCounts = previewPool.reduce<Record<string, number>>((accumulator, signal) => {
+      accumulator[signal.zoneId] = (accumulator[signal.zoneId] || 0) + 1;
+      return accumulator;
+    }, {});
+
+    return sectorSignals
+      .filter((sector) => sector.id !== "all")
+      .reduce<Record<string, number>>((accumulator, sector) => {
+        accumulator[sector.id] = sector.id === analysis.area_id
+          ? analysis.current_workers
+          : aggregatedPreviewCounts[sector.id] || sector.workers;
+        return accumulator;
+      }, {});
+  }, [analysis.area_id, analysis.current_workers, globalPreviewSignals, isPinnedCommandMode, visiblePreviewSignals]);
+  const zoneLabelZoom = commandViewport.zoom;
+  const visibleCommandZoneLabels = useMemo(() => {
+    if (isPinnedCommandMode) {
+      return [] as CommandMapZone[];
+    }
+
+    return commandMapZones.filter((zone, index) => {
+      if (zone.id === activeSector.id || zone.id === highlightedZoneId) return true;
+
+      const density = zoneDensityMap[zone.id] ?? 0;
+      if (density >= 1.85) return true;
+      if (zoneLabelZoom >= 12.25) return true;
+      if (zoneLabelZoom >= 11.55) return index % 2 === 0;
+
+      return false;
+    });
+  }, [activeSector.id, highlightedZoneId, isPinnedCommandMode, zoneDensityMap, zoneLabelZoom]);
+  const commandZoneLabelIcons = useMemo(() => {
+    if (isPinnedCommandMode) {
+      return {} as Record<string, L.DivIcon>;
+    }
+
+    return Object.fromEntries(
+      visibleCommandZoneLabels.map((zone) => {
+        const density = zoneDensityMap[zone.id] ?? 0;
+        const workerCount = commandWorkerCountsByZone[zone.id] ?? 0;
+        const isPrimary = zone.id === activeSector.id || zone.id === highlightedZoneId;
+        const badgeTone = density >= 1.85 ? "critical" : density >= 1.2 ? "surge" : "healthy";
+
+        return [zone.id, L.divIcon({
+          className: "rahi-zone-label-wrapper",
+          html: `
+            <div class="rahi-zone-label ${isPrimary ? "rahi-zone-label--primary" : ""}">
+              <span class="rahi-zone-label__name">${zone.label}</span>
+              <span class="rahi-zone-badge rahi-zone-badge--${badgeTone}">${workerCount} workers</span>
+            </div>
+          `,
+          iconSize: [168, 42],
+          iconAnchor: [84, 21],
+        })];
+      }),
+    ) as Record<string, L.DivIcon>;
+  }, [activeSector.id, commandWorkerCountsByZone, highlightedZoneId, isPinnedCommandMode, visibleCommandZoneLabels, zoneDensityMap]);
+  const commandViewportAltitude = useMemo(
+    () => formatAltitude(estimateObservationAltitude(commandViewport.center[0], commandViewport.zoom)),
+    [commandViewport.center, commandViewport.zoom],
+  );
+
+  useEffect(() => {
+    setCommandViewport({
+      center: commandMapCenter,
+      zoom: commandMapZoom,
+    });
+  }, [commandMapCenter, commandMapZoom]);
+
   const terminalScript = useMemo(() => (
     buildStrategyTerminalScript({
       status: strategyStatus,
@@ -2875,15 +2975,16 @@ export function IntelligenceTab({
                 <CommandMapView
                   center={commandMapCenter}
                   zoom={commandMapZoom}
+                  onViewportChange={setCommandViewport}
                 />
                 <TileLayer
                   url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
                   attribution="Tiles &copy; Esri"
                 />
                 <TileLayer
-                  url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
+                  url="https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png"
                   attribution="Labels &copy; CARTO"
-                  opacity={0.92}
+                  opacity={0.96}
                 />
 
                 {!isPinnedCommandMode && commandMapZones.map((zone) => {
@@ -2914,6 +3015,16 @@ export function IntelligenceTab({
                     </Polygon>
                   );
                 })}
+
+                {!isPinnedCommandMode && visibleCommandZoneLabels.map((zone) => (
+                  <Marker
+                    key={`zone-label-${zone.id}`}
+                    position={zone.center}
+                    icon={commandZoneLabelIcons[zone.id]}
+                    interactive={false}
+                    keyboard={false}
+                  />
+                ))}
 
                 {isPinnedCommandMode && marketLeapSnapshot && (
                   <>
@@ -3078,8 +3189,16 @@ export function IntelligenceTab({
               </div>
 
               <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-indigo-300/20 bg-slate-950/88 px-4 py-3 shadow-[0_18px_40px_-26px_rgba(2,6,23,1)] backdrop-blur">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Terminal focus</p>
-                <p className="mt-2 text-sm font-black text-white">{displayRouteLabel}</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Telemetry HUD</p>
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-300" style={{ fontFamily: monoMetricFont }}>
+                  <span>LAT {commandViewport.center[0].toFixed(4)}</span>
+                  <span>LNG {commandViewport.center[1].toFixed(4)}</span>
+                  <span>ALT {commandViewportAltitude}</span>
+                  <span>Z {commandViewport.zoom.toFixed(2)}</span>
+                </div>
+                <p className="mt-3 text-xs font-semibold text-slate-400">
+                  Focus: <span className="font-black text-white">{displayRouteLabel}</span>
+                </p>
               </div>
 
               {(simulationRunning || strategyStatus === "thinking") && (

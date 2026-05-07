@@ -1,1 +1,1 @@
-export { AdminHeatmapPage as default } from "./AdminRoutePages";
+export { AdminHeatmapPage as default } from "./AdminMissionPages";

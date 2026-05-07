@@ -40,7 +40,7 @@ import AdminFinanceRoute from "./pages/admin/AdminFinanceRoute";
 import AdminObservabilityRoute from "./pages/admin/AdminObservabilityRoute";
 import AdminSettingsRoute from "./pages/admin/AdminSettingsRoute";
 import AdminHeatmapRoute from "./pages/admin/AdminHeatmapRoute";
-import { AdminLegacyRedirect } from "./pages/admin/AdminRoutePages";
+import { AdminLegacyRedirect } from "./pages/admin/AdminMissionPages";
 
 // Worker pages import
 import WorkerOnboardingPage from "./pages/worker/WorkerOnboardingPage";

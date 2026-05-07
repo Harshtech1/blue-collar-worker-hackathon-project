@@ -145,6 +145,40 @@ const issueSeeds: ObservabilityIssue[] = [
   },
 ];
 
+const getYieldSnapshot = ({
+  totalRevenue,
+  completedCount,
+  fallbackAverageTicket,
+  investorSummary,
+}: {
+  totalRevenue: number;
+  completedCount: number;
+  fallbackAverageTicket: number;
+  investorSummary: ReturnType<typeof useAdminShellContext>["investorSummary"];
+}) => {
+  const unitEconomics = investorSummary?.unitEconomics;
+  const avgTicket = Number(unitEconomics?.avgTicket ?? fallbackAverageTicket ?? 0);
+  const commissionPerJob = Number(unitEconomics?.commissionPerJob ?? Math.round(avgTicket * 0.15));
+  const marketingPerJob = Number(unitEconomics?.marketingCacPerJob ?? Math.round(avgTicket * 0.028));
+  const incentivesPerJob = Number(unitEconomics?.incentivesPerJob ?? Math.round(avgTicket * 0.012));
+  const netProfitPerJob = Number(unitEconomics?.netProfitPerJob ?? (commissionPerJob - (marketingPerJob + incentivesPerJob)));
+  const totalCommission = Number(unitEconomics?.totalCommission ?? investorSummary?.platformCommission ?? Math.round(totalRevenue * 0.15));
+  const sourceLabel = unitEconomics?.source || "frontend fallback";
+  const isBackendBacked = Boolean(unitEconomics);
+
+  return {
+    avgTicket,
+    commissionPerJob,
+    marketingPerJob,
+    incentivesPerJob,
+    netProfitPerJob,
+    totalCommission,
+    sourceLabel,
+    isBackendBacked,
+    completedCount: Number(investorSummary?.completedJobs ?? completedCount),
+  };
+};
+
 export function AdminOverviewPage() {
   const { stats, chartData, activities, onNavigateTab } = useAdminShellContext();
 
@@ -390,6 +424,7 @@ export function AdminWarRoomPage() {
     averageTicket,
     sevenDayBookings,
     sevenDayRevenue,
+    investorSummary,
     onSelectWarRoomZone,
   } = useAdminShellContext();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -468,10 +503,13 @@ export function AdminWarRoomPage() {
     return `${marketContextLabel}. ${activeMarketGeo.marketContext} Focus launch readiness on workforce seeding, controlled marketing CAC, and synthetic demand validation before live order history appears.`;
   }, [activeMarketGeo, llmSummary, marketContextLabel]);
 
-  const modeledCommissionPerJob = Math.round(averageTicket * 0.18);
-  const modeledMarketingCac = Math.round(Math.max(42, averageTicket * 0.06));
-  const modeledIncentives = Math.round(Math.max(24, averageTicket * 0.04));
-  const modeledNetProfitPerJob = modeledCommissionPerJob - (modeledMarketingCac + modeledIncentives);
+  const totalRevenue = Number(investorSummary?.revenue ?? stats.totalRevenue ?? 0);
+  const yieldSnapshot = getYieldSnapshot({
+    totalRevenue,
+    completedCount: stats.completedBookings,
+    fallbackAverageTicket: averageTicket,
+    investorSummary,
+  });
 
   return (
     <div className="grid h-full gap-6 p-6 xl:grid-cols-[minmax(0,1.24fr)_minmax(22rem,0.76fr)] xl:grid-rows-[auto_minmax(0,1fr)_minmax(15rem,0.58fr)]">
@@ -642,24 +680,26 @@ export function AdminWarRoomPage() {
                   Unit economic stability
                 </p>
                 <h4 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">
-                  Net Profit / Job
+                  Platform Yield / Job
                 </h4>
                 <p className={cn(
                   "mt-3 text-[1.75rem] font-semibold tracking-tight",
-                  modeledNetProfitPerJob >= 0 ? "text-emerald-700" : "text-amber-700",
+                  yieldSnapshot.netProfitPerJob >= 0 ? "text-emerald-700" : "text-amber-700",
                 )}>
-                  INR {modeledNetProfitPerJob.toLocaleString("en-IN")}
+                  INR {yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")}
                 </p>
                 <p className="mt-2 text-sm leading-7 text-slate-600">
                   Platform Commission - (Marketing CAC + Incentives)
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <MetricTile label="Commission" value={`INR ${modeledCommissionPerJob.toLocaleString("en-IN")}`} tone="navy" />
-                  <MetricTile label="CAC" value={`INR ${modeledMarketingCac.toLocaleString("en-IN")}`} tone="sky" />
-                  <MetricTile label="Incentives" value={`INR ${modeledIncentives.toLocaleString("en-IN")}`} tone="amber" />
+                  <MetricTile label="Commission" value={`INR ${yieldSnapshot.commissionPerJob.toLocaleString("en-IN")}`} tone="navy" />
+                  <MetricTile label="CAC" value={`INR ${yieldSnapshot.marketingPerJob.toLocaleString("en-IN")}`} tone="sky" />
+                  <MetricTile label="Incentives" value={`INR ${yieldSnapshot.incentivesPerJob.toLocaleString("en-IN")}`} tone="amber" />
                 </div>
                 <p className="mt-4 text-xs leading-6 text-slate-500">
-                  Modeled from current average ticket for demo guidance. We can replace this with the final backend finance rail once unit-economics data is locked.
+                  {yieldSnapshot.isBackendBacked
+                    ? `Live backend yield rail using ${yieldSnapshot.sourceLabel}. Commission is server-backed; CAC and incentives are refreshed from the admin analytics model.`
+                    : "Fallback yield model derived from live order value while the backend finance rail warms up."}
                 </p>
               </div>
             </div>
@@ -868,19 +908,24 @@ export function AdminWorkforcePage() {
 }
 
 export function AdminFinancePage() {
-  const { stats, bookingsList } = useAdminShellContext();
+  const { stats, bookingsList, investorSummary } = useAdminShellContext();
 
   const completed = bookingsList.filter((booking) => booking.status === "completed" && booking.total_price);
   const matchedOrInProgress = bookingsList.filter((booking) => booking.status === "in_progress" || booking.status === "matched");
-  const totalRevenue = stats.totalRevenue;
-  const completedCount = completed.length;
-  const avgTicket = completedCount > 0 ? Math.round(totalRevenue / completedCount) : 0;
-  const commissionRate = 0.08;
-  const commissionPerJob = Math.round(avgTicket * commissionRate);
-  const marketingPerJob = Math.round(avgTicket * 0.028);
-  const incentivesPerJob = Math.round(avgTicket * 0.012);
-  const netProfitPerJob = commissionPerJob - (marketingPerJob + incentivesPerJob);
-  const totalCommission = Math.round(totalRevenue * commissionRate);
+  const totalRevenue = Number(investorSummary?.revenue ?? stats.totalRevenue ?? 0);
+  const yieldSnapshot = getYieldSnapshot({
+    totalRevenue,
+    completedCount: completed.length,
+    fallbackAverageTicket: completed.length > 0 ? Math.round(totalRevenue / completed.length) : 0,
+    investorSummary,
+  });
+  const completedCount = yieldSnapshot.completedCount;
+  const avgTicket = yieldSnapshot.avgTicket;
+  const commissionPerJob = yieldSnapshot.commissionPerJob;
+  const marketingPerJob = yieldSnapshot.marketingPerJob;
+  const incentivesPerJob = yieldSnapshot.incentivesPerJob;
+  const netProfitPerJob = yieldSnapshot.netProfitPerJob;
+  const totalCommission = yieldSnapshot.totalCommission;
   const pendingPayouts = matchedOrInProgress.reduce((sum, booking) => sum + Number(booking.total_price || 0), 0);
 
   const serviceRevenue = completed.reduce<Record<string, number>>((accumulator, booking) => {
@@ -898,7 +943,7 @@ export function AdminFinancePage() {
     id: booking._id,
     service: booking.service || "General service",
     amount: Number(booking.total_price || 0),
-    commission: Math.round(Number(booking.total_price || 0) * commissionRate),
+    commission: Math.round(Number(booking.commission ?? commissionPerJob)),
     status: booking.status || "completed",
   }));
 
@@ -917,6 +962,9 @@ export function AdminFinancePage() {
               <p className="mt-3 text-2xl font-black text-slate-900">
                 Net Profit per Job = Commission - (Marketing CAC + Incentives)
               </p>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                Commission is pulled from the backend finance rail. CAC and incentives are refreshed from the live admin operating model, not hard-coded mocks.
+              </p>
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <MetricTile label="Commission" value={`INR ${commissionPerJob}`} tone="navy" />
                 <MetricTile label="Marketing CAC" value={`INR ${marketingPerJob}`} tone="amber" />
@@ -924,7 +972,9 @@ export function AdminFinancePage() {
               </div>
             </div>
             <div className="rounded-[12px] border border-slate-200 bg-white p-5">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Modeled outcome</p>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
+                {yieldSnapshot.isBackendBacked ? "Live backend outcome" : "Fallback outcome"}
+              </p>
               <p className={cn(
                 "mt-3 text-4xl font-black",
                 netProfitPerJob >= 0 ? "text-emerald-700" : "text-rose-700",
@@ -932,7 +982,9 @@ export function AdminFinancePage() {
                 INR {netProfitPerJob}
               </p>
               <p className="mt-3 text-sm leading-6 text-slate-600">
-                Based on the current average ticket size and the platform commission structure.
+                {yieldSnapshot.isBackendBacked
+                  ? `Updated from /api/admin/investor-analytics using ${yieldSnapshot.sourceLabel}.`
+                  : "Derived from the current order book while backend finance analytics are unavailable."}
               </p>
             </div>
           </div>

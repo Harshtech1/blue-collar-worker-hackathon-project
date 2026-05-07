@@ -1,1 +1,1 @@
-export { AdminObservabilityPage as default } from "./AdminRoutePages";
+export { AdminObservabilityPage as default } from "./AdminMissionPages";

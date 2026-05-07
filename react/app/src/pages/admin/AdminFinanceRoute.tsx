@@ -1,1 +1,1 @@
-export { AdminFinancePage as default } from "./AdminRoutePages";
+export { AdminFinancePage as default } from "./AdminMissionPages";

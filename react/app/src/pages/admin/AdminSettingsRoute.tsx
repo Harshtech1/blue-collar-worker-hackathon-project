@@ -1,1 +1,1 @@
-export { AdminSettingsPage as default } from "./AdminRoutePages";
+export { AdminSettingsPage as default } from "./AdminMissionPages";

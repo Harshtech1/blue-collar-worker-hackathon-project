@@ -11,9 +11,36 @@ export interface AdminBooking {
   service?: string;
   customer?: string;
   total_price?: number | string;
+  commission?: number | string;
+  platform_fee?: number | string;
+  insurance_fee?: number | string;
+  worker_earning?: number | string;
   status?: "pending" | "matched" | "in_progress" | "completed";
   createdAt?: string | Date;
   date?: string | Date;
+}
+
+export interface AdminUnitEconomicsSummary {
+  avgTicket: number;
+  commissionPerJob: number;
+  marketingCacPerJob: number;
+  incentivesPerJob: number;
+  netProfitPerJob: number;
+  totalCommission: number;
+  source: string;
+}
+
+export interface AdminInvestorAnalyticsSummary {
+  totalBookings?: number;
+  completedJobs?: number;
+  completionRate?: number;
+  cancellationRate?: number;
+  churnRate?: number;
+  escalatedBookings?: number;
+  revenue?: number;
+  workerEarnings?: number;
+  platformCommission?: number;
+  unitEconomics?: AdminUnitEconomicsSummary;
 }
 
 export interface AdminDashboardStats {
@@ -75,6 +102,7 @@ export interface AdminShellContextValue {
   usersList: any[];
   workersList: any[];
   bookingsList: AdminBooking[];
+  investorSummary: AdminInvestorAnalyticsSummary | null;
   chartData: Array<{ name: string; bookings?: number; revenue?: number }>;
   activities: AdminActivityEntry[];
   verificationViewerLoadingId: string | null;

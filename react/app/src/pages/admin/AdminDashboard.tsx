@@ -39,6 +39,7 @@ import type {
   AdminActivityEntry,
   AdminBooking,
   AdminDashboardStats,
+  AdminInvestorAnalyticsSummary,
   AdminShellContextValue,
   AdminSystemHealthSnapshot,
 } from "./adminShellContext";
@@ -66,6 +67,37 @@ const demoBookings: AdminBooking[] = [
   { _id: "demo-booking-2", service: "Deep Home Cleaning", total_price: 1499, status: "in_progress", createdAt: new Date(Date.now() - 3600000).toISOString() },
   { _id: "demo-booking-3", service: "Electrical Inspection", total_price: 599, status: "pending", createdAt: new Date(Date.now() - 7200000).toISOString() },
 ];
+
+const buildInvestorSummaryFromBookings = (bookings: AdminBooking[]): AdminInvestorAnalyticsSummary => {
+  const completed = bookings.filter((booking) => booking.status === "completed" && booking.total_price);
+  const completedJobs = completed.length;
+  const revenue = completed.reduce((sum, booking) => sum + Number(booking.total_price ?? 0), 0);
+  const ledgerCommission = completed.reduce((sum, booking) => sum + Number(booking.commission ?? 0), 0);
+  const hasLedgerCommission = ledgerCommission > 0;
+  const platformCommission = hasLedgerCommission ? Math.round(ledgerCommission) : Math.round(revenue * 0.15);
+  const avgTicket = completedJobs > 0 ? Math.round(revenue / completedJobs) : 0;
+  const marketingCacPerJob = completedJobs > 0 ? Math.round((revenue * 0.028) / completedJobs) : 0;
+  const incentivesPerJob = completedJobs > 0 ? Math.round((revenue * 0.012) / completedJobs) : 0;
+  const commissionPerJob = completedJobs > 0 ? Math.round(platformCommission / completedJobs) : 0;
+  const netProfitPerJob = commissionPerJob - (marketingCacPerJob + incentivesPerJob);
+
+  return {
+    totalBookings: bookings.length,
+    completedJobs,
+    revenue,
+    platformCommission,
+    workerEarnings: Math.max(0, revenue - platformCommission),
+    unitEconomics: {
+      avgTicket,
+      commissionPerJob,
+      marketingCacPerJob,
+      incentivesPerJob,
+      netProfitPerJob,
+      totalCommission: platformCommission,
+      source: hasLedgerCommission ? "booking-ledger + live ops model" : "demo revenue + ops model",
+    },
+  };
+};
 
 const emptyStats: AdminDashboardStats = {
   totalUsers: 0,
@@ -116,6 +148,7 @@ export default function AdminDashboard() {
   const [usersList, setUsersList] = useState<any[]>([]);
   const [workersList, setWorkersList] = useState<any[]>([]);
   const [bookingsList, setBookingsList] = useState<AdminBooking[]>([]);
+  const [investorSummary, setInvestorSummary] = useState<AdminInvestorAnalyticsSummary | null>(null);
 
   const [verificationViewerOpen, setVerificationViewerOpen] = useState(false);
   const [verificationViewerUrl, setVerificationViewerUrl] = useState("");
@@ -156,6 +189,7 @@ export default function AdminDashboard() {
     setUsersList(demoUsers);
     setWorkersList(demoWorkers);
     setBookingsList(demoBookings);
+    setInvestorSummary(buildInvestorSummaryFromBookings(demoBookings));
     setChartData(last7Days);
     setActivities([
       { type: "booking", msg: "Deep Home Cleaning is in progress", time: new Date().toLocaleTimeString(), role: "Operations" },
@@ -205,23 +239,27 @@ export default function AdminDashboard() {
     const headers = { Authorization: `Bearer ${token}` } as HeadersInit;
 
     try {
-      const [usersRes, bookingsRes, workersRes] = await Promise.all([
+      const [usersRes, bookingsRes, workersRes, analyticsRes] = await Promise.all([
         fetch(`${API}/admin/customers`, { headers }),
         fetch(`${API}/admin/bookings`, { headers }),
         fetch(`${API}/admin/workers`, { headers }),
+        fetch(`${API}/admin/investor-analytics`, { headers }),
       ]);
 
       const usersData = await usersRes.json();
       const bookingsData = await bookingsRes.json();
       const workersData = await workersRes.json();
+      const analyticsData = await analyticsRes.json();
 
       const users = usersData.data || (Array.isArray(usersData) ? usersData : []);
       const bookings: AdminBooking[] = bookingsData.data || (Array.isArray(bookingsData) ? bookingsData : []);
       const workers = workersData.data || (Array.isArray(workersData) ? workersData : []);
+      const analyticsSummary = analyticsData?.data?.summary || null;
 
       setUsersList(users);
       setBookingsList(bookings);
       setWorkersList(workers);
+      setInvestorSummary(analyticsSummary || buildInvestorSummaryFromBookings(bookings));
 
       const completed = bookings.filter((booking) => booking.status === "completed");
       const active = bookings.filter(
@@ -569,6 +607,7 @@ export default function AdminDashboard() {
     usersList,
     workersList,
     bookingsList,
+    investorSummary,
     chartData,
     activities,
     verificationViewerLoadingId,
@@ -598,6 +637,7 @@ export default function AdminDashboard() {
     llmMode,
     llmSummary,
     loading,
+    investorSummary,
     pendingPayouts,
     routeZoneId,
     sevenDayBookings,
