@@ -26,9 +26,13 @@ export const useSocket = () => {
     const joinPrivateRoom = () => {
       const userId = user?.id || user?._id || localStorage.getItem('userId');
       const role = profile?.role || user?.role || 'customer';
+      const areaId = profile?.areaId || profile?.area_id || profile?.city || user?.city;
 
       if (userId) {
-        activeSocket.emit('join', { userId, role });
+        activeSocket.emit('join', { userId, role, areaId });
+        if (role === 'worker' && areaId) {
+          activeSocket.emit('join_area', { areaId });
+        }
         console.log(`Socket joined private room: ${userId} (${role})`);
       }
     };
@@ -46,10 +50,12 @@ export const useSocket = () => {
 
     activeSocket.on('connect', handleConnect);
     activeSocket.on('disconnect', handleDisconnect);
+    document.addEventListener('visibilitychange', joinPrivateRoom);
 
     return () => {
       activeSocket.off('connect', handleConnect);
       activeSocket.off('disconnect', handleDisconnect);
+      document.removeEventListener('visibilitychange', joinPrivateRoom);
     };
   }, [user?.id, user?._id, user?.role, profile?.role]);
 

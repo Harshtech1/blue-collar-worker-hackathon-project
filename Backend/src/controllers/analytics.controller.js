@@ -2,6 +2,7 @@ import { getDb } from "../config/db.js";
 import {
   buildFallbackPrediction,
   buildSyntheticHistory,
+  getSurgeMultiplier,
 } from "../utils/densityFramework.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -135,7 +136,10 @@ export const analyzeAreaDensity = async (req, res) => {
       history,
     };
 
-    const analyticsUrl = process.env.ANALYTICS_SERVICE_URL || "http://localhost:8000";
+    const configuredAnalyticsUrl = process.env.ANALYTICS_SERVICE_URL || "http://localhost:8000";
+    const analyticsUrl = /^https?:\/\//i.test(configuredAnalyticsUrl)
+      ? configuredAnalyticsUrl
+      : `http://${configuredAnalyticsUrl}`;
 
     try {
       const response = await fetch(`${analyticsUrl}/predict-density`, {
@@ -149,6 +153,7 @@ export const analyzeAreaDensity = async (req, res) => {
       }
 
       const prediction = await response.json();
+      const densityScore = Number(prediction.density_score || 0);
       return res.json({
         area: areaId,
         current_orders: currentOrders,
@@ -156,6 +161,7 @@ export const analyzeAreaDensity = async (req, res) => {
         emergency_orders: emergencyOrders,
         history_points: history.length,
         source: "random_forest_service",
+        price_multiplier: getSurgeMultiplier(densityScore),
         ...prediction,
       });
     } catch (serviceError) {

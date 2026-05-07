@@ -17,6 +17,13 @@ const toObjectId = (id) => {
 
 const asString = (value) => value?.toString?.() || value || '';
 const chatRoom = (bookingId) => `booking:${bookingId}`;
+const normalizeZoneId = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '') || 'unknown_zone';
+
+export const zoneRoom = (areaId) => `zone:${normalizeZoneId(areaId)}`;
 
 const serializeChatMessage = (message) => ({
   ...message,
@@ -73,7 +80,7 @@ export function initSocket(httpServer) {
   io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
-    socket.on('join', async ({ userId, role } = {}) => {
+    socket.on('join', async ({ userId, role, areaId } = {}) => {
       if (!userId) return;
 
       socket.join(userId);
@@ -93,15 +100,28 @@ export function initSocket(httpServer) {
           const db = getDb();
           const workerUserId = toObjectId(userId);
           if (workerUserId) {
+            const workerProfile = await db.collection('worker_profiles').findOne({ user: workerUserId });
+            const workerZone = normalizeZoneId(areaId || workerProfile?.areaId || workerProfile?.area_id || workerProfile?.city);
+            socket.join(zoneRoom(workerZone));
+            socket.data.areaId = workerZone;
+
             await db.collection('worker_profiles').updateOne(
               { user: workerUserId },
-              { $set: { lastSeen: new Date() } },
+              { $set: { lastSeen: new Date(), areaId: workerZone } },
             );
           }
         } catch (e) {
           console.error('Socket join worker update error:', e.message);
         }
       }
+    });
+
+    socket.on('join_area', ({ areaId } = {}) => {
+      if (!areaId) return;
+      const normalizedAreaId = normalizeZoneId(areaId);
+      socket.join(zoneRoom(normalizedAreaId));
+      socket.data.areaId = normalizedAreaId;
+      socket.emit('area_joined', { areaId: normalizedAreaId, room: zoneRoom(normalizedAreaId) });
     });
 
     socket.on('join_booking_chat', async ({ bookingId, userId } = {}) => {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useCallback, useEffect, useState, ReactNode } from 'react';
 import { API } from '@/lib/constants';
 
 interface Profile {
@@ -14,6 +14,8 @@ interface Profile {
   role?: 'customer' | 'worker' | 'thekedar' | 'admin';
   preferred_language?: string;
   city?: string;
+  areaId?: string;
+  area_id?: string;
   state?: string;
   pincode?: string;
   address?: string;
@@ -46,50 +48,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     console.log('[AuthContext] Using API URL:', API);
   }, []);
 
-  useEffect(() => {
+  const revalidateSession = useCallback(async (options?: { initial?: boolean }) => {
     const token = localStorage.getItem('token');
     if (!token) {
-      setLoading(false);
+      if (options?.initial) setLoading(false);
       return;
     }
 
-    (async () => {
-      try {
-        const res = await fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
-        if (res.ok) {
-          const { user } = await res.json();
-          setUser({ ...user, id: user.id || user._id });
-          // Normalize ID handling
-          const userId = user.id || user._id;
-          if (userId) localStorage.setItem('userId', userId);
-          setProfile({
-            id: userId,
-            full_name: user.full_name,
-            email: user.email,
-            avatar_url: user.avatar_url,
-            role: user.role,
-            // Preserve other fields
-            phone: user.phone,
-            socials: user.socials,
-            preferred_language: user.preferred_language,
-            city: user.city,
-            state: user.state,
-            pincode: user.pincode,
-            is_verified: user.is_verified
-          });
-        } else if (res.status === 401 || res.status === 403) {
-          // Only clear token on auth errors
-          localStorage.removeItem('token');
-          localStorage.removeItem('userId');
-        }
-      } catch (err) {
-        console.error("Auth check failed:", err);
-        // Do not remove token on network errors
-      } finally {
-        setLoading(false);
+    try {
+      const res = await fetch(`${API}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      });
+      if (res.ok) {
+        const { user } = await res.json();
+        setUser({ ...user, id: user.id || user._id });
+        // Normalize ID handling
+        const userId = user.id || user._id;
+        if (userId) localStorage.setItem('userId', userId);
+        setProfile({
+          id: userId,
+          full_name: user.full_name,
+          email: user.email,
+          avatar_url: user.avatar_url,
+          role: user.role,
+          // Preserve other fields
+          phone: user.phone,
+          socials: user.socials,
+          preferred_language: user.preferred_language,
+          city: user.city,
+          state: user.state,
+          pincode: user.pincode,
+          is_verified: user.is_verified
+        });
+      } else if (res.status === 401 || res.status === 403) {
+        // Only clear token on auth errors
+        localStorage.removeItem('token');
+        localStorage.removeItem('userId');
+        setUser(null);
+        setProfile(null);
       }
-    })();
+    } catch (err) {
+      console.error("Auth check failed:", err);
+      // Do not remove token on network errors
+    } finally {
+      if (options?.initial) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    revalidateSession({ initial: true });
+  }, [revalidateSession]);
+
+  useEffect(() => {
+    const recoverSession = () => {
+      if (!document.hidden) {
+        revalidateSession();
+      }
+    };
+
+    window.addEventListener('online', recoverSession);
+    window.addEventListener('focus', recoverSession);
+    document.addEventListener('visibilitychange', recoverSession);
+
+    return () => {
+      window.removeEventListener('online', recoverSession);
+      window.removeEventListener('focus', recoverSession);
+      document.removeEventListener('visibilitychange', recoverSession);
+    };
+  }, [revalidateSession]);
 
   const signUp = async (email: string, password: string, fullName: string, phone: string, role: string) => {
     try {

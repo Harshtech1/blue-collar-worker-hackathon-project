@@ -1,7 +1,7 @@
 import { Booking } from '../models/Booking.js';
 import { WorkerProfile } from '../models/WorkerProfile.js';
 import { ObjectId } from 'mongodb';
-import { getIO } from '../socket.js';
+import { getIO, zoneRoom } from '../socket.js';
 import { createNotification } from './notification.controller.js';
 import { sendEmail } from '../utils/emailService.js';
 import { getDb } from '../config/db.js';
@@ -40,6 +40,260 @@ const buildPopulatePipeline = () => ([
   { $unwind: { path: '$worker_profile', preserveNullAndEmptyArrays: true } },
 ]);
 
+const ACTIVE_BOOKING_STATUSES = ['accepted', 'arriving', 'otp_verify', 'in_progress'];
+const WATERFALL_DELAY_MS = Number(process.env.BOOKING_WATERFALL_DELAY_MS || 15000);
+const WATERFALL_MAX_CANDIDATES = 5;
+const DEFAULT_ETA_BUFFER_MINUTES = Number(process.env.WORKER_PREP_BUFFER_MINUTES || 15);
+const activeWaterfallTimers = new Map();
+
+const toNumber = (value, fallback = 0) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+};
+
+const haversineKm = ([lng1, lat1], [lng2, lat2]) => {
+  const toRad = (degree) => (degree * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const getWorkerCoordinates = (worker) => {
+  const coordinates = worker?.location?.coordinates;
+  if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+
+  const lng = toNumber(coordinates[0], null);
+  const lat = toNumber(coordinates[1], null);
+  if (lng === null || lat === null) return null;
+
+  return [lng, lat];
+};
+
+const clamp01 = (value) => Math.min(1, Math.max(0, value));
+
+const normalizeText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+const getSkillFitScore = (worker, serviceName) => {
+  const serviceTokens = normalizeText(serviceName).split(' ').filter((token) => token.length >= 3);
+  if (serviceTokens.length === 0) return 0.65;
+
+  const workerText = normalizeText([
+    worker.bio,
+    worker.profession,
+    worker.title,
+    ...(Array.isArray(worker.skills) ? worker.skills : []),
+    ...(Array.isArray(worker.serviceNames) ? worker.serviceNames : []),
+  ].join(' '));
+
+  const matchingTokens = serviceTokens.filter((token) => workerText.includes(token)).length;
+  if (matchingTokens > 0) return clamp01(0.65 + (matchingTokens / serviceTokens.length) * 0.35);
+
+  if (Array.isArray(worker.serviceCategories) && worker.serviceCategories.length > 0) return 0.7;
+  return 0.55;
+};
+
+const getReliabilityScore = (worker) => {
+  const completedJobs = toNumber(worker.completed_jobs_count ?? worker.completedJobs ?? worker.jobsCompleted, 0);
+  const cancellationRate = clamp01(toNumber(worker.cancellation_rate ?? worker.cancellationRate, 0.08));
+  const punctualityRate = clamp01(toNumber(worker.punctuality_rate ?? worker.punctualityRate, 0.78));
+  const experienceBoost = Math.min(0.2, completedJobs / 250);
+
+  return clamp01((0.45 * punctualityRate) + (0.35 * (1 - cancellationRate)) + 0.1 + experienceBoost);
+};
+
+const buildMatchCandidates = (workers, customerCoordinates, serviceName) => workers
+  .map((worker) => {
+    const workerCoordinates = getWorkerCoordinates(worker);
+    const distanceKm = workerCoordinates && customerCoordinates
+      ? haversineKm(customerCoordinates, workerCoordinates)
+      : 10;
+    const ratingScore = clamp01(toNumber(worker.rating, 4) / 5);
+    const distanceScore = clamp01(1 - (distanceKm / 10));
+    const acceptanceRate = clamp01(toNumber(worker.acceptance_rate ?? worker.acceptanceRate, 0.75));
+    const skillFit = getSkillFitScore(worker, serviceName);
+    const reliabilityScore = getReliabilityScore(worker);
+    const matchScore = (0.3 * ratingScore)
+      + (0.25 * distanceScore)
+      + (0.2 * acceptanceRate)
+      + (0.1 * skillFit)
+      + (0.1 * reliabilityScore);
+
+    return {
+      workerProfileId: asString(worker._id),
+      workerUserId: asString(worker.user || worker.user_id),
+      ratingScore: Number(ratingScore.toFixed(3)),
+      distanceScore: Number(distanceScore.toFixed(3)),
+      acceptanceRate: Number(acceptanceRate.toFixed(3)),
+      skillFit: Number(skillFit.toFixed(3)),
+      reliabilityScore: Number(reliabilityScore.toFixed(3)),
+      distanceKm: Number(distanceKm.toFixed(2)),
+      matchScore: Number(matchScore.toFixed(3)),
+    };
+  })
+  .filter((candidate) => candidate.workerUserId)
+  .sort((a, b) => b.matchScore - a.matchScore)
+  .slice(0, WATERFALL_MAX_CANDIDATES);
+
+const buildBookingPayload = (booking, candidate = null) => ({
+  bookingId: asString(booking._id),
+  serviceName: booking.serviceName || 'Service Request',
+  customerName: booking.customerName || 'A customer',
+  customerPhone: booking.customerPhone || '',
+  address: booking.address || 'Address not specified',
+  city: booking.city || '',
+  amount: toNumber(booking.amount, 0),
+  priceMultiplier: toNumber(booking.priceMultiplier, 1),
+  materialCost: toNumber(booking.materialCost, 0),
+  convenienceFee: toNumber(booking.convenienceFee, 0),
+  etaBuffer: toNumber(booking.etaBuffer, DEFAULT_ETA_BUFFER_MINUTES),
+  scheduled_at: booking.scheduled_at || null,
+  customer_user_id: booking.customer_user_id || null,
+  bookingType: booking.bookingType || 'instant',
+  description: booking.description || null,
+  matchScore: candidate?.matchScore,
+  distanceKm: candidate?.distanceKm,
+  skillFit: candidate?.skillFit,
+  reliabilityScore: candidate?.reliabilityScore,
+  assignedWorkerIndex: Number.isInteger(booking.waterfall_cursor) ? booking.waterfall_cursor : undefined,
+  assignmentMode: booking.assignment_mode || 'waterfall',
+});
+
+const getSuggestedReofferMultiplier = (booking) => {
+  const currentMultiplier = toNumber(booking.priceMultiplier, 1);
+  return Number(Math.min(1.5, Math.max(1.05, currentMultiplier + 0.1)).toFixed(2));
+};
+
+const clearWaterfallTimer = (bookingId) => {
+  const key = asString(bookingId);
+  const timer = activeWaterfallTimers.get(key);
+  if (timer) clearTimeout(timer);
+  activeWaterfallTimers.delete(key);
+};
+
+const dispatchWaterfallCandidate = async (bookingId, startIndex = 0) => {
+  const bookingObjectId = toObjectId(bookingId);
+  if (!bookingObjectId) return;
+
+  const booking = await Booking.collection().findOne({ _id: bookingObjectId });
+  if (!booking || booking.status !== 'pending') {
+    clearWaterfallTimer(bookingId);
+    return;
+  }
+
+  const candidates = Array.isArray(booking.match_candidates) ? booking.match_candidates : [];
+  const declined = new Set((booking.declined_worker_ids || []).map(asString));
+  const nextIndex = candidates.findIndex((candidate, index) => (
+    index >= startIndex && candidate.workerUserId && !declined.has(asString(candidate.workerUserId))
+  ));
+
+  if (nextIndex === -1) {
+    clearWaterfallTimer(bookingId);
+    const io = getIO();
+    const suggestedPriceMultiplier = getSuggestedReofferMultiplier(booking);
+    const escalation = {
+      status: 'admin_review_required',
+      reason: candidates.length > 0
+        ? 'All ranked workers rejected or timed out.'
+        : 'No ranked workers were available in the selected zone.',
+      rejectedWorkerCount: Math.max(candidates.length, declined.size),
+      suggestedPriceMultiplier,
+      escalatedAt: new Date(),
+    };
+
+    await Booking.collection().updateOne(
+      { _id: bookingObjectId, status: 'pending' },
+      {
+        $set: {
+          assignment_status: 'admin_review_required',
+          fulfillmentEscalation: escalation,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (io && booking.customer_user_id) {
+      io.to(asString(booking.customer_user_id)).emit('no_workers_available', {
+        bookingId: asString(booking._id),
+        message: 'No ranked workers accepted yet. RAHI operations has been alerted.',
+        suggestedPriceMultiplier,
+      });
+    }
+
+    if (io) {
+      io.to('admin').emit('booking_needs_review', {
+        bookingId: asString(booking._id),
+        serviceName: booking.serviceName,
+        areaId: booking.areaId,
+        ...escalation,
+      });
+    }
+    return;
+  }
+
+  const candidate = candidates[nextIndex];
+  const workerUserId = asString(candidate.workerUserId);
+  const payload = buildBookingPayload(booking, candidate);
+  const now = new Date();
+  const previousWorkerId = asString(booking.last_pinged_worker_id);
+
+  await Booking.collection().updateOne(
+    { _id: bookingObjectId, status: 'pending' },
+    {
+      $set: {
+        waterfall_cursor: nextIndex,
+        last_pinged_worker_id: workerUserId,
+        last_pinged_at: now,
+        updatedAt: now,
+      },
+    },
+  );
+
+  const io = getIO();
+  if (io) {
+    if (previousWorkerId && previousWorkerId !== workerUserId) {
+      io.to(previousWorkerId).emit('booking_ping_expired', {
+        bookingId: asString(booking._id),
+        message: 'This booking moved to the next ranked worker.',
+      });
+      io.to(previousWorkerId).emit('CLEAR_JOB', { bookingId: asString(booking._id) });
+    }
+
+    io.to(workerUserId).emit('new_booking', payload);
+    io.to(workerUserId).emit('NEW_JOB', payload);
+  }
+
+  await createNotification(
+    workerUserId,
+    'new_booking',
+    'New booking request',
+    `${booking.customerName || 'A customer'} needs ${booking.serviceName || 'a service'} at ${booking.address || 'their location'}. Amount: Rs ${toNumber(booking.amount, 0)}`,
+    asString(booking._id),
+  );
+
+  clearWaterfallTimer(bookingId);
+  const timer = setTimeout(async () => {
+    try {
+      const latest = await Booking.collection().findOne({ _id: bookingObjectId });
+      if (!latest || latest.status !== 'pending') {
+        clearWaterfallTimer(bookingId);
+        return;
+      }
+
+      if (asString(latest.last_pinged_worker_id) === workerUserId) {
+        await dispatchWaterfallCandidate(bookingId, nextIndex + 1);
+      }
+    } catch (error) {
+      console.error('Waterfall timer error:', error.message);
+    }
+  }, WATERFALL_DELAY_MS);
+
+  activeWaterfallTimers.set(asString(bookingId), timer);
+};
+
 const emitBookingUpdate = (bookingId, booking) => {
   const io = getIO();
   if (!io || !booking) return;
@@ -49,6 +303,13 @@ const emitBookingUpdate = (bookingId, booking) => {
     status: booking.status,
     updatedAt: booking.updatedAt,
     paymentStatus: booking.paymentStatus,
+    amount: toNumber(booking.amount, 0),
+    priceMultiplier: toNumber(booking.priceMultiplier, 1),
+    materialCost: toNumber(booking.materialCost, 0),
+    convenienceFee: toNumber(booking.convenienceFee, 0),
+    etaBuffer: toNumber(booking.etaBuffer, DEFAULT_ETA_BUFFER_MINUTES),
+    assignment_status: booking.assignment_status,
+    fulfillmentEscalation: booking.fulfillmentEscalation,
     workerName: booking.workerName,
     workerPhone: booking.workerPhone,
     worker_user_id: booking.worker_user_id,
@@ -82,6 +343,12 @@ export const createBooking = async (req, res) => {
       description,
       customer_lat,
       customer_lng,
+      areaId,
+      area_id,
+      priceMultiplier,
+      materialCost,
+      convenienceFee,
+      etaBuffer,
     } = req.body;
 
     if (!serviceName || !customer_user_id) {
@@ -112,6 +379,14 @@ export const createBooking = async (req, res) => {
       description: description || null,
       customer_lat: customer_lat || null,
       customer_lng: customer_lng || null,
+      location: customer_lng && customer_lat
+        ? { type: 'Point', coordinates: [parseFloat(customer_lng), parseFloat(customer_lat)] }
+        : null,
+      areaId: areaId || area_id || city || null,
+      priceMultiplier: toNumber(priceMultiplier, 1),
+      materialCost: toNumber(materialCost, 0),
+      convenienceFee: toNumber(convenienceFee, Math.round(normalizedAmount * 0.1)),
+      etaBuffer: toNumber(etaBuffer, DEFAULT_ETA_BUFFER_MINUTES),
       declined_worker_ids: [],
       otp_start: Math.floor(1000 + Math.random() * 9000).toString(),
       otp_finish: Math.floor(1000 + Math.random() * 9000).toString(),
@@ -124,13 +399,15 @@ export const createBooking = async (req, res) => {
     const insertedId = result.insertedId;
 
     let availableWorkers = [];
+    let customerCoordinates = null;
+    const bookingAreaId = doc.areaId;
     if (!worker_user_id && !workerId && customer_lng && customer_lat) {
       try {
-        const coordinates = [parseFloat(customer_lng), parseFloat(customer_lat)];
+        customerCoordinates = [parseFloat(customer_lng), parseFloat(customer_lat)];
         availableWorkers = await WorkerProfile.collection().find({
           location: {
             $near: {
-              $geometry: { type: 'Point', coordinates },
+              $geometry: { type: 'Point', coordinates: customerCoordinates },
               $maxDistance: 10000,
             },
           },
@@ -142,32 +419,56 @@ export const createBooking = async (req, res) => {
       }
     }
 
-    const bookingPayload = {
-      bookingId: insertedId.toString(),
-      serviceName: serviceName || 'Service Request',
-      customerName: customerName || 'A customer',
-      customerPhone: customerPhone || '',
-      address: address || 'Address not specified',
-      city: city || '',
-      amount: normalizedAmount,
-      scheduled_at: scheduled_at || null,
-      customer_user_id: customer_user_id || null,
-      bookingType: bookingType || 'instant',
-      description: description || null,
-    };
+    if (!worker_user_id && !workerId && availableWorkers.length === 0 && bookingAreaId) {
+      availableWorkers = await WorkerProfile.collection()
+        .find({
+          status: 'online',
+          isAvailable: true,
+          areaId: String(bookingAreaId).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''),
+        })
+        .limit(10)
+        .toArray();
+    }
+
+    if (!worker_user_id && !workerId && availableWorkers.length === 0) {
+      availableWorkers = await WorkerProfile.collection()
+        .find({ status: 'online', isAvailable: true })
+        .limit(10)
+        .toArray();
+    }
 
     const io = getIO();
-    if (io) {
-      if (worker_user_id || workerId) {
-        io.to((worker_user_id || workerId).toString()).emit('new_booking', bookingPayload);
-      } else if (availableWorkers.length > 0) {
-        availableWorkers.forEach((worker) => {
-          io.to(worker.user.toString()).emit('new_booking', bookingPayload);
-        });
-      } else {
-        const allOnlineWorkers = await WorkerProfile.collection().find({ status: 'online', isAvailable: true }).toArray();
-        allOnlineWorkers.forEach((worker) => {
-          io.to(worker.user.toString()).emit('new_booking', bookingPayload);
+    if (worker_user_id || workerId) {
+      const targetWorkerId = (worker_user_id || workerId).toString();
+      if (io) {
+        const directPayload = buildBookingPayload({ ...doc, _id: insertedId, assignment_mode: 'direct' });
+        io.to(targetWorkerId).emit('new_booking', directPayload);
+        io.to(targetWorkerId).emit('NEW_JOB', directPayload);
+      }
+    } else {
+      const matchCandidates = buildMatchCandidates(availableWorkers, customerCoordinates, serviceName);
+      await Booking.collection().updateOne(
+        { _id: insertedId },
+        {
+          $set: {
+            match_candidates: matchCandidates,
+            assignment_mode: 'waterfall',
+            waterfall_cursor: -1,
+            updatedAt: new Date(),
+          },
+        },
+      );
+
+      dispatchWaterfallCandidate(insertedId).catch((error) => {
+        console.error('Waterfall dispatch failed:', error.message);
+      });
+
+      if (io && matchCandidates.length === 0 && bookingAreaId) {
+        io.to(zoneRoom(bookingAreaId)).emit('zone_booking_unmatched', {
+          bookingId: insertedId.toString(),
+          areaId: bookingAreaId,
+          serviceName,
+          message: 'A booking was created in this zone but no ranked workers were available.',
         });
       }
     }
@@ -182,22 +483,17 @@ export const createBooking = async (req, res) => {
       );
     }
 
-    const targetWorkers = worker_user_id || workerId
-      ? [{ user: worker_user_id || workerId }]
-      : availableWorkers.length > 0
-        ? availableWorkers
-        : await WorkerProfile.collection().find({ status: 'online', isAvailable: true }).toArray();
-
-    for (const worker of targetWorkers) {
-      const workerUserId = worker.user?.toString?.() || worker.user || worker;
-      if (!workerUserId || workerUserId === customer_user_id) continue;
-      await createNotification(
-        workerUserId,
-        'new_booking',
-        'New booking request',
-        `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: Rs ${normalizedAmount}`,
-        insertedId.toString(),
-      );
+    if (worker_user_id || workerId) {
+      const workerUserId = asString(worker_user_id || workerId);
+      if (workerUserId && workerUserId !== customer_user_id) {
+        await createNotification(
+          workerUserId,
+          'new_booking',
+          'New booking request',
+          `${customerName || 'A customer'} needs ${serviceName || 'a service'} at ${address || 'their location'}. Amount: Rs ${normalizedAmount}`,
+          insertedId.toString(),
+        );
+      }
     }
 
     try {
@@ -279,6 +575,7 @@ export const respondToBooking = async (req, res) => {
         });
       }
 
+      clearWaterfallTimer(id);
       emitBookingUpdate(id, updatedBooking);
 
       if (updatedBooking.customer_user_id) {
@@ -331,6 +628,10 @@ export const respondToBooking = async (req, res) => {
       `You skipped ${updatedBooking.customerName || 'a customer'}'s ${updatedBooking.serviceName || 'service'} request.`,
       id,
     );
+
+    dispatchWaterfallCandidate(id, (updatedBooking.waterfall_cursor ?? -1) + 1).catch((error) => {
+      console.error('Waterfall decline dispatch failed:', error.message);
+    });
 
     return res.json({ success: true, booking: updatedBooking });
   } catch (err) {
@@ -399,6 +700,34 @@ export const getByWorkerId = async (req, res) => {
     res.json(results);
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+export const getActiveBooking = async (req, res) => {
+  try {
+    const userId = asString(req.user?._id);
+    if (!userId) return res.status(401).json({ message: 'Not authorized' });
+
+    const query = {
+      status: { $in: ACTIVE_BOOKING_STATUSES },
+      $or: [
+        { customer_user_id: userId },
+        { worker_user_id: userId },
+      ],
+    };
+
+    const activeBooking = await Booking.collection().aggregate([
+      { $match: query },
+      ...buildPopulatePipeline(),
+      { $sort: { updatedAt: -1, createdAt: -1 } },
+      { $limit: 1 },
+    ]).next();
+
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.json({ activeBooking: activeBooking || null });
+  } catch (err) {
+    console.error('getActiveBooking Error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 };

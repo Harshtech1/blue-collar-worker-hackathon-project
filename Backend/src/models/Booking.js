@@ -18,6 +18,12 @@ const COLLECTION = 'bookings';
  * workCompletedAt: Date
  * cancelReason: String
  * paymentStatus: Enum ["pending", "paid", "failed", "refunded"]
+ * match_candidates: ranked worker candidates with MatchScore metadata
+ * waterfall_cursor: Number // currently pinged worker index
+ * priceMultiplier: Number // density-based pricing snapshot
+ * materialCost: Number // optional parts/material estimate
+ * convenienceFee: Number // RAHI safety/platform fee
+ * etaBuffer: Number // worker preparation buffer in minutes
  * createdAt / updatedAt: Date
  */
 

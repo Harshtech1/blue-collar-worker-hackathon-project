@@ -29,6 +29,11 @@ interface IncomingBooking {
   amount: number;
   scheduled_at: string | null;
   customer_user_id: string | null;
+  matchScore?: number;
+  distanceKm?: number;
+  skillFit?: number;
+  reliabilityScore?: number;
+  assignedWorkerIndex?: number;
 }
 
 type ModalState = 'idle' | 'incoming' | 'taken';
@@ -86,6 +91,25 @@ export function IncomingBookingModal({ isOnline }: { isOnline: boolean }) {
 
     socket.on('booking_taken', handleBookingTaken);
     return () => { socket.off('booking_taken', handleBookingTaken); };
+  }, [socket, booking]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handlePingExpired = (data: { bookingId: string; message?: string }) => {
+      if (!booking || booking.bookingId !== data.bookingId) return;
+      toast.info(data.message || 'This job moved to the next ranked worker.');
+      setModalState('idle');
+      setBooking(null);
+      setLoading(null);
+    };
+
+    socket.on('booking_ping_expired', handlePingExpired);
+    socket.on('CLEAR_JOB', handlePingExpired);
+    return () => {
+      socket.off('booking_ping_expired', handlePingExpired);
+      socket.off('CLEAR_JOB', handlePingExpired);
+    };
   }, [socket, booking]);
 
   // ── Accept / Decline handler ───────────────────────────────────────────────
@@ -225,6 +249,19 @@ export function IncomingBookingModal({ isOnline }: { isOnline: boolean }) {
 
                     {/* Details */}
                     <div className="space-y-3 bg-slate-50 rounded-2xl p-4">
+                      {booking.matchScore !== undefined && (
+                        <div className="rounded-2xl border border-indigo-100 bg-white p-3">
+                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">
+                            Ranked Match #{(booking.assignedWorkerIndex ?? 0) + 1}
+                          </p>
+                          <div className="mt-2 grid grid-cols-3 gap-2 text-xs font-bold text-slate-600">
+                            <span>Score {(booking.matchScore * 100).toFixed(0)}%</span>
+                            {booking.distanceKm !== undefined && <span>{booking.distanceKm} km</span>}
+                            {booking.reliabilityScore !== undefined && <span>Trust {(booking.reliabilityScore * 100).toFixed(0)}%</span>}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-3 text-slate-700">
                         <div className="h-8 w-8 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
                           <Phone className="h-4 w-4 text-blue-600" />

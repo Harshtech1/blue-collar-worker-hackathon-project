@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -24,8 +24,33 @@ import ChatDrawer from '@/components/ChatDrawer';
 
 
 const API_URL = API;
+const WORKER_PREP_TIME_MINUTES = 15;
 
 type BookingStatus = 'pending' | 'accepted' | 'matched' | 'arriving' | 'otp_verify' | 'in_progress' | 'completed';
+
+const normalizeBookingStatus = (rawStatus?: string): BookingStatus => {
+  if (rawStatus === 'accepted' || rawStatus === 'matched') return 'matched';
+  if (rawStatus === 'pending') return 'pending';
+  if (rawStatus === 'arriving') return 'arriving';
+  if (rawStatus === 'otp_verify') return 'otp_verify';
+  if (rawStatus === 'in_progress') return 'in_progress';
+  if (rawStatus === 'completed') return 'completed';
+  return 'matched';
+};
+
+const bookingStatusLabel = (value: BookingStatus) => {
+  const labels: Record<BookingStatus, string> = {
+    pending: 'finding workers',
+    accepted: 'assigned',
+    matched: 'assigned',
+    arriving: 'worker on the way',
+    otp_verify: 'OTP verification',
+    in_progress: 'work in progress',
+    completed: 'completed',
+  };
+
+  return labels[value];
+};
 
 const statusSteps = [
   { id: 'matched', labelEn: 'Assigned', labelHi: 'चुना गया', icon: User, color: 'text-blue-500' },
@@ -56,6 +81,8 @@ export default function Tracking() {
   const [radius, setRadius] = useState(10000); // Initial 10km search
 
   const [loading, setLoading] = useState(true);
+  const [recoveringState, setRecoveringState] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [bookingData, setBookingData] = useState<any>(null);
   const [workerDetails, setWorkerDetails] = useState<WorkerDetails>({
     name: 'Worker',
@@ -65,6 +92,11 @@ export default function Tracking() {
   });
   const [isChatOpen, setIsChatOpen] = useState(false);
   const currentUserId = localStorage.getItem('userId') || '';
+  const statusRef = useRef<BookingStatus>('pending');
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   // Map state
   const userLocation = useMemo<[number, number]>(() => {
@@ -76,57 +108,95 @@ export default function Tracking() {
   }, [appLocation, bookingData]);
   
   const [workerLocation, setWorkerLocation] = useState<[number, number] | null>(null);
+  const etaBufferMinutes = Number(bookingData?.etaBuffer ?? WORKER_PREP_TIME_MINUTES) || WORKER_PREP_TIME_MINUTES;
+  const trackingPriceBreakdown = useMemo(() => {
+    const total = Number(bookingData?.amount ?? location.state?.amount ?? 300) || 0;
+    const multiplier = Number(bookingData?.priceMultiplier ?? 1) || 1;
+    const material = Number(bookingData?.materialCost ?? 0) || 0;
+    const convenience = Number(bookingData?.convenienceFee ?? Math.max(20, Math.round(total * 0.1))) || 0;
+    const base = Math.max(0, Math.round((total - material - convenience) / Math.max(multiplier, 0.01)));
+    const densityAdjustment = Math.round((base * multiplier) - base);
+
+    return { total, multiplier, material, convenience, base, densityAdjustment };
+  }, [bookingData, location.state]);
 
   // ── Fetch booking data from API ────────────────────────────────────────
-  useEffect(() => {
-    const fetchBooking = async () => {
-      if (!bookingId) return;
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`${API_URL}/bookings/${bookingId}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+  const fetchBooking = useCallback(async (options?: { recovery?: boolean; quiet?: boolean }) => {
+    if (!bookingId) return;
+
+    const isRecovery = Boolean(options?.recovery);
+
+    try {
+      if (isRecovery) setRecoveringState(true);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/bookings/${bookingId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+      });
+
+      if (!res.ok) {
+        throw new Error(`Booking sync failed with ${res.status}`);
+      }
+
+      const data = await res.json();
+      const nextStatus = normalizeBookingStatus(data.status);
+      const statusChanged = statusRef.current !== nextStatus;
+
+      setBookingData(data);
+      setStatus(nextStatus);
+      setLastSyncedAt(new Date());
+
+      // Set worker info from booking data
+      if (data.workerName) {
+        const name = data.workerName;
+        setWorkerDetails({
+          name,
+          phone: data.workerPhone || '',
+          initials: name.split(' ').map((w: string) => w.charAt(0).toUpperCase()).join('').slice(0, 2),
+          specialty: data.serviceName || 'Service Professional',
         });
-        if (res.ok) {
-          const data = await res.json();
-          setBookingData(data);
+      }
 
-          // Set worker info from booking data
-          if (data.workerName) {
-            const name = data.workerName;
-            setWorkerDetails({
-              name,
-              phone: data.workerPhone || '',
-              initials: name.split(' ').map((w: string) => w.charAt(0).toUpperCase()).join('').slice(0, 2),
-              specialty: data.serviceName || 'Service Professional',
-            });
-          }
+      if (isRecovery && statusChanged && !options?.quiet) {
+        toast.info(`Booking restored: ${bookingStatusLabel(nextStatus)}.`);
+      }
+    } catch (err) {
+      console.error('Failed to sync booking:', err);
+      if (isRecovery && !options?.quiet) {
+        toast.error('Could not refresh booking status. Please check your connection.');
+      }
+    } finally {
+      setLoading(false);
+      setRecoveringState(false);
+    }
+  }, [bookingId]);
 
-          // Map booking status to tracking status
-          if (data.status === 'accepted' || data.status === 'matched') {
-            setStatus('matched');
-          } else if (data.status === 'pending') {
-            setStatus('pending');
-          } else if (data.status === 'arriving') {
-            setStatus('arriving');
-          } else if (data.status === 'otp_verify') {
-            setStatus('otp_verify');
-          } else if (data.status === 'in_progress') {
-            setStatus('in_progress');
-          } else if (data.status === 'completed') {
-            setStatus('completed');
-          } else {
-            setStatus('matched');
-          }
-        }
-      } catch (err) {
-        console.error('Failed to fetch booking:', err);
-      } finally {
-        setLoading(false);
+  useEffect(() => {
+    fetchBooking();
+  }, [fetchBooking]);
+
+  useEffect(() => {
+    if (!bookingId) return;
+
+    const recoverQuietly = () => {
+      if (!document.hidden) {
+        fetchBooking({ recovery: true, quiet: true });
       }
     };
 
-    fetchBooking();
-  }, [bookingId]);
+    const recoverWithNotice = () => fetchBooking({ recovery: true });
+    const handleVisibilityChange = () => recoverQuietly();
+
+    window.addEventListener('online', recoverWithNotice);
+    window.addEventListener('focus', recoverQuietly);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('online', recoverWithNotice);
+      window.removeEventListener('focus', recoverQuietly);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [bookingId, fetchBooking]);
 
   // ── Listen for real-time booking_updated events ────────────────────────
   useEffect(() => {
@@ -134,6 +204,8 @@ export default function Tracking() {
 
     const handleBookingUpdated = (data: any) => {
       if (data.bookingId !== bookingId) return;
+      setBookingData((previous: any) => ({ ...previous, ...data }));
+      setLastSyncedAt(new Date());
 
       if (data.status === 'accepted' || data.status === 'matched') {
         setStatus('matched');
@@ -181,6 +253,8 @@ export default function Tracking() {
     };
 
     socket.on('booking_updated', handleBookingUpdated);
+    const handleSocketReconnect = () => fetchBooking({ recovery: true, quiet: true });
+    socket.on('connect', handleSocketReconnect);
 
     // ── Listen for booking cancellation ────────────────────────────────────
     const handleBookingCancelled = (data: any) => {
@@ -210,8 +284,8 @@ export default function Tracking() {
         Math.pow(data.lng - userLocation[1], 2)
       ) * 111;
       
-      // Assume 20km/h average speed in city
-      const estimatedMinutes = Math.round((distance / 20) * 60);
+      // ETA = travel time + worker preparation buffer for tools and local navigation.
+      const estimatedMinutes = Math.round((distance / 20) * 60) + etaBufferMinutes;
       setEta(Math.max(2, estimatedMinutes)); // Minimum 2 mins
     };
 
@@ -219,10 +293,11 @@ export default function Tracking() {
 
     return () => { 
       socket.off('booking_updated', handleBookingUpdated); 
+      socket.off('connect', handleSocketReconnect);
       socket.off('booking_cancelled', handleBookingCancelled);
       socket.off('worker_location_update', handleWorkerLocationUpdate);
     };
-  }, [socket, bookingId, bookingData, language, userLocation]);
+  }, [socket, bookingId, bookingData, language, userLocation, fetchBooking, etaBufferMinutes]);
 
 
 
@@ -286,6 +361,9 @@ export default function Tracking() {
   const progress = ((currentStepIndex + 1) / statusSteps.length) * 100;
   const chatCurrentUserId = bookingData?.customer_user_id || bookingData?.customerUserId || currentUserId;
   const chatWorkerUserId = bookingData?.worker_user_id || bookingData?.workerUserId || '';
+  const lastSyncLabel = lastSyncedAt
+    ? lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'syncing';
 
   if (loading) {
     return (
@@ -318,6 +396,10 @@ export default function Tracking() {
                   ? 'हम आपके आस-पास सबसे अच्छे कारीगर ढूंढ रहे हैं।'
                   : 'We are matching you with the best nearby professionals.'}
               </p>
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-4 py-2 text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
+                {recoveringState ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                Live state synced at {lastSyncLabel}
+              </div>
             </div>
 
             {/* NEW: Nearby Workers Map */}
@@ -394,6 +476,10 @@ export default function Tracking() {
               <div>
                 <h1 className="text-xl font-bold text-slate-800">Tracking Your Service</h1>
                 <p className="text-sm text-slate-400 font-bold uppercase tracking-wider">Booking ID: #{bookingId?.slice(0, 8) || 'N/A'}</p>
+                <p className="mt-1 flex items-center gap-2 text-xs font-bold text-emerald-600">
+                  {recoveringState ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  State recovered from server at {lastSyncLabel}
+                </p>
               </div>
             </div>
             <div className="flex gap-2">
@@ -422,7 +508,7 @@ export default function Tracking() {
                   <div className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-lg border border-white/50 flex items-center gap-3">
                     <div className="h-3 w-3 rounded-full bg-primary animate-pulse" />
                     <span className="text-sm font-bold text-slate-800">
-                      {status === 'arriving' ? `Arriving in ${eta} min` : status === 'matched' ? 'Worker Assigned' : 'Worker Arrived'}
+                      {status === 'arriving' ? `Arriving in ${eta} min incl. ${etaBufferMinutes} min prep` : status === 'matched' ? 'Worker Assigned' : 'Worker Arrived'}
                     </span>
                   </div>
                 </div>
@@ -590,7 +676,7 @@ export default function Tracking() {
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Fee</p>
-                      <h4 className="text-3xl font-black">₹{bookingData?.amount || location.state?.amount || 300}</h4>
+                      <h4 className="text-3xl font-black">Rs {trackingPriceBreakdown.total}</h4>
                     </div>
                     <Badge className="bg-white/10 text-white border-none py-1">UPI Pay</Badge>
                   </div>
@@ -602,6 +688,20 @@ export default function Tracking() {
                     <div className="flex justify-between text-xs font-bold">
                       <span className="text-slate-400">Worker</span>
                       <span>{workerDetails.name}</span>
+                    </div>
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-slate-400">Base fee</span>
+                      <span>Rs {trackingPriceBreakdown.base}</span>
+                    </div>
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-slate-400">Density multiplier</span>
+                      <span className={trackingPriceBreakdown.densityAdjustment > 0 ? 'text-amber-300' : 'text-emerald-300'}>
+                        {trackingPriceBreakdown.multiplier.toFixed(2)}x ({trackingPriceBreakdown.densityAdjustment >= 0 ? '+' : '-'} Rs {Math.abs(trackingPriceBreakdown.densityAdjustment)})
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-xs font-bold">
+                      <span className="text-slate-400">Parts + RAHI fee</span>
+                      <span>Rs {trackingPriceBreakdown.material + trackingPriceBreakdown.convenience}</span>
                     </div>
                   </div>
                 </CardContent>

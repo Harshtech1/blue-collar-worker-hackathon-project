@@ -2,14 +2,15 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { LocationProvider } from "@/contexts/LocationContext";
 import { NotificationProvider } from "@/contexts/NotificationContext";
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import { LoadingSpinner } from '@/components/ui/loading-spinner';
 import PWAInstallPrompt from '@/components/PWAInstallPrompt';
+import { API } from "@/lib/constants";
 
 // Core pages
 import Index from "./pages/Index";
@@ -159,6 +160,48 @@ const RoleBasedHome = () => {
   }
 };
 
+const ActiveBookingRecovery = () => {
+  const { user, loading, profile } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    if (loading || !user || profile?.role === 'admin') return;
+
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
+    const recoverActiveBooking = async () => {
+      try {
+        const response = await fetch(`${API}/bookings/active`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        });
+
+        if (!response.ok) return;
+
+        const { activeBooking } = await response.json();
+        const activeBookingId = activeBooking?._id || activeBooking?.bookingId;
+        if (!activeBookingId) return;
+
+        const safeToRedirect = !location.pathname.startsWith('/admin-portal-2026')
+          && !location.pathname.startsWith('/payment')
+          && !location.pathname.startsWith('/tracking/');
+
+        if (safeToRedirect) {
+          navigate(`/tracking/${activeBookingId}`, { replace: true });
+        }
+      } catch (error) {
+        console.warn('[ActiveBookingRecovery] Could not restore active booking:', error);
+      }
+    };
+
+    recoverActiveBooking();
+  }, [loading, user, profile?.role, location.pathname, navigate]);
+
+  return null;
+};
+
 const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
@@ -171,6 +214,7 @@ const App = () => {
                 <Sonner />
                 <BrowserRouter>
                   <PWAInstallPrompt />
+                  <ActiveBookingRecovery />
                   <Routes>
                     <Route path="/" element={<RoleBasedHome />} />
 

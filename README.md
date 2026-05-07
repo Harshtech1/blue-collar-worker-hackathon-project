@@ -169,6 +169,14 @@ VITE_API_URL=http://localhost:5000/api
 VITE_BACKEND_API_URL=http://localhost:5000
 ```
 
+Cloud connector values used by the current Vercel/Render setup:
+
+```env
+VITE_API_URL=https://blue-collar-worker-hackathon-project.onrender.com/api
+VITE_BACKEND_API_URL=https://blue-collar-worker-hackathon-project.onrender.com
+ANALYTICS_SERVICE_URL=<Render analytics service private hostport or http://localhost:8000 locally>
+```
+
 Never commit real `.env` files. They are intentionally ignored.
 
 ### 3. Install Backend Dependencies

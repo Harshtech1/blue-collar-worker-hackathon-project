@@ -54,6 +54,11 @@ export const buildSyntheticHistory = ({ currentOrders, currentWorkers, emergency
   });
 };
 
+export const getSurgeMultiplier = (densityScore) => {
+  const rawMultiplier = 1 + (0.25 * (Number(densityScore || 0) - 1.2));
+  return Number(Math.min(1.5, Math.max(0.85, rawMultiplier)).toFixed(2));
+};
+
 export const buildFallbackPrediction = ({ areaId, currentOrders, currentWorkers }) => {
   const predictedDemand = Math.max(0, currentOrders);
   const densityScore = currentWorkers > 0 ? predictedDemand / currentWorkers : predictedDemand;
@@ -63,6 +68,7 @@ export const buildFallbackPrediction = ({ areaId, currentOrders, currentWorkers 
     area_id: areaId,
     predicted_demand: Number(predictedDemand.toFixed(2)),
     density_score: Number(densityScore.toFixed(2)),
+    price_multiplier: getSurgeMultiplier(densityScore),
     confidence_score: 0.6,
     generated_at: new Date().toISOString(),
     source: "node_fallback",

@@ -14,6 +14,7 @@ import {
 import {
   buildFallbackPrediction,
   getDensityStrategy,
+  getSurgeMultiplier,
 } from '../src/utils/densityFramework.js';
 import {
   isConfiguredAdminEmail,
@@ -89,6 +90,13 @@ test('density fallback still produces a usable allocation when analytics service
   assert.equal(prediction.density_score, 2);
   assert.equal(prediction.allocation_strategy, 'salaried_core');
   assert.equal(prediction.source, 'node_fallback');
+  assert.equal(prediction.price_multiplier, 1.2);
+});
+
+test('density surge multiplier is clamped for discounts and peak demand', () => {
+  assert.equal(getSurgeMultiplier(0.1), 0.85);
+  assert.equal(getSurgeMultiplier(1.2), 1);
+  assert.equal(getSurgeMultiplier(4), 1.5);
 });
 
 test('admin auth supports primary and secondary admin emails', () => {

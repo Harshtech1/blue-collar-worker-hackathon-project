@@ -36,6 +36,7 @@ class DensityResponse(BaseModel):
     area_id: str
     predicted_demand: float
     density_score: float
+    price_multiplier: float
     allocation_strategy: Literal["salaried_core", "hybrid", "freelancer_pool"]
     salaried_ratio: float
     freelancer_ratio: float
@@ -77,6 +78,11 @@ def _allocation_from_density(density: float) -> tuple[str, float, float, str]:
         0.85,
         "Low density. Keep fixed salary burn low and rely mostly on verified freelancers.",
     )
+
+
+def _price_multiplier_from_density(density: float) -> float:
+    raw_multiplier = 1 + (0.25 * (density - 1.2))
+    return round(max(0.85, min(1.5, raw_multiplier)), 2)
 
 
 @app.get("/health")
@@ -126,6 +132,7 @@ def predict_density(payload: DensityRequest):
             area_id=payload.area_id,
             predicted_demand=round(predicted_demand, 2),
             density_score=round(density_score, 2),
+            price_multiplier=_price_multiplier_from_density(density_score),
             allocation_strategy=strategy,
             salaried_ratio=salaried_ratio,
             freelancer_ratio=freelancer_ratio,

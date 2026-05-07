@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -35,6 +35,46 @@ export default function PaymentPage() {
   const [success, setSuccess] = useState(false);
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [walletBalance, setWalletBalance] = useState(1240);
+  const [bookingDetails, setBookingDetails] = useState<any>(null);
+
+  useEffect(() => {
+    if (!bookingId) return;
+
+    const fetchBookingDetails = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${API}/bookings/${bookingId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          cache: 'no-store',
+        });
+        if (res.ok) setBookingDetails(await res.json());
+      } catch (err) {
+        console.warn('Could not load live booking pricing:', err);
+      }
+    };
+
+    fetchBookingDetails();
+  }, [bookingId]);
+
+  const priceBreakdown = useMemo(() => {
+    const payable = Number(bookingDetails?.amount ?? amount) || 0;
+    const multiplier = Number(bookingDetails?.priceMultiplier ?? 1) || 1;
+    const material = Number(bookingDetails?.materialCost ?? 0) || 0;
+    const convenience = Number(bookingDetails?.convenienceFee ?? Math.max(20, Math.round(payable * 0.1))) || 0;
+    const base = Math.max(0, Math.round((payable - material - convenience) / Math.max(multiplier, 0.01)));
+    const densityAdjustment = Math.round((base * multiplier) - base);
+
+    return {
+      payable,
+      multiplier,
+      material,
+      convenience,
+      base,
+      densityAdjustment,
+      serviceName: bookingDetails?.serviceName || 'RAHI Service',
+      bookingCode: bookingId ? `RAHI-${bookingId.slice(-6).toUpperCase()}` : 'RAHI-2241',
+    };
+  }, [amount, bookingDetails, bookingId]);
 
 
   // PRIORITY 5 FIX: Real API call — creates payment record + updates booking in MongoDB.
@@ -92,8 +132,8 @@ export default function PaymentPage() {
           </h1>
           <p className="text-xl text-slate-500 max-w-md mb-12">
             {type === 'payment' 
-              ? `Your payment of ₹${amount} has been confirmed. A professional is assigned to your service.`
-              : `₹${amount} will be credited to your bank account within 30 minutes.`
+              ? `Your payment of Rs ${priceBreakdown.payable} has been confirmed. A professional is assigned to your service.`
+              : `Rs ${priceBreakdown.payable} will be credited to your bank account within 30 minutes.`
             }
           </p>
           <Button onClick={() => navigate('/')} size="lg" className="rounded-2xl h-16 px-12 text-lg font-bold">
@@ -176,8 +216,8 @@ export default function PaymentPage() {
                               <Receipt className="h-8 w-8" />
                            </div>
                            <div className="flex-1">
-                              <h4 className="font-bold text-lg">Booking #RAHI-2241</h4>
-                              <p className="text-sm text-slate-500">AC Power Jet Service</p>
+                              <h4 className="font-bold text-lg">Booking #{priceBreakdown.bookingCode}</h4>
+                              <p className="text-sm text-slate-500">{priceBreakdown.serviceName}</p>
                            </div>
                            <Badge variant="outline" className="text-slate-400 font-bold">PENDING</Badge>
                         </div>
@@ -185,15 +225,25 @@ export default function PaymentPage() {
                         <div className="space-y-3 pt-6 border-t border-slate-50">
                            <div className="flex justify-between text-slate-500 font-medium">
                               <span>Service Base Charge</span>
-                              <span className="text-slate-900">₹{parseInt(amount) - 20}</span>
+                              <span className="text-slate-900">Rs {priceBreakdown.base}</span>
                            </div>
                            <div className="flex justify-between text-slate-500 font-medium">
-                              <span>Safety & Insurance</span>
-                              <span className="text-slate-900">₹20</span>
+                              <span>Material / Part Cost</span>
+                              <span className="text-slate-900">Rs {priceBreakdown.material}</span>
+                           </div>
+                           <div className="flex justify-between text-slate-500 font-medium">
+                              <span>Density Multiplier ({priceBreakdown.multiplier.toFixed(2)}x)</span>
+                              <span className={priceBreakdown.densityAdjustment >= 0 ? 'text-amber-600' : 'text-emerald-600'}>
+                                {priceBreakdown.densityAdjustment >= 0 ? '+' : '-'} Rs {Math.abs(priceBreakdown.densityAdjustment)}
+                              </span>
+                           </div>
+                           <div className="flex justify-between text-slate-500 font-medium">
+                              <span>RAHI Convenience & Safety Fee</span>
+                              <span className="text-slate-900">Rs {priceBreakdown.convenience}</span>
                            </div>
                            <div className="flex justify-between pt-4 text-xl font-black text-slate-900">
                               <span>Payable Amount</span>
-                              <span className="text-primary">₹{amount}</span>
+                              <span className="text-primary">Rs {priceBreakdown.payable}</span>
                            </div>
                         </div>
                      </div>
@@ -271,7 +321,7 @@ export default function PaymentPage() {
                          </>
                        ) : (
                          <>
-                           {type === 'payment' ? `PAY ₹${amount} NOW` : 'CONFIRM WITHDRAWAL'}
+                           {type === 'payment' ? `PAY Rs ${priceBreakdown.payable} NOW` : 'CONFIRM WITHDRAWAL'}
                            <ArrowRight className="ml-2 h-6 w-6 transition-transform group-hover:translate-x-2" />
                          </>
                        )}

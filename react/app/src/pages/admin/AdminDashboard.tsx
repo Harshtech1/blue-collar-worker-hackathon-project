@@ -55,9 +55,9 @@ const demoUsers = [
 ];
 
 const demoWorkers = [
-  { _id: "demo-worker-1", name: "Ramesh Kumar", profession: "Plumbing Specialist", phone: "+91 91234 56780", status: "verified", isAvailable: true, createdAt: new Date().toISOString() },
-  { _id: "demo-worker-2", name: "Sunita Devi", profession: "Home Cleaning Pro", phone: "+91 92345 67890", status: "verified", isAvailable: true, createdAt: new Date(Date.now() - 172800000).toISOString() },
-  { _id: "demo-worker-3", name: "Imran Khan", profession: "Electrician", phone: "+91 93456 78901", status: "pending", isAvailable: false, createdAt: new Date(Date.now() - 259200000).toISOString() },
+  { _id: "demo-worker-1", name: "Ramesh Kumar", profession: "Plumbing Specialist", phone: "+91 91234 56780", status: "verified", isAvailable: true, logisticsScore: 91, acceptanceRate: 88, reliabilityScore: 93, completedJobs: 142, createdAt: new Date().toISOString() },
+  { _id: "demo-worker-2", name: "Sunita Devi", profession: "Home Cleaning Pro", phone: "+91 92345 67890", status: "verified", isAvailable: true, logisticsScore: 86, acceptanceRate: 82, reliabilityScore: 89, completedJobs: 118, createdAt: new Date(Date.now() - 172800000).toISOString() },
+  { _id: "demo-worker-3", name: "Imran Khan", profession: "Electrician", phone: "+91 93456 78901", status: "pending", isAvailable: false, logisticsScore: 67, acceptanceRate: 61, reliabilityScore: 72, completedJobs: 36, createdAt: new Date(Date.now() - 259200000).toISOString() },
 ];
 
 const demoBookings: Booking[] = [
@@ -568,6 +568,26 @@ export default function AdminDashboard() {
                 { key: 'name', label: 'Name' },
                 { key: 'profession', label: 'Profession' },
                 { key: 'phone', label: 'Phone' },
+                { key: 'logisticsScore', label: 'Logistics MatchScore', render: (val, row) => {
+                  const score = Number(val ?? 0);
+                  const color = score >= 85 ? 'bg-emerald-500' : score >= 70 ? 'bg-amber-500' : 'bg-rose-500';
+                  return (
+                    <div className="min-w-[160px]">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <span className="text-xs font-black text-slate-900">{score || 'N/A'}%</span>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                          {row?.completedJobs ?? 0} jobs
+                        </span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
+                      </div>
+                      <div className="mt-1 text-[10px] font-semibold text-slate-400">
+                        Accept {row?.acceptanceRate ?? 0}% · Reliable {row?.reliabilityScore ?? 0}%
+                      </div>
+                    </div>
+                  );
+                } },
                 { key: 'status', label: 'Status', render: (val) => <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${val === 'verified' ? 'text-green-600 bg-green-50' : 'text-orange-600 bg-orange-50'}`}>{val}</span> },
                 { key: 'isAvailable', label: 'Availability', render: (val) => <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${val ? 'text-green-600 bg-green-50' : 'text-rose-600 bg-rose-50'}`}>{val ? 'Available' : 'Busy'}</span> },
               ]}

@@ -45,7 +45,8 @@ const WorkerDashboard = () => {
   const navigate = useNavigate();
   const { isOnline } = useOutletContext<{ isOnline: boolean }>();
   const { user, profile } = useAuth();
-  const { activeJobs, pendingJobs, allJobs, updateJobStatus, startJob, completeJob } = useJobRequests();
+  const { socket } = useSocket();
+  const { activeJobs, pendingJobs, allJobs, updateJobStatus, startJob, completeJob, expirePendingJob, refreshJobs } = useJobRequests();
 
   const [notifications, setNotifications] = useState<any[]>([]);
   const [reminders, setReminders] = useState<any[]>([]);
@@ -68,6 +69,28 @@ const WorkerDashboard = () => {
       fetchDashboardData();
     }
   }, [user, profile, isOnline]);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleWaterfallExpiry = (data: { bookingId?: string; message?: string }) => {
+      if (data.bookingId) expirePendingJob(data.bookingId);
+      toast.info(data.message || 'This booking moved to the next ranked worker.');
+      refreshJobs();
+    };
+
+    socket.on('booking_ping_expired', handleWaterfallExpiry);
+    socket.on('CLEAR_JOB', handleWaterfallExpiry);
+    socket.on('JOB_EXPIRED', handleWaterfallExpiry);
+    socket.on('WATERFALL_TIMEOUT', handleWaterfallExpiry);
+
+    return () => {
+      socket.off('booking_ping_expired', handleWaterfallExpiry);
+      socket.off('CLEAR_JOB', handleWaterfallExpiry);
+      socket.off('JOB_EXPIRED', handleWaterfallExpiry);
+      socket.off('WATERFALL_TIMEOUT', handleWaterfallExpiry);
+    };
+  }, [socket, expirePendingJob, refreshJobs]);
 
   const fetchDashboardData = async () => {
     if (!user) return;

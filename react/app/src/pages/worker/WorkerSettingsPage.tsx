@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_ROOT as API_BASE } from '@/lib/constants';
+import { compressImageForUpload } from '@/lib/upload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -187,7 +188,7 @@ const WorkerSettingsPage = () => {
       // API_BASE is now imported from constants.ts
       
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', await compressImageForUpload(file));
 
       const uploadRes = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
@@ -813,7 +814,7 @@ const WorkerSettingsPage = () => {
                               ? 'https://blue-collar-worker-hackathon-project.onrender.com'
                               : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
                             const fd = new FormData();
-                            fd.append('file', aadhaarFile);
+                            fd.append('file', await compressImageForUpload(aadhaarFile));
                             fd.append('type', 'aadhaar');
                             const res = await fetch(`${API_BASE}/api/worker/profile/aadhaar`, {
                               method: 'POST',

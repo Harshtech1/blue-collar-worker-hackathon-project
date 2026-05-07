@@ -264,6 +264,11 @@ export function useJobRequests() {
     }
   };
 
+  const expirePendingJob = (jobId: string) => {
+    setPendingJobs((prev) => prev.filter((job) => job.id !== jobId));
+    setAllJobs((prev) => prev.filter((job) => job.id !== jobId));
+  };
+
   return {
     pendingJobs,
     activeJobs,
@@ -274,6 +279,7 @@ export function useJobRequests() {
     updateJobStatus,
     startJob,
     completeJob,
+    expirePendingJob,
     refreshJobs: fetchJobs,
   };
 }

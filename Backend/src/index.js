@@ -18,6 +18,7 @@ import notificationRoutes from "./routes/notification.routes.js";
 import thekedarRoutes from "./routes/thekedar.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import analyticsRoutes from "./routes/analytics.routes.js";
+import { getInvestorAnalytics } from "./controllers/admin.analytics.js";
 import { protect, authorize } from "./middleware/auth.js";
 import {
   isConfiguredAdminEmail,
@@ -155,10 +156,32 @@ connectDB()
           { $sort: { createdAt: -1 } },
         ]).toArray();
 
-        const mappedWorkers = workers.map((worker) => ({
-          ...worker,
-          status: worker.verificationStatus?.aadhaar === "verified" ? "verified" : "pending",
-        }));
+        const mappedWorkers = workers.map((worker) => {
+          const clamp01 = (value) => Math.min(1, Math.max(0, Number(value) || 0));
+          const ratingScore = clamp01((Number(worker.rating) || 4.2) / 5);
+          const acceptanceRate = clamp01(worker.acceptance_rate ?? worker.acceptanceRate ?? 0.75);
+          const punctualityRate = clamp01(worker.punctuality_rate ?? worker.punctualityRate ?? 0.78);
+          const cancellationRate = clamp01(worker.cancellation_rate ?? worker.cancellationRate ?? 0.08);
+          const completedJobs = Number(worker.completed_jobs_count ?? worker.completedJobs ?? worker.jobsCompleted ?? 0);
+          const reliabilityScore = clamp01(
+            (0.45 * punctualityRate)
+              + (0.35 * (1 - cancellationRate))
+              + 0.1
+              + Math.min(0.2, completedJobs / 250),
+          );
+          const logisticsScore = Math.round(
+            ((0.4 * ratingScore) + (0.3 * acceptanceRate) + (0.3 * reliabilityScore)) * 100,
+          );
+
+          return {
+            ...worker,
+            status: worker.verificationStatus?.aadhaar === "verified" ? "verified" : "pending",
+            logisticsScore,
+            acceptanceRate: Math.round(acceptanceRate * 100),
+            reliabilityScore: Math.round(reliabilityScore * 100),
+            completedJobs,
+          };
+        });
 
         res.json({ data: mappedWorkers });
       } catch (err) {
@@ -209,6 +232,8 @@ connectDB()
         res.status(500).json({ message: "Server error" });
       }
     });
+
+    app.get("/api/admin/investor-analytics", protect, authorize("admin"), getInvestorAnalytics);
 
     app.post("/api/auth/admin-login", async (req, res) => {
       const { email, password } = req.body;

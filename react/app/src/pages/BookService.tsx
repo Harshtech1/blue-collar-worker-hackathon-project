@@ -60,6 +60,14 @@ const fallbackServices = [
 
 type BookingType = 'instant' | 'scheduled' | 'emergency';
 
+const clamp = (min: number, max: number, value: number) => Math.min(max, Math.max(min, value));
+
+const getLocalDensityMultiplier = (type: BookingType, hasPreciseLocation: boolean) => {
+  const inferredDensity = type === 'emergency' ? 2.2 : type === 'instant' ? 1.35 : 0.95;
+  const locationAdjustment = hasPreciseLocation ? 0 : 0.04;
+  return Number(clamp(0.85, 1.5, 1 + (0.25 * (inferredDensity - 1.2)) + locationAdjustment).toFixed(2));
+};
+
 export default function BookService() {
   const { serviceId } = useParams();
   const navigate = useNavigate();
@@ -153,10 +161,22 @@ export default function BookService() {
 
   const priceDetails = useMemo(() => {
     const base = selectedItem ? selectedItem.price : 299;
-    const fee = Math.round(base * 0.1);
-    const total = base + fee;
-    return { base, fee, total, workerShare: Math.round(base * 0.8) };
-  }, [selectedItem]);
+    const material = 0;
+    const densityMultiplier = getLocalDensityMultiplier(bookingType, Boolean(selectedLocation || appLocation));
+    const surgeOrDiscount = Math.round((base * densityMultiplier) - base);
+    const fee = Math.max(20, Math.round(base * 0.1));
+    const total = base + material + surgeOrDiscount + fee;
+
+    return {
+      base,
+      material,
+      fee,
+      total,
+      workerShare: Math.round(base * 0.8),
+      densityMultiplier,
+      surgeOrDiscount,
+    };
+  }, [appLocation, bookingType, selectedItem, selectedLocation]);
 
   useEffect(() => {
     if (!user) {
@@ -225,6 +245,10 @@ export default function BookService() {
         address: address,
         city: profile?.city || '',
         amount: priceDetails.total,
+        materialCost: priceDetails.material,
+        convenienceFee: priceDetails.fee,
+        priceMultiplier: priceDetails.densityMultiplier,
+        areaId: profile?.areaId || profile?.area_id || profile?.city || appLocation?.city || '',
         bookingType: bookingType,
         description: description || selectedItem?.name || '',
         customer_lat: selectedLocation?.lat || appLocation?.lat,
@@ -588,12 +612,25 @@ export default function BookService() {
                           <span>Base Service Fee</span>
                           <span className="font-bold">₹{priceDetails.base}</span>
                         </div>
+                        <div className="flex justify-between text-sm text-slate-500">
+                          <span>Material / Part Costs</span>
+                          <span className="font-bold">â‚¹{priceDetails.material}</span>
+                        </div>
+                        <div className={cn(
+                          "flex justify-between text-sm",
+                          priceDetails.surgeOrDiscount > 0 ? "text-amber-600" : priceDetails.surgeOrDiscount < 0 ? "text-emerald-600" : "text-slate-500"
+                        )}>
+                          <span>Density Surge / Discount ({priceDetails.densityMultiplier.toFixed(2)}x)</span>
+                          <span className="font-bold">
+                            {priceDetails.surgeOrDiscount >= 0 ? '+' : '-'}â‚¹{Math.abs(priceDetails.surgeOrDiscount)}
+                          </span>
+                        </div>
                         <div className="flex justify-between text-sm text-emerald-600">
                           <span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" /> Worker Earning</span>
                           <span className="font-bold">₹{priceDetails.workerShare}</span>
                         </div>
                         <div className="flex justify-between text-sm text-slate-500">
-                          <span>Safety & Insurance</span>
+                          <span>RAHI Convenience + Safety Fee</span>
                           <span className="font-bold">₹{priceDetails.fee}</span>
                         </div>
                         <div className="pt-3 border-t border-slate-200 flex justify-between">
@@ -632,7 +669,7 @@ export default function BookService() {
                 <p className="text-slate-500 font-medium text-center max-w-sm">
                   {language === 'hi'
                     ? 'आपकी बुकिंग सभी उपलब्ध कारीगरों को भेजी गई है। कोई जल्दी ही स्वीकार करेगा!'
-                    : 'Your booking has been sent to all available workers. Someone will accept it shortly!'}
+                    : 'RAHI is pinging the best ranked nearby workers one by one. This protects quality and avoids worker spam.'}
                 </p>
 
                 {workerDeclined && (

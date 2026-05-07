@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Camera, MapPin, Phone, Mail, Calendar, IndianRupee, ShieldCheck, Clock, Edit3, Upload } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/db';
-import { uploadFile } from '@/lib/upload';
+import { compressImageForUpload, uploadFile } from '@/lib/upload';
 import { z } from 'zod';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -54,6 +54,10 @@ const WorkerProfilePage = () => {
 
   const [loading, setLoading] = useState(true);
   const [uploadingDoc, setUploadingDoc] = useState(false);
+  const ratingScore = Math.min(1, Math.max(0, Number(workerProfile?.rating || 4.2) / 5));
+  const acceptanceRate = Math.min(1, Math.max(0, Number(workerProfile?.acceptance_rate ?? workerProfile?.acceptanceRate ?? 0.75)));
+  const reliabilityScore = Math.min(1, Math.max(0, Number(workerProfile?.reliabilityScore ?? workerProfile?.reliability_score ?? 0.82)));
+  const logisticsScore = Math.round(((0.4 * ratingScore) + (0.3 * acceptanceRate) + (0.3 * reliabilityScore)) * 100);
 
   useEffect(() => {
     if (user && profile?.role === 'worker') {
@@ -139,7 +143,7 @@ const WorkerProfilePage = () => {
       const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
 
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', await compressImageForUpload(file));
       formData.append('type', targetField);
 
       const res = await fetch(`${API_BASE}/api/worker/documents`, {
@@ -235,6 +239,42 @@ const WorkerProfilePage = () => {
                   <span className="text-sm text-gray-600">Jobs Completed</span>
                   <span className="font-medium">128</span>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="mt-6 border-indigo-100 bg-indigo-50/40">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ShieldCheck className="h-5 w-5 text-indigo-600" />
+                Logistics MatchScore
+              </CardTitle>
+              <CardDescription>
+                Used by RAHI's waterfall engine to rank nearby workers.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4 flex items-end justify-between">
+                <div>
+                  <p className="text-4xl font-black text-slate-900">{logisticsScore}%</p>
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                    Rating + acceptance + reliability
+                  </p>
+                </div>
+                <Badge className={logisticsScore >= 85 ? 'bg-emerald-600' : logisticsScore >= 70 ? 'bg-amber-600' : 'bg-rose-600'}>
+                  {logisticsScore >= 85 ? 'Priority Ping' : logisticsScore >= 70 ? 'Standard Ping' : 'Improve Score'}
+                </Badge>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-white">
+                <div
+                  className="h-full rounded-full bg-indigo-600"
+                  style={{ width: `${Math.min(100, Math.max(0, logisticsScore))}%` }}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs font-bold text-slate-600">
+                <span>Rating {Math.round(ratingScore * 100)}%</span>
+                <span>Accept {Math.round(acceptanceRate * 100)}%</span>
+                <span>Reliable {Math.round(reliabilityScore * 100)}%</span>
               </div>
             </CardContent>
           </Card>

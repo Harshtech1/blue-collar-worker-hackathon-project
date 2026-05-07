@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   ArrowUpRight,
+  BarChart3,
   BriefcaseBusiness,
   CheckCircle2,
   Clock3,
@@ -15,6 +16,17 @@ import {
   TrendingUp,
   UsersRound,
 } from "lucide-react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { API } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +39,7 @@ interface DensityAnalysis {
   history_points: number;
   predicted_demand: number;
   density_score: number;
+  price_multiplier?: number;
   allocation_strategy: "salaried_core" | "hybrid" | "freelancer_pool";
   salaried_ratio: number;
   freelancer_ratio: number;
@@ -46,6 +59,37 @@ interface SectorSignal {
   confidence: number;
   emergency: number;
   spend: number;
+}
+
+interface InvestorAnalytics {
+  summary: {
+    totalBookings: number;
+    completionRate: number;
+    cancellationRate: number;
+    churnRate: number;
+    escalatedBookings: number;
+    revenue: number;
+    workerEarnings: number;
+    platformCommission: number;
+  };
+  demandForecast: Array<{ label: string; actual: number; predicted: number }>;
+  cancellationReasons: Array<{ reason: string; count: number }>;
+  assignmentEscalations: Array<{
+    bookingId: string;
+    serviceName: string;
+    areaId: string;
+    suggestedPriceMultiplier: number;
+    reason: string;
+    escalatedAt?: string;
+  }>;
+  workerQuality: Array<{
+    id: string;
+    name: string;
+    service: string;
+    qualityScore: number;
+    rating: number;
+    completedJobs: number;
+  }>;
 }
 
 const sectorSignals: SectorSignal[] = [
@@ -97,6 +141,54 @@ const sectorSignals: SectorSignal[] = [
 
 const forecastBars = [42, 58, 46, 74, 68, 91, 83, 96, 88, 105, 112, 98];
 
+const demoInvestorAnalytics: InvestorAnalytics = {
+  summary: {
+    totalBookings: 128,
+    completionRate: 82.4,
+    cancellationRate: 6.8,
+    churnRate: 31.5,
+    escalatedBookings: 2,
+    revenue: 184500,
+    workerEarnings: 156825,
+    platformCommission: 27675,
+  },
+  demandForecast: [
+    { label: "Mon", actual: 13, predicted: 15 },
+    { label: "Tue", actual: 16, predicted: 18 },
+    { label: "Wed", actual: 11, predicted: 14 },
+    { label: "Thu", actual: 19, predicted: 22 },
+    { label: "Fri", actual: 24, predicted: 27 },
+    { label: "Sat", actual: 31, predicted: 35 },
+    { label: "Sun", actual: 28, predicted: 32 },
+  ],
+  cancellationReasons: [
+    { reason: "Worker too far", count: 4 },
+    { reason: "Customer changed mind", count: 3 },
+    { reason: "Parts unavailable", count: 2 },
+  ],
+  assignmentEscalations: [
+    {
+      bookingId: "demo-escalation-1",
+      serviceName: "Emergency Plumbing",
+      areaId: "agra-cantt",
+      suggestedPriceMultiplier: 1.25,
+      reason: "All ranked workers rejected or timed out.",
+    },
+    {
+      bookingId: "demo-escalation-2",
+      serviceName: "Deep Cleaning",
+      areaId: "sector-15-noida",
+      suggestedPriceMultiplier: 1.15,
+      reason: "No ranked workers were available in the selected zone.",
+    },
+  ],
+  workerQuality: [
+    { id: "w1", name: "Ramesh Kumar", service: "Plumbing", qualityScore: 92, rating: 4.8, completedJobs: 86 },
+    { id: "w2", name: "Sunita Devi", service: "Cleaning", qualityScore: 89, rating: 4.7, completedJobs: 73 },
+    { id: "w3", name: "Imran Khan", service: "Electrical", qualityScore: 84, rating: 4.5, completedJobs: 58 },
+  ],
+};
+
 const strategyLabel = {
   salaried_core: "Salaried Core",
   hybrid: "Hybrid Fleet",
@@ -108,6 +200,10 @@ const strategyTone = {
   hybrid: "border-amber-200 bg-amber-50 text-amber-800",
   freelancer_pool: "border-sky-200 bg-sky-50 text-sky-800",
 };
+
+const getPriceMultiplier = (density: number) => (
+  Number(Math.min(1.5, Math.max(0.85, 1 + (0.25 * (density - 1.2)))).toFixed(2))
+);
 
 const getStrategyFromDensity = (density: number) => {
   if (density >= 1.8) {
@@ -162,6 +258,7 @@ const buildDemoAnalysis = (area: string): DensityAnalysis => {
     history_points: 180,
     predicted_demand: sector.predicted,
     density_score: Number(density.toFixed(2)),
+    price_multiplier: getPriceMultiplier(density),
     confidence_score: sector.confidence,
     source: "demo_density_engine",
     service_warning: "Demo mode is active. This uses realistic synthetic demand signals for presentation.",
@@ -172,23 +269,58 @@ const buildDemoAnalysis = (area: string): DensityAnalysis => {
 export function IntelligenceTab() {
   const [areaId, setAreaId] = useState("all");
   const [analysis, setAnalysis] = useState<DensityAnalysis>(() => buildDemoAnalysis("all"));
+  const [investorAnalytics, setInvestorAnalytics] = useState<InvestorAnalytics>(demoInvestorAnalytics);
   const [loading, setLoading] = useState(false);
-  const [notice, setNotice] = useState("Demo density model loaded. Connect backend + Python service for live Random Forest output.");
+  const [notice, setNotice] = useState("Checking live density engine...");
+
+  useEffect(() => {
+    const fetchInvestorAnalytics = async () => {
+      try {
+        const token = localStorage.getItem("adminToken");
+        const response = await fetch(`${API}/admin/investor-analytics`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await response.json();
+        if (response.ok && payload.data) {
+          setInvestorAnalytics(payload.data);
+        }
+      } catch {
+        setInvestorAnalytics(demoInvestorAnalytics);
+      }
+    };
+
+    fetchInvestorAnalytics();
+  }, []);
 
   const salariedPercent = Math.round(analysis.salaried_ratio * 100);
   const freelancerPercent = Math.round(analysis.freelancer_ratio * 100);
   const burnRisk = analysis.density_score < 1.2 ? "Low" : analysis.density_score < 1.8 ? "Controlled" : "Protected by salaried core";
   const serviceRisk = analysis.density_score >= 1.8 ? "High without core staff" : "Manageable";
   const expansionSignal = analysis.density_score >= 1.8 ? "Hire core team" : analysis.density_score >= 1.2 ? "Keep hybrid" : "Stay freelancer-led";
+  const priceMultiplier = analysis.price_multiplier ?? getPriceMultiplier(analysis.density_score);
+  const pricingSignal = priceMultiplier > 1.05
+    ? `${priceMultiplier}x surge`
+    : priceMultiplier < 0.95
+      ? `${priceMultiplier}x demand discount`
+      : "standard pricing";
 
-  const runAnalysis = async () => {
+  const runAnalysis = useCallback(async (options?: { silent?: boolean }) => {
     setLoading(true);
-    setNotice("");
+    if (!options?.silent) setNotice("Checking live density engine...");
 
     try {
       const token = localStorage.getItem("adminToken");
+      const isDemoAdmin = localStorage.getItem("adminDemoMode") === "true" || token === "rahi-demo-admin-token";
+
+      if (isDemoAdmin) {
+        setAnalysis(buildDemoAnalysis(areaId));
+        setNotice("");
+        return;
+      }
+
       const response = await fetch(`${API}/analytics/density/${encodeURIComponent(areaId || "all")}`, {
         headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       });
 
       const payload = await response.json();
@@ -199,14 +331,18 @@ export function IntelligenceTab() {
       setAnalysis(payload);
       setNotice(payload.source === "random_forest_service"
         ? "Live Random Forest prediction received from the Python analytics service."
-        : "Backend fallback generated this recommendation because the Python model was unavailable.");
+        : "Live backend connected. Python Random Forest service is unavailable, so RAHI is using the backend density fallback.");
     } catch {
       setAnalysis(buildDemoAnalysis(areaId));
-      setNotice("Backend is offline, so the local demo density model generated this recommendation.");
+      setNotice("Live density API was unreachable. Showing demo density signals until the backend/Python service is available.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [areaId]);
+
+  useEffect(() => {
+    runAnalysis({ silent: true });
+  }, [runAnalysis]);
 
   return (
     <div className="space-y-8">
@@ -233,10 +369,11 @@ export function IntelligenceTab() {
               RAHI forecasts demand, compares it with active worker capacity, and recommends the right salaried-to-freelancer mix for each zone.
             </p>
 
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            <div className="mt-8 grid gap-3 sm:grid-cols-4">
               <HeroSignal icon={BriefcaseBusiness} label="Predicted Demand" value={`${analysis.predicted_demand} jobs`} />
               <HeroSignal icon={UsersRound} label="Active Workers" value={`${analysis.current_workers}`} />
               <HeroSignal icon={Activity} label="Density Score" value={analysis.density_score.toFixed(2)} emphasis />
+              <HeroSignal icon={TrendingUp} label="Price Multiplier" value={`${priceMultiplier.toFixed(2)}x`} />
             </div>
           </div>
 
@@ -282,7 +419,7 @@ export function IntelligenceTab() {
                 />
               </div>
               <button
-                onClick={runAnalysis}
+                onClick={() => runAnalysis()}
                 disabled={loading}
                 className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
@@ -298,12 +435,15 @@ export function IntelligenceTab() {
             </div>
           )}
 
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            <RiskCard icon={ShieldCheck} label="Service risk" value={serviceRisk} />
-            <RiskCard icon={TrendingDown} label="Burn control" value={burnRisk} />
-            <RiskCard icon={ArrowUpRight} label="Next move" value={expansionSignal} />
+            <div className="mt-6 grid gap-4 sm:grid-cols-3">
+              <RiskCard icon={ShieldCheck} label="Service risk" value={serviceRisk} />
+              <RiskCard icon={TrendingDown} label="Burn control" value={burnRisk} />
+              <RiskCard icon={ArrowUpRight} label="Next move" value={expansionSignal} />
+            </div>
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold leading-6 text-emerald-800">
+              Dynamic pricing signal: {pricingSignal}. Formula: clamp(0.85, 1.50, 1 + 0.25 x (density - 1.2)).
+            </div>
           </div>
-        </div>
 
         <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-start justify-between gap-4">
@@ -412,6 +552,96 @@ export function IntelligenceTab() {
         </div>
       </section>
 
+      <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Investor-grade business brain</p>
+              <h3 className="mt-2 text-2xl font-black text-slate-950">Predicted demand vs. actual orders</h3>
+            </div>
+            <BarChart3 className="h-6 w-6 text-indigo-500" />
+          </div>
+
+          <div className="mt-6 h-72 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={investorAnalytics.demandForecast}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700 }} />
+                <YAxis tick={{ fontSize: 12, fontWeight: 700 }} />
+                <Tooltip />
+                <Line type="monotone" dataKey="actual" stroke="#0f172a" strokeWidth={3} dot={{ r: 4 }} />
+                <Line type="monotone" dataKey="predicted" stroke="#4f46e5" strokeWidth={3} strokeDasharray="6 4" dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-5">
+            <MetricPill label="Completion" value={`${investorAnalytics.summary.completionRate}%`} />
+            <MetricPill label="Cancel rate" value={`${investorAnalytics.summary.cancellationRate}%`} />
+            <MetricPill label="Churn risk" value={`${investorAnalytics.summary.churnRate}%`} />
+            <MetricPill label="Ops review" value={`${investorAnalytics.summary.escalatedBookings}`} />
+            <MetricPill label="Revenue" value={`₹${investorAnalytics.summary.revenue.toLocaleString("en-IN")}`} />
+          </div>
+        </div>
+
+        <div className="grid gap-6">
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Worker earnings vs. platform commission</p>
+            <div className="mt-5 h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={[
+                  { label: "Worker Earnings", amount: investorAnalytics.summary.workerEarnings },
+                  { label: "RAHI Commission", amount: investorAnalytics.summary.platformCommission },
+                ]}>
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fontWeight: 700 }} />
+                  <YAxis tick={{ fontSize: 11, fontWeight: 700 }} />
+                  <Tooltip />
+                  <Bar dataKey="amount" fill="#4f46e5" radius={[12, 12, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Top worker quality scores</p>
+            <div className="mt-4 space-y-3">
+              {investorAnalytics.workerQuality.slice(0, 3).map((worker) => (
+                <div key={worker.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-black text-slate-950">{worker.name}</p>
+                      <p className="text-xs font-bold text-slate-500">{worker.service} · {worker.completedJobs} jobs · {worker.rating}/5</p>
+                    </div>
+                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-black text-emerald-700">
+                      {worker.qualityScore}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[1.5rem] border border-amber-200 bg-amber-50 p-6 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-700/70">Rejected job escalation queue</p>
+            <div className="mt-4 space-y-3">
+              {investorAnalytics.assignmentEscalations.slice(0, 2).map((item) => (
+                <div key={item.bookingId} className="rounded-2xl border border-amber-200 bg-white/75 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-black text-slate-950">{item.serviceName}</p>
+                      <p className="mt-1 text-xs font-bold text-amber-800">{item.areaId} - {item.reason}</p>
+                    </div>
+                    <span className="rounded-full bg-amber-200 px-3 py-1 text-sm font-black text-amber-950">
+                      {item.suggestedPriceMultiplier.toFixed(2)}x
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-4 md:grid-cols-3">
         <LensCard title="Operational Lens" body="Density tells operations where a reliable salaried core is needed." icon={MapPin} />
         <LensCard title="Predictive Lens" body="Random Forest forecasts tomorrow's order pressure from history, spend, and worker supply." icon={Cpu} />
@@ -463,6 +693,15 @@ function AllocationBar({ label, value, color }: { label: string; value: number; 
       <div className="h-4 overflow-hidden rounded-full bg-slate-100">
         <div className={cn("h-full rounded-full transition-all duration-700", color)} style={{ width: `${value}%` }} />
       </div>
+    </div>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="mt-2 text-lg font-black text-slate-950">{value}</p>
     </div>
   );
 }

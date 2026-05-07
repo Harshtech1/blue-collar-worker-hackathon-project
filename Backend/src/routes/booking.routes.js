@@ -1,5 +1,5 @@
 import express from 'express';
-import { createBooking, listBookings, updateBooking, getByWorkerId, getById, respondToBooking, cancelBooking, getBookingMessages } from '../controllers/booking.controller.js';
+import { createBooking, listBookings, updateBooking, getByWorkerId, getById, getActiveBooking, respondToBooking, cancelBooking, getBookingMessages } from '../controllers/booking.controller.js';
 import { queryParser } from '../middlewares/queryParser.js';
 import { protect } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
@@ -9,6 +9,9 @@ const router = express.Router();
 
 // List bookings with query parser
 router.get('/', queryParser, listBookings);
+
+// Recover the user's current live job after refresh/reconnect
+router.get('/active', protect, getActiveBooking);
 
 // Create a new booking (customer — may or may not require auth)
 router.post('/', validate(createBookingSchema), createBooking);

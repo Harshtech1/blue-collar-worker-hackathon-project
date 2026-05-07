@@ -3,6 +3,11 @@
   "outputDirectory": "react/app/dist",
   "installCommand": "cd react/app && npm install --include=dev",
   "framework": "vite",
+  "env": {
+    "VITE_API_URL": "https://blue-collar-worker-hackathon-project.onrender.com/api",
+    "VITE_BACKEND_API_URL": "https://blue-collar-worker-hackathon-project.onrender.com",
+    "ANALYTICS_SERVICE_URL": "https://rahi-analytics-service.onrender.com"
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
