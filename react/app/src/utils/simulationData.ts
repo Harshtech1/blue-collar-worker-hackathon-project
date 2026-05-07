@@ -843,8 +843,8 @@ export const generateSimulationBatch = ({
       );
 
       return {
-        lat: Number(faker.location.latitude({ min: sector.latRange[0], max: sector.latRange[1], precision: 0.0001 })),
-        lng: Number(faker.location.longitude({ min: sector.lngRange[0], max: sector.lngRange[1], precision: 0.0001 })),
+        lat: Number(faker.location.latitude({ min: sector.latRange[0], max: sector.latRange[1], precision: 4 })),
+        lng: Number(faker.location.longitude({ min: sector.lngRange[0], max: sector.lngRange[1], precision: 4 })),
         serviceType,
         timestamp: buildTimestamp(batchIndex),
         estimatedValue,
