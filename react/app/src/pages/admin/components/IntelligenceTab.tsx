@@ -208,6 +208,15 @@ interface LogicLogEntry {
   source: "simulation" | "strategy" | "system" | "ops";
 }
 
+interface CompetitorPulse {
+  id: string;
+  competitor: string;
+  zoneId: string;
+  zoneLabel: string;
+  discountPercent: number;
+  response: string;
+}
+
 const sectorSignals: SectorSignal[] = [
   {
     id: "all",
@@ -451,6 +460,33 @@ const previewSignals: SimulationPreviewPoint[] = previewSignalBatch
   })
   .filter((point): point is SimulationPreviewPoint => Boolean(point));
 
+const competitorPulseFeed: CompetitorPulse[] = [
+  {
+    id: "intel-taj-ganj",
+    competitor: "UrbanX",
+    zoneId: "taj-ganj",
+    zoneLabel: "Taj Ganj",
+    discountPercent: 20,
+    response: "Maintain price integrity and lead with RAHI Verified Pro proof in customer messaging.",
+  },
+  {
+    id: "intel-agra-cantt",
+    competitor: "QuickFixer",
+    zoneId: "agra-cantt",
+    zoneLabel: "Agra Cantt",
+    discountPercent: 15,
+    response: "Protect repeat customers with loyalty nudges instead of matching city-wide discounting.",
+  },
+  {
+    id: "intel-fatehabad-road",
+    competitor: "ServiceSprint",
+    zoneId: "fatehabad-road",
+    zoneLabel: "Fatehabad Road",
+    discountPercent: 18,
+    response: "Hold the margin floor and emphasize on-time arrival plus audit-backed proof of work.",
+  },
+];
+
 const getPriceMultiplier = (density: number) => (
   Number(Math.min(1.5, Math.max(0.85, 1 + (0.25 * (density - 1.2)))).toFixed(2))
 );
@@ -609,22 +645,6 @@ const buildStrategyFallback = ({
   marginLift: number;
   scenario?: SimulationCompletionPayload["scenario"];
 }): StrategyBrief => {
-  if (scenario === "price_war") {
-    return {
-      signal: `${zoneLabel} is in a contested-market state; margin protection matters more than matching blanket discounts right now.`,
-      reasoning: `The price war override prioritizes profitability-floor defense. Density is ${densityScore.toFixed(2)}, projected demand is ${predictedDemand}, and CAC plus churn pressure will punish broad discounting unless RAHI protects trusted high-LTV sectors first.`,
-      procedures: [
-        `Freeze city-wide discount matching in ${zoneLabel} and defend trusted sectors like ${hottestSector} with retention-led offers instead.`,
-        `Keep pricing discipline near the current ${priceMultiplier.toFixed(2)}x level and shift spend toward repeat-demand lanes in ${city}.`,
-        `Re-run the price-war simulation after the next ${timeLens} cycle and scale only where LTV still outruns CAC by a healthy margin.`,
-      ],
-      provider: "rule_engine",
-      model: "density-rule-fallback",
-      saved: false,
-      fallback: true,
-    };
-  }
-
   if (scenario === "supply_crunch") {
     return {
       signal: `${zoneLabel} has entered amber-alert preservation mode; supply is collapsing faster than the current field plan can recover on its own.`,
@@ -717,14 +737,6 @@ const buildSimulationLogicSignals = (
   const topSignals = simulation.topSignals.slice(0, 3).map((signal) => (
     `${signal.sector}: density ${signal.densityScore.toFixed(2)} with ${signal.projectedOrders.toLocaleString("en-IN")} projected orders across ${signal.activeWorkers} active workers.`
   ));
-
-  if (simulation.scenario === "price_war") {
-    return [
-      `${simulation.hottestSector} is holding the top-value lane while the contested-market model defends the profitability floor.`,
-      `Price war stress is active across ${simulation.zone.city}; ${simulation.totalProjectedOrders.toLocaleString("en-IN")} projected orders are being filtered through elevated CAC and churn pressure.`,
-      ...topSignals,
-    ].slice(0, 3);
-  }
 
   if (simulation.scenario === "monsoon") {
     return [
@@ -1487,13 +1499,11 @@ export function IntelligenceTab({
       zoneLabel: activeSector.label,
       city: activeSector.city,
       scenarioType: simulation?.scenario ?? "baseline",
-      scenario: simulation?.scenario ?? "baseline",
+      scenario: simulation?.scenario === "monsoon" ? "monsoon" : "baseline",
       weatherSignal: simulation?.scenario === "monsoon"
         ? "Active monsoon deployment protocol. Repair demand is elevated, worker mobility is constrained, and burn pressure is above baseline."
         : simulation?.scenario === "supply_crunch"
           ? "Active supply crunch protocol. Worker availability is halved and the command lane is preserving essential service."
-          : simulation?.scenario === "price_war"
-            ? "Active price war protocol. CAC is inflated, churn is elevated, and the command lane is protecting the profitability floor."
             : "Normal weather operating window.",
       radiusKm: simulation?.zone.radiusKm ?? 4,
       timeLens: timeLensLabel,
@@ -1546,15 +1556,13 @@ export function IntelligenceTab({
         }
         : undefined,
       deepDive,
-      providerPreference: deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "gemini" : "groq",
+      providerPreference: deepDive || simulation?.scenario === "supply_crunch" ? "gemini" : "groq",
     };
 
     setStrategyStatus("thinking");
     setStrategyMessage(
       deepDive
         ? `Deep strategy scan running for ${activeSector.label}. Gemini is drafting the CEO briefing.`
-        : simulation?.scenario === "price_war"
-          ? `Contested-market scan running for ${activeSector.label}. Gemini is drafting the margin-defense plan.`
         : simulation?.scenario === "supply_crunch"
           ? `Amber-alert strategy scan running for ${activeSector.label}. Gemini is drafting the preservation plan.`
           : `Fast zone analysis running for ${activeSector.label}. Groq is reading the density stack.`,
@@ -1562,15 +1570,13 @@ export function IntelligenceTab({
     appendLogicEntry(
       deepDive
         ? `Churn risk detected in ${activeSector.label}. Querying Gemini for an investor-grade retention and staffing strategy.`
-        : simulation?.scenario === "price_war"
-          ? `Price war detected in ${activeSector.label}. Querying Gemini for a profitability-floor intervention plan.`
         : simulation?.scenario === "supply_crunch"
           ? `Supply crunch detected in ${activeSector.label}. Querying Gemini for a service-preservation intervention plan.`
           : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift.`,
       {
-        tone: deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "warning" : "info",
+        tone: deepDive || simulation?.scenario === "supply_crunch" ? "warning" : "info",
         source: "strategy",
-        tag: deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "LLM_GEMINI" : "LLM_GROQ",
+        tag: deepDive || simulation?.scenario === "supply_crunch" ? "LLM_GEMINI" : "LLM_GROQ",
       },
     );
     logicSignals.slice(0, 2).forEach((signal) => {

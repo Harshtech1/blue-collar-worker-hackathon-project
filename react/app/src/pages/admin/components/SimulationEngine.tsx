@@ -301,6 +301,13 @@ const scenarioMeta: Record<SimulationScenario, {
     ribbon: "border-rose-300 bg-[linear-gradient(135deg,_rgba(251,113,133,0.16),_rgba(190,24,93,0.14))] text-rose-950",
     iconTone: "text-rose-600",
   },
+  price_war: {
+    label: "Price War Simulation",
+    badge: "CONTESTED MARKET",
+    summary: "A competitor discount war drives CAC upward, lifts churn, and forces the engine to defend the profitability floor sector by sector.",
+    ribbon: "border-amber-300 bg-[linear-gradient(135deg,_rgba(253,230,138,0.24),_rgba(251,146,60,0.18))] text-amber-950",
+    iconTone: "text-amber-700",
+  },
 };
 
 const getGeoConfigKey = (config: SimulationGeoConfig) => (
@@ -1189,7 +1196,25 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         appendFeed(
           `Batch ${batchPayload.batch_id}: Random Forest closed in ${Math.round(batchPayload.processing_ms)} ms with ${batchPayload.cluster_distribution.surge_density || 0} surge sectors ${getScenarioInferenceSuffix(selectedScenario)}.`,
         );
-        if (selectedScenario === "supply_crunch") {
+        if (selectedScenario === "monsoon") {
+          const stormSector = [...batchPayload.sector_summaries]
+            .sort((left, right) => (right.burn_risk - left.burn_risk) || (right.projected_orders - left.projected_orders))[0];
+
+          if (stormSector && stormSector.burn_risk >= 0.48) {
+            appendFeed(
+              `STORM ALERT: ${stormSector.area_sector} is absorbing the heaviest repair load with burn risk at ${Math.round(stormSector.burn_risk * 100)}%.`,
+            );
+          }
+        } else if (selectedScenario === "price_war") {
+          const weakMarginSector = [...batchPayload.sector_summaries]
+            .sort((left, right) => (left.contribution_margin - right.contribution_margin) || (right.acquisition_cost - left.acquisition_cost))[0];
+
+          if (weakMarginSector && weakMarginSector.acquisition_cost >= 250) {
+            appendFeed(
+              `PRICE-WAR ALERT: ${weakMarginSector.area_sector} is under the highest CAC pressure at ${formatCurrency(weakMarginSector.acquisition_cost)} with margin compression live.`,
+            );
+          }
+        } else if (selectedScenario === "supply_crunch") {
           const criticalSector = [...batchPayload.sector_summaries]
             .sort((left, right) => right.supply_gap_ratio - left.supply_gap_ratio)[0];
 

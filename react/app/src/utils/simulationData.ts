@@ -4,7 +4,7 @@ export const SIMULATION_TOTAL_POINTS = 400_000;
 export const SIMULATION_BATCH_SIZE = 10_000;
 export const SIMULATION_BATCH_COUNT = SIMULATION_TOTAL_POINTS / SIMULATION_BATCH_SIZE;
 export const SIMULATION_SEED = 20260507;
-export type SimulationScenario = "baseline" | "monsoon" | "supply_crunch";
+export type SimulationScenario = "baseline" | "monsoon" | "supply_crunch" | "price_war";
 export const SIMULATION_SCENARIOS: Array<{
   id: SimulationScenario;
   label: string;
@@ -24,6 +24,11 @@ export const SIMULATION_SCENARIOS: Array<{
     id: "supply_crunch",
     label: "Supply Shortage",
     blurb: "Worker availability crashes while high-priority service demand doubles across the command zone.",
+  },
+  {
+    id: "price_war",
+    label: "Price War",
+    blurb: "A discount-heavy competitor spikes CAC, pushes churn upward, and forces a profitability-floor response.",
   },
 ];
 
@@ -817,7 +822,7 @@ export const generateSimulationBatch = ({
         + ((1.05 - sector.historicalTraffic) * 0.12)
         + faker.number.float({ min: -0.02, max: 0.07 })
         + (isMonsoon ? 0.03 : 0)
-        + (isSupplyCrunch ? 0.08 : 0),
+        + (isSupplyCrunch ? 0.08 : 0)
         + (isPriceWar ? 0.12 : 0),
         0.06,
         isPriceWar ? 0.68 : isSupplyCrunch ? 0.58 : isMonsoon ? 0.46 : 0.42,
@@ -876,7 +881,7 @@ export const generateSimulationBatch = ({
       + ((1.05 - geoConfig.workerScale) * 0.06)
       + faker.number.float({ min: -0.02, max: 0.08 })
       + (isMonsoon ? 0.03 : 0)
-      + (isSupplyCrunch ? 0.08 : 0),
+      + (isSupplyCrunch ? 0.08 : 0)
       + (isPriceWar ? 0.12 : 0),
       0.05,
       isPriceWar ? 0.68 : isSupplyCrunch ? 0.58 : 0.46,
