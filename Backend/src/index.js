@@ -27,6 +27,7 @@ import {
 import { appendStatusHistory } from "./utils/bookingWorkflow.js";
 import { upload } from "./middleware/upload.js";
 import { getSignedMediaUrl, normalizeMediaField, uploadMedia } from "./utils/mediaStorage.js";
+import { isCloudinaryConfigured } from "./config/cloudinary.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,6 +91,10 @@ connectDB()
         timestamp: new Date(),
         socketio: "active",
         database: dbReady ? "connected" : "offline-demo",
+        media: {
+          secureUploadsReady: isCloudinaryConfigured,
+          provider: isCloudinaryConfigured ? "cloudinary" : "offline",
+        },
         deployment: {
           provider: process.env.RENDER ? "render" : "local-or-custom",
           service: process.env.RENDER_SERVICE_NAME || null,

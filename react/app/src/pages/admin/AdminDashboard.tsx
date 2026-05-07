@@ -674,8 +674,8 @@ export default function AdminDashboard() {
                   return <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${color}`}>{val}</span>;
                 }},
                 { key: 'proofPhotos', label: 'RAHI Verified Job Proof', render: (_val, row) => {
-                  const beforeUrl = row?.beforeWorkPhoto?.url || row?.beforeWorkPhoto?.secure_url || null;
-                  const afterUrl = row?.afterWorkPhoto?.url || row?.afterWorkPhoto?.secure_url || null;
+                  const beforeUrl = row?.beforeWorkPhoto?.secure_url || row?.beforeWorkPhoto?.url || null;
+                  const afterUrl = row?.afterWorkPhoto?.secure_url || row?.afterWorkPhoto?.url || null;
                   if (!beforeUrl && !afterUrl) {
                     return <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Pending proof</span>;
                   }

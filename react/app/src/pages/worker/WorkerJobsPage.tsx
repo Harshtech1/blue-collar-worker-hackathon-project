@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,7 +18,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { API as API_BASE_FROM_ENV } from '@/lib/constants';
+import { API as API_BASE_FROM_ENV, API_ROOT } from '@/lib/constants';
 import {
   UploadedMedia,
   SECURE_MEDIA_LAYER_OFFLINE_MESSAGE,
@@ -47,6 +47,8 @@ const WorkerJobsPage = () => {
   const [proofUploading, setProofUploading] = useState(false);
   const [otpStep, setOtpStep] = useState<'capture' | 'otp'>('capture');
   const [secureMediaError, setSecureMediaError] = useState<string | null>(null);
+  const [mediaLayerReady, setMediaLayerReady] = useState<boolean | null>(null);
+  const uploadNoticeToastRef = useRef<string | number | null>(null);
 
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);
@@ -55,7 +57,7 @@ const WorkerJobsPage = () => {
     setProofMedia(null);
     setProofUploading(false);
     setOtpStep('capture');
-    setSecureMediaError(null);
+    setSecureMediaError(mediaLayerReady === false ? SECURE_MEDIA_LAYER_OFFLINE_MESSAGE : null);
     setOtpDialogOpen(true);
   };
 
@@ -66,7 +68,7 @@ const WorkerJobsPage = () => {
     setProofMedia(null);
     setProofUploading(false);
     setOtpStep('capture');
-    setSecureMediaError(null);
+    setSecureMediaError(mediaLayerReady === false ? SECURE_MEDIA_LAYER_OFFLINE_MESSAGE : null);
     setOtpDialogOpen(true);
   };
 
@@ -81,11 +83,19 @@ const WorkerJobsPage = () => {
 
   const handleProofUpload = async (file: File | undefined) => {
     if (!file) return;
+    if (mediaLayerReady === false) {
+      setSecureMediaError(SECURE_MEDIA_LAYER_OFFLINE_MESSAGE);
+      toast.error(SECURE_MEDIA_LAYER_OFFLINE_MESSAGE);
+      return;
+    }
 
     setSecureMediaError(null);
     setProofMedia(null);
     setOtpStep('capture');
     setProofUploading(true);
+    const slowUploadTimer = window.setTimeout(() => {
+      uploadNoticeToastRef.current = toast.loading('Still uploading... please wait.');
+    }, 3000);
     try {
       const result = await uploadFile(file, 'bookingProof');
       if (result.error || !result.media) {
@@ -103,6 +113,11 @@ const WorkerJobsPage = () => {
       setOtpStep('capture');
       toast.error(friendlyMessage);
     } finally {
+      window.clearTimeout(slowUploadTimer);
+      if (uploadNoticeToastRef.current !== null) {
+        toast.dismiss(uploadNoticeToastRef.current);
+        uploadNoticeToastRef.current = null;
+      }
       setProofUploading(false);
     }
   };
@@ -136,6 +151,28 @@ const WorkerJobsPage = () => {
       fetchJobs();
     }
   }, [user, profile]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchMediaStatus = async () => {
+      try {
+        const res = await fetch(`${API_ROOT}/api/health`);
+        if (!res.ok) throw new Error('Failed to read backend health');
+        const data = await res.json();
+        if (!isMounted) return;
+        setMediaLayerReady(Boolean(data?.media?.secureUploadsReady));
+      } catch {
+        if (!isMounted) return;
+        setMediaLayerReady(false);
+      }
+    };
+
+    fetchMediaStatus();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const fetchJobs = async () => {
     if (!user) return;
@@ -755,36 +792,47 @@ const WorkerJobsPage = () => {
                 <div className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-indigo-700">
                   Step 1 of 2 · Secure proof capture
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-sm font-bold">
-                    {otpType === 'start' ? 'Before-work proof photo' : 'After-work proof photo'}
-                  </Label>
-                  <Label
-                    htmlFor="proof-photo"
-                    aria-disabled={proofUploading}
-                    className={`flex min-h-28 cursor-pointer flex-col justify-center rounded-2xl border-2 border-dashed p-5 transition ${
-                      proofUploading
-                        ? 'pointer-events-none border-indigo-200 bg-indigo-50 opacity-80'
-                        : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-indigo-300 hover:bg-indigo-50'
-                    }`}
-                  >
-                    <span className="text-base font-black">
-                      {otpType === 'start' ? 'Capture Work-Site Proof' : 'Capture Finished-Work Proof'}
-                    </span>
-                    <span className="mt-1 text-xs font-medium text-muted-foreground">
-                      The OTP field appears only after RAHI securely uploads this photo.
-                    </span>
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    RAHI compresses the image under 500KB for faster upload in low-signal areas.
-                  </p>
-                  {proofUploading && (
-                    <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-sm font-medium text-indigo-700">
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-                      Streaming proof photo to the secure media layer...
-                    </div>
-                  )}
-                </div>
+                {mediaLayerReady === null ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-700">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-transparent" />
+                    Checking secure media layer...
+                  </div>
+                ) : mediaLayerReady ? (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-bold">
+                      {otpType === 'start' ? 'Before-work proof photo' : 'After-work proof photo'}
+                    </Label>
+                    <Label
+                      htmlFor="proof-photo"
+                      aria-disabled={proofUploading}
+                      className={`flex min-h-28 cursor-pointer flex-col justify-center rounded-2xl border-2 border-dashed p-5 transition ${
+                        proofUploading
+                          ? 'pointer-events-none border-indigo-200 bg-indigo-50 opacity-80'
+                          : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-indigo-300 hover:bg-indigo-50'
+                      }`}
+                    >
+                      <span className="text-base font-black">
+                        {otpType === 'start' ? 'Capture Work-Site Proof' : 'Capture Finished-Work Proof'}
+                      </span>
+                      <span className="mt-1 text-xs font-medium text-muted-foreground">
+                        The OTP field appears only after RAHI securely uploads this photo.
+                      </span>
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      RAHI compresses the image under 500KB for faster upload in low-signal areas.
+                    </p>
+                    {proofUploading && (
+                      <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-sm font-medium text-indigo-700">
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+                        Streaming proof photo to the secure media layer...
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4 text-sm font-semibold text-rose-700">
+                    {SECURE_MEDIA_LAYER_OFFLINE_MESSAGE}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -846,7 +894,13 @@ const WorkerJobsPage = () => {
               </Button>
             ) : (
               <Button disabled>
-                {proofUploading ? 'Uploading Proof...' : 'Capture Proof First'}
+                {mediaLayerReady === null
+                  ? 'Checking Secure Media...'
+                  : proofUploading
+                    ? 'Uploading Proof...'
+                    : mediaLayerReady
+                      ? 'Capture Proof First'
+                      : 'Secure Media Offline'}
               </Button>
             )}
           </DialogFooter>
