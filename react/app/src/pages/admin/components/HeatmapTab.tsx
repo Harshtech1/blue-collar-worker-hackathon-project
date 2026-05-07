@@ -156,12 +156,22 @@ export function HeatmapTab({ token, scenario: scenarioOverride }: HeatmapTabProp
 
   return (
     <div className="space-y-5">
+      <style>
+        {`
+          @keyframes rahi-alert-pulse {
+            0% { opacity: 0.7; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
+          }
+        `}
+      </style>
       <div className={cn(
         "rounded-[1.8rem] border px-5 py-4 shadow-sm",
         scenario === "monsoon"
           ? "border-amber-400/40 bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950 text-white"
           : "border-indigo-200 bg-indigo-50 text-indigo-950",
-      )}>
+      )}
+      style={scenario === "monsoon" ? { animation: "rahi-alert-pulse 1.5s ease-in-out infinite" } : undefined}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <div className={cn(

@@ -310,6 +310,8 @@ const scenarioMeta: Record<SimulationScenario, {
   },
 };
 
+const FIVE_DAY_MONSOON_RUNWAY_QUESTION = "Based on the current supply crunch and daily burn, what is our financial runway if this Monsoon lasts 5 more days?";
+
 const getGeoConfigKey = (config: SimulationGeoConfig) => (
   `${config.cityId}:${config.center.lat.toFixed(4)}:${config.center.lng.toFixed(4)}:${config.radiusKm.toFixed(1)}`
 );
@@ -1147,6 +1149,15 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       setStrategyLoading(false);
     }
   }, [buildStrategyRequestPayload, effectiveAggregatedSectors.length]);
+
+  const handleQuickMonsoonRunway = useCallback(() => {
+    setCeoQuestion(FIVE_DAY_MONSOON_RUNWAY_QUESTION);
+    void requestStrategy({
+      analysisMode: "financial_audit",
+      question: FIVE_DAY_MONSOON_RUNWAY_QUESTION,
+      loadingState: "deep_dive",
+    });
+  }, [requestStrategy]);
 
   const launchSimulation = useCallback(async () => {
     if (isRunning) return;
@@ -1999,6 +2010,23 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                 <MessageSquareText className="h-6 w-6 text-emerald-300" />
               </div>
 
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Quick action</span>
+                <button
+                  type="button"
+                  onClick={handleQuickMonsoonRunway}
+                  disabled={strategyLoading !== false || effectiveAggregatedSectors.length === 0}
+                  className={cn(
+                    "rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.18em] transition",
+                    strategyLoading !== false || effectiveAggregatedSectors.length === 0
+                      ? "cursor-not-allowed border-white/10 bg-white/[0.05] text-slate-500"
+                      : "border-emerald-300/40 bg-emerald-300/12 text-emerald-100 hover:-translate-y-0.5 hover:border-emerald-200 hover:bg-emerald-300/18",
+                  )}
+                >
+                  Analyze 5-Day Monsoon Runway
+                </button>
+              </div>
+
               <Textarea
                 value={ceoQuestion}
                 onChange={(event) => setCeoQuestion(event.target.value)}
@@ -2123,8 +2151,8 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
           <div className="rounded-[1.5rem] border border-slate-200 bg-slate-950 p-5 text-white shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Sidebar terminal</p>
-                <h4 className="mt-2 text-2xl font-black">What the engine just did</h4>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">LOGISTICS_CORE_AUDIT [STRICT_PERSISTENCE]</p>
+                <h4 className="mt-2 text-2xl font-black">Every simulation decision is being persisted.</h4>
               </div>
               <Activity className="h-6 w-6 text-emerald-300" />
             </div>
