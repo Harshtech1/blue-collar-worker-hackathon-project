@@ -36,6 +36,7 @@ import { Circle, CircleMarker, MapContainer, TileLayer, Tooltip as LeafletToolti
 import "leaflet/dist/leaflet.css";
 import { toast } from "sonner";
 import { LocationPicker } from "@/components/maps/LocationPicker";
+import { MarketCommandSearch } from "@/components/maps/MarketCommandSearch";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -62,6 +63,7 @@ import {
   type SimulationScenario,
   generateSimulationBatch,
 } from "@/utils/simulationData";
+import { reverseGeocodeMarket, type GeocodedMarketResult } from "@/utils/geocoding";
 import { downloadSimulationReport } from "@/utils/simulationReport";
 
 export type SimulationPhase = "idle" | "generating" | "inferencing" | "visualizing" | "complete" | "error";
@@ -250,7 +252,7 @@ export interface SimulationGeoSelectionPayload {
   geoConfig: SimulationGeoConfig;
   selectedAddress: string;
   scenario: SimulationScenario;
-  source: "bootstrap" | "city_select" | "map_pin" | "recenter";
+  source: "bootstrap" | "city_select" | "map_pin" | "recenter" | "search";
   cityChanged: boolean;
 }
 
@@ -258,6 +260,7 @@ interface SimulationEngineProps {
   onSimulationComplete?: (payload: SimulationCompletionPayload) => void;
   onTelemetryChange?: (payload: SimulationTelemetryPayload) => void;
   onGeoConfigChange?: (payload: SimulationGeoSelectionPayload) => void;
+  externalGeoSelection?: SimulationGeoSelectionPayload | null;
 }
 
 const DEFAULT_RADIUS_KM = 12;
@@ -626,6 +629,7 @@ export function SimulationEngine({
   onSimulationComplete,
   onTelemetryChange,
   onGeoConfigChange,
+  externalGeoSelection,
 }: SimulationEngineProps) {
   const [phase, setPhase] = useState<SimulationPhase>("idle");
   const [isRunning, setIsRunning] = useState(false);
@@ -645,7 +649,7 @@ export function SimulationEngine({
     return getStoredScenario(window.localStorage.getItem(SIMULATION_SCENARIO_STORAGE_KEY));
   });
   const [isLocationPickerOpen, setIsLocationPickerOpen] = useState(false);
-  const [selectedAddress, setSelectedAddress] = useState(`${initialGeoConfig.cityLabel}, ${initialGeoConfig.country}`);
+  const [selectedAddress, setSelectedAddress] = useState(initialGeoConfig.marketLabel);
   const [lastRunConfig, setLastRunConfig] = useState<SimulationGeoConfig | null>(null);
   const [lastRunScenario, setLastRunScenario] = useState<SimulationScenario | null>(null);
   const [strategyLoading, setStrategyLoading] = useState<false | "financial_audit" | "investor_summary" | "deep_dive">(false);
@@ -661,6 +665,8 @@ export function SimulationEngine({
   const lastGeoChangeSourceRef = useRef<SimulationGeoSelectionPayload["source"]>("bootstrap");
   const previousGeoConfigRef = useRef<SimulationGeoConfig>(initialGeoConfig);
   const lastAutoExpansionKeyRef = useRef<string | null>(null);
+  const lastExternalSyncKeyRef = useRef<string | null>(null);
+  const reverseGeocodeAbortRef = useRef<AbortController | null>(null);
 
   const draftGeoConfig = useMemo(() => (
     buildSimulationGeoConfig({
@@ -672,8 +678,49 @@ export function SimulationEngine({
 
   const selectedCity = useMemo(() => (
     GLOBAL_SIMULATION_CITIES.find((city) => city.id === selectedCityId)
-    || GLOBAL_SIMULATION_CITIES[0]
-  ), [selectedCityId]);
+    || {
+      id: draftGeoConfig.cityId,
+      label: draftGeoConfig.cityLabel,
+      country: draftGeoConfig.country,
+      stateName: draftGeoConfig.stateName,
+      stateCode: draftGeoConfig.stateCode,
+      lat: draftGeoConfig.center.lat,
+      lng: draftGeoConfig.center.lng,
+      demandScale: draftGeoConfig.demandScale,
+      workerScale: draftGeoConfig.workerScale,
+      emergencyScale: draftGeoConfig.emergencyScale,
+      marketingScale: draftGeoConfig.marketingScale,
+      historicalTraffic: draftGeoConfig.historicalTraffic,
+      serviceMix: draftGeoConfig.serviceMix,
+    }
+  ), [draftGeoConfig, selectedCityId]);
+  const isPresetCity = useMemo(
+    () => GLOBAL_SIMULATION_CITIES.some((city) => city.id === selectedCityId),
+    [selectedCityId],
+  );
+
+  useEffect(() => {
+    if (!externalGeoSelection) {
+      return;
+    }
+
+    const syncKey = [
+      getGeoConfigKey(externalGeoSelection.geoConfig),
+      externalGeoSelection.selectedAddress,
+      externalGeoSelection.source,
+    ].join(":");
+    if (lastExternalSyncKeyRef.current === syncKey) {
+      return;
+    }
+
+    lastExternalSyncKeyRef.current = syncKey;
+    lastGeoChangeSourceRef.current = externalGeoSelection.source;
+    previousGeoConfigRef.current = externalGeoSelection.geoConfig;
+    setSelectedCityId(externalGeoSelection.geoConfig.cityId);
+    setAnalysisCenter(externalGeoSelection.geoConfig.center);
+    setRadiusKm(externalGeoSelection.geoConfig.radiusKm);
+    setSelectedAddress(externalGeoSelection.selectedAddress);
+  }, [externalGeoSelection]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -693,7 +740,11 @@ export function SimulationEngine({
     if (
       (cityChanged || movedDistanceKm > 50)
       && lastGeoChangeSourceRef.current !== "bootstrap"
-      && (lastGeoChangeSourceRef.current === "city_select" || lastGeoChangeSourceRef.current === "map_pin")
+      && (
+        lastGeoChangeSourceRef.current === "city_select"
+        || lastGeoChangeSourceRef.current === "map_pin"
+        || lastGeoChangeSourceRef.current === "search"
+      )
     ) {
       setPendingExpansionAutoLaunch({
         key: getGeoConfigKey(draftGeoConfig),
@@ -994,6 +1045,30 @@ export function SimulationEngine({
     });
   }, []);
 
+  const applyResolvedMarket = useCallback((
+    result: Pick<GeocodedMarketResult, "lat" | "lng" | "label" | "geoConfig">,
+    source: SimulationGeoSelectionPayload["source"],
+  ) => {
+    const previousCityLabel = previousGeoConfigRef.current.cityLabel;
+    const nextCityLabel = result.geoConfig.cityLabel;
+
+    lastGeoChangeSourceRef.current = source;
+    setSelectedCityId(result.geoConfig.cityId);
+    setAnalysisCenter({
+      lat: Number(result.lat.toFixed(6)),
+      lng: Number(result.lng.toFixed(6)),
+    });
+    setRadiusKm(result.geoConfig.radiusKm);
+    setSelectedAddress(result.label);
+
+    if (
+      previousCityLabel !== nextCityLabel
+      && source !== "bootstrap"
+    ) {
+      appendFeed(`[SYSTEM] RE-CENTERING ENGINE: ${nextCityLabel.toUpperCase()} DETECTED. LOAD BALANCING SIMULATION...`);
+    }
+  }, [appendFeed]);
+
   const handleCityChange = useCallback((cityId: string) => {
     const city = GLOBAL_SIMULATION_CITIES.find((entry) => entry.id === cityId);
     if (!city) return;
@@ -1001,7 +1076,9 @@ export function SimulationEngine({
     lastGeoChangeSourceRef.current = "city_select";
     setSelectedCityId(city.id);
     setAnalysisCenter({ lat: city.lat, lng: city.lng });
-    setSelectedAddress(`${city.label}, ${city.country}`);
+    setSelectedAddress(city.stateCode
+      ? `${city.label}, ${city.stateCode}, ${city.country}`
+      : `${city.label}, ${city.country}`);
   }, []);
 
   const handleRadiusChange = useCallback((value: number[]) => {
@@ -1016,13 +1093,44 @@ export function SimulationEngine({
       lat: Number(location.lat.toFixed(6)),
       lng: Number(location.lng.toFixed(6)),
     });
-    setSelectedAddress(location.address);
+    setSelectedAddress(location.address || `Command pin ${formatCoordinates(location.lat, location.lng)}`);
   }, []);
+
+  const handleSearchSelect = useCallback((result: GeocodedMarketResult) => {
+    applyResolvedMarket(result, "search");
+  }, [applyResolvedMarket]);
+
+  const handleViewportSettled = useCallback(async (center: { lat: number; lng: number }) => {
+    reverseGeocodeAbortRef.current?.abort();
+    const controller = new AbortController();
+    reverseGeocodeAbortRef.current = controller;
+
+    try {
+      const result = await reverseGeocodeMarket(center.lat, center.lng, {
+        radiusKm,
+        signal: controller.signal,
+      });
+      applyResolvedMarket(result, "map_pin");
+    } catch (error) {
+      if ((error as Error).name === "AbortError") {
+        return;
+      }
+
+      lastGeoChangeSourceRef.current = "map_pin";
+      setAnalysisCenter({
+        lat: Number(center.lat.toFixed(6)),
+        lng: Number(center.lng.toFixed(6)),
+      });
+      setSelectedAddress(`Command pin ${formatCoordinates(center.lat, center.lng)}`);
+    }
+  }, [applyResolvedMarket, radiusKm]);
 
   const handleRecenterToCity = useCallback(() => {
     lastGeoChangeSourceRef.current = "recenter";
     setAnalysisCenter({ lat: selectedCity.lat, lng: selectedCity.lng });
-    setSelectedAddress(`${selectedCity.label}, ${selectedCity.country}`);
+    setSelectedAddress(selectedCity.stateCode
+      ? `${selectedCity.label}, ${selectedCity.stateCode}, ${selectedCity.country}`
+      : `${selectedCity.label}, ${selectedCity.country}`);
   }, [selectedCity]);
 
   const handleExport = useCallback(() => {
@@ -1096,6 +1204,13 @@ export function SimulationEngine({
       zoneId: draftGeoConfig.cityId,
       zoneLabel: `${draftGeoConfig.cityLabel} ${formatRadius(draftGeoConfig.radiusKm)} command zone`,
       city: `${draftGeoConfig.cityLabel}, ${draftGeoConfig.country}`,
+      cityName: draftGeoConfig.cityLabel,
+      stateName: draftGeoConfig.stateName,
+      stateCode: draftGeoConfig.stateCode,
+      marketContext: draftGeoConfig.marketContext,
+      cityTier: draftGeoConfig.cityTier,
+      isExistingMarket: draftGeoConfig.isExistingMarket,
+      hasHistoricalData: draftGeoConfig.hasHistoricalData,
       scenarioType: selectedScenario,
       scenario: selectedScenario,
       weatherSignal: getScenarioWeatherSignal(selectedScenario),
@@ -1537,15 +1652,28 @@ export function SimulationEngine({
 
           <div className="mt-5 grid gap-4">
             <div className="grid gap-2">
-              <label className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Global city</label>
-              <Select value={selectedCityId} onValueChange={handleCityChange} disabled={isRunning}>
+              <label className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Global command search</label>
+              <MarketCommandSearch
+                initialValue={selectedAddress}
+                radiusKm={radiusKm}
+                onSelect={handleSearchSelect}
+                placeholder="Search Chandigarh Sector 17, Chennai, Bengaluru..."
+              />
+              <p className="text-xs font-semibold leading-5 text-slate-500">
+                Search any city, market, or sector. The command pin and synthetic 400k engine will re-center around the selected result.
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <label className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Preset city shortcuts</label>
+              <Select value={isPresetCity ? selectedCityId : undefined} onValueChange={handleCityChange} disabled={isRunning}>
                 <SelectTrigger className="h-12 rounded-2xl border-slate-200 bg-white text-sm font-bold">
-                  <SelectValue placeholder="Choose a city" />
+                  <SelectValue placeholder={isPresetCity ? "Choose a city" : `${draftGeoConfig.cityLabel}, ${draftGeoConfig.country} (custom pin)`} />
                 </SelectTrigger>
                 <SelectContent>
                   {GLOBAL_SIMULATION_CITIES.map((city) => (
                     <SelectItem key={city.id} value={city.id}>
-                      {city.label}, {city.country}
+                      {city.label}{city.stateCode ? `, ${city.stateCode}` : ""}, {city.country}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1654,7 +1782,7 @@ export function SimulationEngine({
                 <div>
                   <p className="text-sm font-black text-slate-950">{selectedAddress}</p>
                   <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
-                    Drop the pin anywhere on the map or use the global geocoder. The generator will rebuild its density cloud around this center.
+                    Drop the pin anywhere on the map, drag the map under the center pin, or use the global geocoder. The generator will rebuild its density cloud around this center.
                   </p>
                 </div>
               </div>
@@ -1699,6 +1827,7 @@ export function SimulationEngine({
                   lng,
                   address: `Pinned point ${formatCoordinates(lat, lng)}`,
                 })}
+                onViewportSettled={handleViewportSettled}
               />
               <Circle
                 center={[draftGeoConfig.center.lat, draftGeoConfig.center.lng]}
@@ -1768,6 +1897,31 @@ export function SimulationEngine({
                 ))
               )}
             </MapContainer>
+
+            <div className="pointer-events-none absolute left-4 top-4 z-[700] w-[min(26rem,calc(100%-2rem))]">
+              <div className="pointer-events-auto rounded-[1.35rem] border border-white/85 bg-white/96 p-3 shadow-[0_28px_70px_-32px_rgba(15,23,42,0.45)] backdrop-blur">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">HUD Search</p>
+                <MarketCommandSearch
+                  className="mt-2"
+                  initialValue={selectedAddress}
+                  radiusKm={radiusKm}
+                  onSelect={handleSearchSelect}
+                  placeholder="Fly to New Delhi, Chandigarh, Chennai..."
+                />
+                <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+                  Search a market or drag the map. The fixed center pin becomes the active simulation coordinate.
+                </p>
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute left-1/2 top-1/2 z-[650] -translate-x-1/2 -translate-y-1/2">
+              <div className="relative flex h-12 w-12 items-center justify-center">
+                <span className="absolute h-10 w-10 rounded-full border border-indigo-500/30 bg-indigo-500/10 shadow-[0_0_0_8px_rgba(79,70,229,0.08)]" />
+                <span className="absolute h-3 w-3 rounded-full bg-indigo-600 ring-4 ring-white" />
+                <span className="absolute h-px w-12 bg-indigo-500/40" />
+                <span className="absolute h-12 w-px bg-indigo-500/40" />
+              </div>
+            </div>
 
             {selectedScenario !== "baseline" && (
               <>
@@ -2407,12 +2561,21 @@ function SimulationMapViewport({
 
 function SimulationMapEvents({
   onSelect,
+  onViewportSettled,
 }: {
   onSelect: (lat: number, lng: number) => void;
+  onViewportSettled: (center: { lat: number; lng: number }) => void;
 }) {
   useMapEvents({
     click: (event) => {
       onSelect(event.latlng.lat, event.latlng.lng);
+    },
+    moveend: (event) => {
+      const center = event.target.getCenter();
+      onViewportSettled({
+        lat: center.lat,
+        lng: center.lng,
+      });
     },
   });
 

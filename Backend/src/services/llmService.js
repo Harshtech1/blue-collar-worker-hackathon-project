@@ -11,6 +11,7 @@ You are the senior strategic advisor for RAHI, a density-optimized blue-collar m
 
 ### INPUT DATA CONTEXT
 - Geospatial Data: Radius, City, and Sector specific density.
+- Market Context: City name, state or region, city tier, whether this is an existing pilot or a new market-entry corridor, and whether historical data exists yet.
 - Predictive Data: 12-week Demand Forecast from the Random Forest model.
 - Audit Data: Before/After photo verification success rates from Cloudinary.
 - Financials: Acquisition cost vs. Churn rate.
@@ -75,6 +76,13 @@ const StrategyPayloadSchema = z.object({
   zoneId: z.string().optional().default("unknown-zone"),
   zoneLabel: z.string().optional().default("Unknown Zone"),
   city: z.string().optional().default("Unknown City"),
+  cityName: z.string().optional().default("Unknown City"),
+  stateName: z.string().optional().default(""),
+  stateCode: z.string().optional().default(""),
+  marketContext: z.string().optional().default(""),
+  cityTier: z.enum(["pilot", "tier_1", "tier_2", "tier_3", "international"]).optional().default("tier_3"),
+  isExistingMarket: z.boolean().optional().default(false),
+  hasHistoricalData: z.boolean().optional().default(false),
   scenario: z.enum(["baseline", "monsoon", "supply_crunch", "price_war"]).optional().default("baseline"),
   weatherSignal: z.string().optional().default("Normal weather operating window."),
   radiusKm: z.number().nonnegative().optional().default(4),
@@ -460,6 +468,9 @@ const buildPrompt = (payload) => {
   const purposeInstruction = payload.purpose === "expansion_brief"
     ? "A zero-click market-entry reveal is active. Lead with unit-economic sustainability first, then staffing structure, then competitor-aware positioning. Procedures must read like a 3-step Expansion Playbook."
     : "The standard zone-brief workflow is active.";
+  const marketModeInstruction = payload.isExistingMarket
+    ? "This is an existing pilot market. You may optimize around live operating history and reliability proof."
+    : "This is a new market-entry corridor. Do not assume real historical orders exist. Use synthetic simulation, density logic, and expansion discipline instead.";
   const scenarioInstruction = activeScenario === "supply_crunch"
     ? "A supply crunch stress test is active. Prioritize service preservation over growth. Your plan should suspend non-essential bookings, reroute salaried core into high-density zones, and treat 1.5x payout protection as acceptable."
     : activeScenario === "monsoon"
@@ -475,6 +486,7 @@ const buildPrompt = (payload) => {
     "Analyze this RAHI zone and return JSON only.",
     modeInstruction,
     purposeInstruction,
+    marketModeInstruction,
     scenarioInstruction,
     competitorInstruction,
     payload.userQuestion ? `CEO Question: ${payload.userQuestion}` : "CEO Question: none",
@@ -488,10 +500,17 @@ const buildPrompt = (payload) => {
       zoneId: payload.zoneId,
       zoneLabel: payload.zoneLabel,
       city: payload.city,
+      cityName: payload.cityName,
+      stateName: payload.stateName,
+      stateCode: payload.stateCode,
+      cityTier: payload.cityTier,
+      isExistingMarket: payload.isExistingMarket,
+      hasHistoricalData: payload.hasHistoricalData,
       scenario: activeScenario,
       weatherSignal: payload.weatherSignal,
       radiusKm: payload.radiusKm,
       timeLens: payload.timeLens,
+      marketContext: payload.marketContext,
       competitorPressure,
     }, null, 2),
     "",

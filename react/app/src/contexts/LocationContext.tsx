@@ -17,17 +17,44 @@ interface LocationContextType {
 
 const LocationContext = createContext<LocationContextType | undefined>(undefined);
 
+function readStoredLocation(): LocationData | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const saved = window.localStorage.getItem('user_location');
+    if (!saved) {
+      return null;
+    }
+
+    const parsed = JSON.parse(saved);
+    if (
+      parsed &&
+      typeof parsed.lat === 'number' &&
+      typeof parsed.lng === 'number' &&
+      typeof parsed.address === 'string'
+    ) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn('Ignoring invalid stored location payload.', error);
+    window.localStorage.removeItem('user_location');
+  }
+
+  return null;
+}
+
 export function LocationProvider({ children }: { children: ReactNode }) {
-  const [location, setLocationState] = useState<LocationData | null>(() => {
-    const saved = localStorage.getItem('user_location');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [location, setLocationState] = useState<LocationData | null>(() => readStoredLocation());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const setLocation = (newLocation: LocationData) => {
     setLocationState(newLocation);
-    localStorage.setItem('user_location', JSON.stringify(newLocation));
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('user_location', JSON.stringify(newLocation));
+    }
   };
 
   const reverseGeocode = async (lat: number, lng: number): Promise<LocationData> => {

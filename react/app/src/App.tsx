@@ -64,6 +64,7 @@ import ServiceCardDemo from "./pages/ServiceCardDemo";
 import JobLog from "@/components/job-log/JobLog";
 import WorkerMapDashboard from "@/components/maps/WorkerMapDashboard";
 import ThekedarMapHub from "@/components/maps/ThekedarMapHub";
+import WarRoomDashboard from "./pages/thekedar/WarRoomDashboard";
 
 
 // PLACEHOLDERS FOR CRASH TESTING
@@ -297,6 +298,7 @@ const App = () => {
                       <Route path="earnings" element={<ThekedarEarnings />} />
                       <Route path="schedule" element={<ThekedarSchedule />} />
                       <Route path="map" element={<ThekedarMapHub />} />
+                      <Route path="war-room" element={<WarRoomDashboard />} />
                       <Route path="profile" element={<ThekedarProfile />} />
                       <Route path="settings" element={<ThekedarSettings />} />
                     </Route>

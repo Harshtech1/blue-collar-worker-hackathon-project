@@ -50,6 +50,8 @@ export interface GlobalSimulationCity {
   id: string;
   label: string;
   country: string;
+  stateName?: string;
+  stateCode?: string;
   lat: number;
   lng: number;
   demandScale: number;
@@ -60,10 +62,28 @@ export interface GlobalSimulationCity {
   serviceMix: Array<{ type: string; weight: number }>;
 }
 
+export type MarketTier = "pilot" | "tier_1" | "tier_2" | "tier_3" | "international";
+
+export interface MarketAddressContext {
+  cityName?: string;
+  stateName?: string;
+  stateCode?: string;
+  country?: string;
+  locality?: string;
+  displayName?: string;
+}
+
 export interface SimulationGeoConfig {
   cityId: string;
   cityLabel: string;
+  stateName: string;
+  stateCode: string;
   country: string;
+  marketLabel: string;
+  marketContext: string;
+  cityTier: MarketTier;
+  isExistingMarket: boolean;
+  hasHistoricalData: boolean;
   center: {
     lat: number;
     lng: number;
@@ -116,6 +136,128 @@ const DEFAULT_SERVICE_MIX = [
   { type: "PestControl", weight: 6 },
 ];
 
+const MARKET_TIER_PROFILES: Record<MarketTier, {
+  demandScale: number;
+  workerScale: number;
+  emergencyScale: number;
+  marketingScale: number;
+  historicalTraffic: number;
+}> = {
+  pilot: {
+    demandScale: 0.92,
+    workerScale: 0.84,
+    emergencyScale: 0.11,
+    marketingScale: 0.9,
+    historicalTraffic: 0.93,
+  },
+  tier_1: {
+    demandScale: 1.34,
+    workerScale: 1.21,
+    emergencyScale: 0.15,
+    marketingScale: 1.38,
+    historicalTraffic: 1.24,
+  },
+  tier_2: {
+    demandScale: 1.12,
+    workerScale: 1.03,
+    emergencyScale: 0.13,
+    marketingScale: 1.14,
+    historicalTraffic: 1.08,
+  },
+  tier_3: {
+    demandScale: 0.98,
+    workerScale: 0.91,
+    emergencyScale: 0.1,
+    marketingScale: 0.98,
+    historicalTraffic: 0.97,
+  },
+  international: {
+    demandScale: 1.2,
+    workerScale: 1.08,
+    emergencyScale: 0.12,
+    marketingScale: 1.2,
+    historicalTraffic: 1.12,
+  },
+};
+
+const TIER_ONE_CITY_NAMES = new Set([
+  "ahmedabad",
+  "bengaluru",
+  "bangalore",
+  "chennai",
+  "delhi",
+  "new delhi",
+  "gurugram",
+  "hyderabad",
+  "kolkata",
+  "mumbai",
+  "new delhi municipal council",
+  "noida",
+  "pune",
+]);
+
+const TIER_TWO_CITY_NAMES = new Set([
+  "bhopal",
+  "chandigarh",
+  "coimbatore",
+  "indore",
+  "jaipur",
+  "kochi",
+  "lucknow",
+  "nagpur",
+  "patna",
+  "surat",
+  "vadodara",
+  "visakhapatnam",
+]);
+
+const KNOWN_CITY_ALIASES: Record<string, string> = {
+  "bangalore": "bengaluru",
+  "bengaluru urban": "bengaluru",
+  "delhi": "new-delhi",
+  "nct of delhi": "new-delhi",
+  "new delhi": "new-delhi",
+  "agra district": "agra",
+};
+
+const INDIAN_STATE_CODES: Record<string, string> = {
+  "andhra pradesh": "AP",
+  "arunachal pradesh": "AR",
+  "assam": "AS",
+  "bihar": "BR",
+  "chandigarh": "CH",
+  "chhattisgarh": "CG",
+  "dadra and nagar haveli and daman and diu": "DN",
+  "delhi": "DL",
+  "goa": "GA",
+  "gujarat": "GJ",
+  "haryana": "HR",
+  "himachal pradesh": "HP",
+  "jammu and kashmir": "JK",
+  "jharkhand": "JH",
+  "karnataka": "KA",
+  "kerala": "KL",
+  "ladakh": "LA",
+  "madhya pradesh": "MP",
+  "maharashtra": "MH",
+  "manipur": "MN",
+  "meghalaya": "ML",
+  "mizoram": "MZ",
+  "nagaland": "NL",
+  "odisha": "OD",
+  "orissa": "OD",
+  "puducherry": "PY",
+  "punjab": "PB",
+  "rajasthan": "RJ",
+  "sikkim": "SK",
+  "tamil nadu": "TN",
+  "telangana": "TS",
+  "tripura": "TR",
+  "uttar pradesh": "UP",
+  "uttarakhand": "UK",
+  "west bengal": "WB",
+};
+
 export const DEFAULT_SIMULATION_CITY_ID = "agra";
 
 export const GLOBAL_SIMULATION_CITIES: GlobalSimulationCity[] = [
@@ -123,6 +265,8 @@ export const GLOBAL_SIMULATION_CITIES: GlobalSimulationCity[] = [
     id: "agra",
     label: "Agra",
     country: "India",
+    stateName: "Uttar Pradesh",
+    stateCode: "UP",
     lat: 27.1767,
     lng: 78.0081,
     demandScale: 0.92,
@@ -145,6 +289,8 @@ export const GLOBAL_SIMULATION_CITIES: GlobalSimulationCity[] = [
     id: "bengaluru",
     label: "Bengaluru",
     country: "India",
+    stateName: "Karnataka",
+    stateCode: "KA",
     lat: 12.9716,
     lng: 77.5946,
     demandScale: 1.28,
@@ -167,6 +313,8 @@ export const GLOBAL_SIMULATION_CITIES: GlobalSimulationCity[] = [
     id: "mumbai",
     label: "Mumbai",
     country: "India",
+    stateName: "Maharashtra",
+    stateCode: "MH",
     lat: 19.076,
     lng: 72.8777,
     demandScale: 1.42,
@@ -189,6 +337,8 @@ export const GLOBAL_SIMULATION_CITIES: GlobalSimulationCity[] = [
     id: "new-delhi",
     label: "New Delhi",
     country: "India",
+    stateName: "Delhi",
+    stateCode: "DL",
     lat: 28.6139,
     lng: 77.209,
     demandScale: 1.38,
@@ -532,6 +682,119 @@ const priceWarServiceMultiplier: Record<string, number> = {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+const normalizeGeoToken = (value: string | undefined | null) => (
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+);
+
+const slugifyMarketId = (value: string) => (
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "market"
+);
+
+const toTitleCase = (value: string) => (
+  value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+);
+
+const resolveIndianStateCode = (stateName: string, fallbackCode = "") => {
+  const normalized = normalizeGeoToken(stateName);
+  if (normalized && INDIAN_STATE_CODES[normalized]) {
+    return INDIAN_STATE_CODES[normalized];
+  }
+
+  if (fallbackCode) {
+    return fallbackCode.toUpperCase().replace(/^IN-/, "").slice(-2);
+  }
+
+  const initials = stateName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("")
+    .slice(0, 2);
+
+  return initials;
+};
+
+const resolveKnownSimulationCityByLabel = (cityName: string) => {
+  const normalized = normalizeGeoToken(cityName);
+  const aliasId = KNOWN_CITY_ALIASES[normalized];
+  if (aliasId) {
+    return getGlobalSimulationCity(aliasId);
+  }
+
+  return GLOBAL_SIMULATION_CITIES.find((city) => normalizeGeoToken(city.label) === normalized) || null;
+};
+
+const resolveMarketTier = (cityName: string, country: string, existingMarket: boolean): MarketTier => {
+  if (existingMarket) return "pilot";
+
+  const normalizedCity = normalizeGeoToken(cityName);
+  if (normalizeGeoToken(country) !== "india") {
+    return "international";
+  }
+
+  if (TIER_ONE_CITY_NAMES.has(normalizedCity)) {
+    return "tier_1";
+  }
+
+  if (TIER_TWO_CITY_NAMES.has(normalizedCity)) {
+    return "tier_2";
+  }
+
+  return "tier_3";
+};
+
+const buildMarketContext = ({
+  cityName,
+  stateName,
+  stateCode,
+  country,
+  cityTier,
+  isExistingMarket,
+  hasHistoricalData,
+  radiusKm,
+}: {
+  cityName: string;
+  stateName: string;
+  stateCode: string;
+  country: string;
+  cityTier: MarketTier;
+  isExistingMarket: boolean;
+  hasHistoricalData: boolean;
+  radiusKm: number;
+}) => {
+  const operatingMode = isExistingMarket
+    ? "Existing pilot optimization"
+    : "Market entry expansion";
+  const tierLabel = cityTier === "pilot"
+    ? "pilot market"
+    : cityTier === "tier_1"
+      ? "Tier-1 metro"
+      : cityTier === "tier_2"
+        ? "Tier-2 growth market"
+        : cityTier === "tier_3"
+          ? "emerging market"
+          : "international city";
+  const historyLabel = hasHistoricalData
+    ? "historical order density is available"
+    : "historical orders are unavailable, so synthetic launch modeling must lead";
+  const stateLabel = stateCode || stateName
+    ? `${stateName}${stateCode ? ` (${stateCode})` : ""}`
+    : country;
+
+  return `${operatingMode}. ${toTitleCase(cityName)} in ${stateLabel} is being evaluated as a ${tierLabel} inside a ${radiusKm.toFixed(0)} km command radius, and ${historyLabel}.`;
+};
+
 interface VirtualSectorSeed {
   id: string;
   label: string;
@@ -647,6 +910,86 @@ export const getGlobalSimulationCity = (cityId: string) => (
   || GLOBAL_SIMULATION_CITIES[0]
 );
 
+export const buildDynamicSimulationGeoConfig = ({
+  center,
+  radiusKm = 12,
+  address,
+  fallbackCityId,
+}: {
+  center: { lat: number; lng: number };
+  radiusKm?: number;
+  address?: MarketAddressContext;
+  fallbackCityId?: string;
+}): SimulationGeoConfig => {
+  const fallbackCity = fallbackCityId ? getGlobalSimulationCity(fallbackCityId) : null;
+  const resolvedCityName = address?.cityName?.trim()
+    || fallbackCity?.label
+    || "Command Market";
+  const resolvedCountry = address?.country?.trim()
+    || fallbackCity?.country
+    || "India";
+  const matchedKnownCity = resolveKnownSimulationCityByLabel(resolvedCityName);
+  const matchedCity = matchedKnownCity
+    || (!address?.cityName?.trim() ? fallbackCity : null);
+  const isExistingMarket = matchedCity?.id === DEFAULT_SIMULATION_CITY_ID;
+  const cityTier = resolveMarketTier(resolvedCityName, resolvedCountry, isExistingMarket);
+  const profile = MARKET_TIER_PROFILES[cityTier];
+  const stateName = address?.stateName?.trim()
+    || matchedCity?.stateName
+    || "";
+  const stateCode = resolveIndianStateCode(
+    stateName,
+    address?.stateCode || matchedCity?.stateCode || "",
+  );
+  const cityId = matchedCity?.id
+    || slugifyMarketId(`${resolvedCityName}-${stateCode || resolvedCountry}`);
+  const cityLabel = matchedCity?.label || toTitleCase(resolvedCityName);
+  const nextRadiusKm = clamp(Number(radiusKm.toFixed(1)), 1, 50);
+  const demandScale = matchedCity?.demandScale ?? profile.demandScale;
+  const workerScale = matchedCity?.workerScale ?? profile.workerScale;
+  const emergencyScale = matchedCity?.emergencyScale ?? profile.emergencyScale;
+  const marketingScale = matchedCity?.marketingScale ?? profile.marketingScale;
+  const historicalTraffic = matchedCity?.historicalTraffic ?? profile.historicalTraffic;
+  const serviceMix = matchedCity?.serviceMix?.length
+    ? matchedCity.serviceMix.map((service) => ({ ...service }))
+    : getDefaultServiceMix();
+  const marketLabel = address?.displayName?.trim()
+    || [cityLabel, stateCode || stateName, resolvedCountry].filter(Boolean).join(", ");
+
+  return {
+    cityId,
+    cityLabel,
+    stateName,
+    stateCode,
+    country: resolvedCountry,
+    marketLabel,
+    marketContext: buildMarketContext({
+      cityName: cityLabel,
+      stateName,
+      stateCode,
+      country: resolvedCountry,
+      cityTier,
+      isExistingMarket,
+      hasHistoricalData: isExistingMarket,
+      radiusKm: nextRadiusKm,
+    }),
+    cityTier,
+    isExistingMarket,
+    hasHistoricalData: isExistingMarket,
+    center: {
+      lat: Number(center.lat.toFixed(6)),
+      lng: Number(center.lng.toFixed(6)),
+    },
+    radiusKm: nextRadiusKm,
+    demandScale,
+    workerScale,
+    emergencyScale,
+    marketingScale,
+    historicalTraffic,
+    serviceMix,
+  };
+};
+
 export const buildSimulationGeoConfig = ({
   cityId = DEFAULT_SIMULATION_CITY_ID,
   center,
@@ -658,22 +1001,21 @@ export const buildSimulationGeoConfig = ({
 } = {}): SimulationGeoConfig => {
   const city = getGlobalSimulationCity(cityId);
 
-  return {
-    cityId: city.id,
-    cityLabel: city.label,
-    country: city.country,
+  return buildDynamicSimulationGeoConfig({
     center: {
-      lat: Number((center?.lat ?? city.lat).toFixed(6)),
-      lng: Number((center?.lng ?? city.lng).toFixed(6)),
+      lat: center?.lat ?? city.lat,
+      lng: center?.lng ?? city.lng,
     },
-    radiusKm: clamp(Number(radiusKm.toFixed(1)), 1, 50),
-    demandScale: city.demandScale,
-    workerScale: city.workerScale,
-    emergencyScale: city.emergencyScale,
-    marketingScale: city.marketingScale,
-    historicalTraffic: city.historicalTraffic,
-    serviceMix: city.serviceMix.length > 0 ? city.serviceMix.map((service) => ({ ...service })) : getDefaultServiceMix(),
-  };
+    radiusKm,
+    fallbackCityId: city.id,
+    address: {
+      cityName: city.label,
+      stateName: city.stateName,
+      stateCode: city.stateCode,
+      country: city.country,
+      displayName: [city.label, city.stateCode || city.stateName, city.country].filter(Boolean).join(", "),
+    },
+  });
 };
 
 const buildVirtualSectors = (geoConfig: SimulationGeoConfig): VirtualSectorSeed[] => (

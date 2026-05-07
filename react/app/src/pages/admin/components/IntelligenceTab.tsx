@@ -55,18 +55,23 @@ import {
   type SimulationPhase,
   type SimulationTelemetryPayload,
 } from "./SimulationEngine";
+import { MarketCommandSearch } from "@/components/maps/MarketCommandSearch";
+import { Slider } from "@/components/ui/slider";
 import {
   StrategyTerminal,
   type StrategyTerminalBrief as StrategyBrief,
   type StrategyTerminalStatus,
 } from "./StrategyTerminal";
 import {
+  buildDynamicSimulationGeoConfig,
+  buildSimulationGeoConfig,
   DEFAULT_SIMULATION_CITY_ID,
   generateSimulationBatch,
   getGlobalSimulationCity,
   sectorSeeds,
   type SimulationGeoConfig,
 } from "@/utils/simulationData";
+import type { GeocodedMarketResult } from "@/utils/geocoding";
 
 interface DensityAnalysis {
   area: string;
@@ -422,10 +427,12 @@ const strategyLabel = {
 };
 
 const strategyTone = {
-  salaried_core: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  hybrid: "border-amber-200 bg-amber-50 text-amber-800",
-  freelancer_pool: "border-sky-200 bg-sky-50 text-sky-800",
+  salaried_core: "border-emerald-300/20 bg-emerald-300/10 text-emerald-100",
+  hybrid: "border-amber-300/20 bg-amber-300/10 text-amber-100",
+  freelancer_pool: "border-sky-300/20 bg-sky-300/10 text-sky-100",
 };
+
+const monoMetricFont = "\"JetBrains Mono\", \"Fira Code\", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 const modeMeta: Record<IntelligenceMode, {
   label: string;
@@ -466,6 +473,18 @@ const timeLensMeta: Record<TimeLens, { label: string; descriptor: string }> = {
 };
 
 const AGRA_MAP_CENTER: [number, number] = [27.19, 78.02];
+const INITIAL_COMMAND_GEO_CONFIG = buildSimulationGeoConfig({
+  cityId: DEFAULT_SIMULATION_CITY_ID,
+  center: { lat: AGRA_MAP_CENTER[0], lng: AGRA_MAP_CENTER[1] },
+  radiusKm: 12,
+});
+const INITIAL_COMMAND_SELECTION: SimulationGeoSelectionPayload = {
+  geoConfig: INITIAL_COMMAND_GEO_CONFIG,
+  selectedAddress: INITIAL_COMMAND_GEO_CONFIG.marketLabel,
+  scenario: "baseline",
+  source: "bootstrap",
+  cityChanged: false,
+};
 
 const commandMapZones: CommandMapZone[] = sectorSeeds.map((seed) => ({
   id: seed.id,
@@ -629,6 +648,15 @@ const calculateDistanceKm = (
 };
 
 const buildExpansionSignalSnapshot = (geoConfig: SimulationGeoConfig): ExpansionSignalSnapshot => {
+  const cityTierMultiplier = geoConfig.cityTier === "tier_1"
+    ? 1.24
+    : geoConfig.cityTier === "tier_2"
+      ? 1.08
+      : geoConfig.cityTier === "tier_3"
+        ? 0.96
+        : geoConfig.cityTier === "international"
+          ? 1.18
+          : 0.9;
   const densityScore = Number(clampNumber(
     Number((geoConfig.demandScale * 1.16) + (geoConfig.emergencyScale * 2.25) + ((14 - geoConfig.radiusKm) * 0.035)),
     0.92,
@@ -638,7 +666,7 @@ const buildExpansionSignalSnapshot = (geoConfig: SimulationGeoConfig): Expansion
   const currentWorkers = Math.max(24, Math.round(geoConfig.workerScale * 78));
   const emergencyOrders = Math.max(3, Math.round(predictedDemand * geoConfig.emergencyScale * 0.38));
   const priceMultiplier = getPriceMultiplier(densityScore);
-  const acquisitionCost = Math.round(geoConfig.marketingScale * 5400);
+  const acquisitionCost = Math.round(geoConfig.marketingScale * 5400 * cityTierMultiplier);
   const auditCoverage = Math.round(clampNumber(
     82 + ((geoConfig.historicalTraffic - 1) * 24) + ((geoConfig.workerScale - 1) * 16),
     78,
@@ -649,8 +677,10 @@ const buildExpansionSignalSnapshot = (geoConfig: SimulationGeoConfig): Expansion
   const marginLift = Math.round((projectedRevenue * 0.28) - operatingCost);
 
   return {
-    routeId: `${geoConfig.cityId}-launch-ring`,
-    zoneLabel: `${geoConfig.cityLabel} Launch Corridor`,
+    routeId: `${geoConfig.cityId}-${geoConfig.hasHistoricalData ? "command-radius" : "launch-ring"}`,
+    zoneLabel: geoConfig.hasHistoricalData
+      ? `${geoConfig.cityLabel} Command Radius`
+      : `${geoConfig.cityLabel} Launch Corridor`,
     city: geoConfig.cityLabel,
     center: [geoConfig.center.lat, geoConfig.center.lng],
     radiusKm: geoConfig.radiusKm,
@@ -1243,6 +1273,7 @@ export function IntelligenceTab({
   const [resolvedEscalations, setResolvedEscalations] = useState<string[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [intelDockExpanded, setIntelDockExpanded] = useState(true);
   const [manualCoreWorkers, setManualCoreWorkers] = useState(4);
   const [latestSimulation, setLatestSimulation] = useState<SimulationCompletionPayload | null>(null);
   const [strategyBrief, setStrategyBrief] = useState<StrategyBrief | null>(null);
@@ -1250,6 +1281,7 @@ export function IntelligenceTab({
   const [strategyMessage, setStrategyMessage] = useState("Run the simulation or request a deep dive to generate the COO briefing.");
   const [strategyPendingSignal, setStrategyPendingSignal] = useState<string | null>(null);
   const [llmHealth, setLlmHealth] = useState<LlmHealthSummary | null>(null);
+  const [commandGeoSelection, setCommandGeoSelection] = useState<SimulationGeoSelectionPayload>(INITIAL_COMMAND_SELECTION);
   const [marketLeapState, setMarketLeapState] = useState<MarketLeapState | null>(null);
   const [selectedCoordinates, setSelectedCoordinates] = useState<{ lat: number; lng: number } | null>(null);
   const [logicLog, setLogicLog] = useState<LogicLogEntry[]>([
@@ -1370,6 +1402,7 @@ export function IntelligenceTab({
 
   useEffect(() => {
     const normalizedZoneId = findSector(routeZoneId).id;
+    setCommandGeoSelection(INITIAL_COMMAND_SELECTION);
     setMarketLeapState(null);
     setSelectedCoordinates(null);
     setStrategyPendingSignal(null);
@@ -1429,10 +1462,12 @@ export function IntelligenceTab({
     () => (marketLeapState ? buildExpansionSignalSnapshot(marketLeapState.geoConfig) : null),
     [marketLeapState],
   );
+  const isPinnedCommandMode = Boolean(marketLeapState);
   const isGlobalLeap = Boolean(
     marketLeapState
     && (
-      marketLeapState.geoConfig.cityId !== DEFAULT_SIMULATION_CITY_ID
+      !marketLeapState.geoConfig.hasHistoricalData
+      || marketLeapState.geoConfig.cityId !== DEFAULT_SIMULATION_CITY_ID
       || calculateDistanceKm(
         marketLeapState.geoConfig.center,
         { lat: AGRA_MAP_CENTER[0], lng: AGRA_MAP_CENTER[1] },
@@ -1457,7 +1492,7 @@ export function IntelligenceTab({
       .slice(0, selectedSectorId === "all" ? 72 : 24)
   ), [activeSector.id, selectedSectorId]);
   const globalPreviewSignals = useMemo(() => {
-    if (!isGlobalLeap || !marketLeapState) {
+    if (!isPinnedCommandMode || !marketLeapState) {
       return [] as Array<SimulationPreviewPoint & { city: string }>;
     }
 
@@ -1476,7 +1511,7 @@ export function IntelligenceTab({
       estimatedValue: point.estimatedValue,
       isEmergency: point.isEmergency,
     }));
-  }, [isGlobalLeap, marketLeapState]);
+  }, [isPinnedCommandMode, marketLeapState]);
 
   const demandSeries = useMemo(() => (
     buildDemandSeries(investorAnalytics, timeLens, activeSector)
@@ -1702,22 +1737,22 @@ export function IntelligenceTab({
     return "steady" as const;
   }, [activeSector.id, analysis.density_score, highlightedZoneId, latestSimulation?.highestSupplyGap, latestSimulation?.hottestSector, latestSimulation?.scenario, simulationRunning, strategyStatus]);
 
-  const displayRouteId = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.routeId : highlightedZoneId;
-  const displayRouteLabel = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.zoneLabel : highlightedMapZone.label;
-  const displayRouteCity = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.city : highlightedMapZone.city;
-  const displayDensityScore = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.densityScore : analysis.density_score;
-  const displayPredictedDemand = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.predictedDemand : analysis.predicted_demand;
-  const displayDemandGap = isGlobalLeap && marketLeapSnapshot
+  const displayRouteId = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.routeId : highlightedZoneId;
+  const displayRouteLabel = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.zoneLabel : highlightedMapZone.label;
+  const displayRouteCity = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.city : highlightedMapZone.city;
+  const displayDensityScore = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.densityScore : analysis.density_score;
+  const displayPredictedDemand = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.predictedDemand : analysis.predicted_demand;
+  const displayDemandGap = isPinnedCommandMode && marketLeapSnapshot
     ? marketLeapSnapshot.predictedDemand - Math.round(marketLeapSnapshot.predictedDemand * 0.74)
     : liveDemandGap;
-  const displayPriceMultiplier = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.priceMultiplier : priceMultiplier;
-  const displayAuditCoverage = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.auditCoverage : auditSignals.beforeAfterCoverage;
-  const commandMapCenter = isGlobalLeap && marketLeapSnapshot
+  const displayPriceMultiplier = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.priceMultiplier : priceMultiplier;
+  const displayAuditCoverage = isPinnedCommandMode && marketLeapSnapshot ? marketLeapSnapshot.auditCoverage : auditSignals.beforeAfterCoverage;
+  const commandMapCenter = isPinnedCommandMode && marketLeapSnapshot
     ? marketLeapSnapshot.center
     : selectedSectorId === "all"
       ? AGRA_MAP_CENTER
       : activeMapZone.center;
-  const commandMapZoom = isGlobalLeap ? 10 : selectedSectorId === "all" ? 11 : 12;
+  const commandMapZoom = isPinnedCommandMode ? 10 : selectedSectorId === "all" ? 11 : 12;
   const terminalScript = useMemo(() => (
     buildStrategyTerminalScript({
       status: strategyStatus,
@@ -1744,6 +1779,100 @@ export function IntelligenceTab({
 
   const canExecuteAiStrategy = Boolean(strategyBrief && latestSimulation);
 
+  const applyCommandGeoSelection = useCallback((payload: SimulationGeoSelectionPayload) => {
+    setCommandGeoSelection(payload);
+    setSelectedCoordinates(payload.geoConfig.center);
+
+    const distanceFromAgra = calculateDistanceKm(
+      payload.geoConfig.center,
+      { lat: AGRA_MAP_CENTER[0], lng: AGRA_MAP_CENTER[1] },
+    );
+    const shouldUseCommandPinMode = payload.source !== "bootstrap" && (
+      !payload.geoConfig.isExistingMarket
+      || payload.source === "search"
+      || payload.source === "map_pin"
+      || payload.geoConfig.radiusKm !== INITIAL_COMMAND_GEO_CONFIG.radiusKm
+      || distanceFromAgra > 2
+    );
+
+    if (
+      payload.source !== "bootstrap"
+      && payload.cityChanged
+    ) {
+      appendLogicEntry(
+        `[SYSTEM] RE-CENTERING ENGINE: ${payload.geoConfig.cityLabel.toUpperCase()} DETECTED. LOAD BALANCING SIMULATION...`,
+        { tone: "warning", source: "system", tag: "STRICT_AUDIT" },
+      );
+    }
+
+    if (!payload.geoConfig.hasHistoricalData) {
+      setLatestSimulation(null);
+      setStrategyBrief(null);
+      setStrategyStatus("idle");
+      setStrategyMessage("Historical pilot data is unavailable here. The strategy lane is waiting for synthetic launch evidence or a market-entry brief.");
+    }
+
+    if (!shouldUseCommandPinMode) {
+      setMarketLeapState(null);
+      setStrategyPendingSignal(null);
+      lastMarketLeapRef.current = null;
+      return;
+    }
+
+    if (payload.source === "city_select" || payload.source === "map_pin" || payload.source === "search") {
+      const resolvedCity = getGlobalSimulationCity(payload.geoConfig.cityId)?.label || payload.geoConfig.cityLabel;
+      setStrategyPendingSignal(
+        payload.geoConfig.hasHistoricalData
+          ? `[DETECTED] COMMAND PIN ARMED: ${resolvedCity.toUpperCase()}. RE-SCOPING PILOT DENSITY...`
+          : `[DETECTED] ENTERING NEW MARKET: ${getExpansionMarketLabel(resolvedCity)}. CALIBRATING DENSITY PARAMETERS...`,
+      );
+    }
+
+    setMarketLeapState({
+      geoConfig: payload.geoConfig,
+      selectedAddress: payload.selectedAddress,
+      source: payload.source,
+      scenario: payload.scenario,
+    });
+  }, [appendLogicEntry]);
+
+  const handleHudMarketSelect = useCallback((result: GeocodedMarketResult) => {
+    const scenario = latestSimulation?.scenario ?? commandGeoSelection.scenario ?? "baseline";
+    applyCommandGeoSelection({
+      geoConfig: result.geoConfig,
+      selectedAddress: result.label,
+      scenario,
+      source: "search",
+      cityChanged: result.geoConfig.cityId !== commandGeoSelection.geoConfig.cityId,
+    });
+  }, [applyCommandGeoSelection, commandGeoSelection.geoConfig.cityId, commandGeoSelection.scenario, latestSimulation?.scenario]);
+
+  const handleCommandRadiusChange = useCallback((value: number[]) => {
+    const nextRadius = value[0];
+    if (!nextRadius) return;
+
+    const nextGeoConfig = buildDynamicSimulationGeoConfig({
+      center: commandGeoSelection.geoConfig.center,
+      radiusKm: nextRadius,
+      address: {
+        cityName: commandGeoSelection.geoConfig.cityLabel,
+        stateName: commandGeoSelection.geoConfig.stateName,
+        stateCode: commandGeoSelection.geoConfig.stateCode,
+        country: commandGeoSelection.geoConfig.country,
+        displayName: commandGeoSelection.selectedAddress,
+      },
+      fallbackCityId: commandGeoSelection.geoConfig.cityId,
+    });
+
+    applyCommandGeoSelection({
+      geoConfig: nextGeoConfig,
+      selectedAddress: commandGeoSelection.selectedAddress,
+      scenario: commandGeoSelection.scenario,
+      source: marketLeapState ? "map_pin" : "recenter",
+      cityChanged: false,
+    });
+  }, [applyCommandGeoSelection, commandGeoSelection, marketLeapState]);
+
   useEffect(() => {
     if (!logScrollerRef.current) return;
     logScrollerRef.current.scrollTop = logScrollerRef.current.scrollHeight;
@@ -1764,35 +1893,8 @@ export function IntelligenceTab({
   }, [activeSector.id, appendLogicEntry, competitorPulse.id, competitorPulseMessage]);
 
   const handleSimulationGeoConfigChange = useCallback((payload: SimulationGeoSelectionPayload) => {
-    setSelectedCoordinates(payload.geoConfig.center);
-
-    const distanceFromAgra = calculateDistanceKm(
-      payload.geoConfig.center,
-      { lat: AGRA_MAP_CENTER[0], lng: AGRA_MAP_CENTER[1] },
-    );
-    const returnedToAgra = payload.geoConfig.cityId === DEFAULT_SIMULATION_CITY_ID && distanceFromAgra <= 55;
-
-    if (returnedToAgra) {
-      setMarketLeapState(null);
-      setStrategyPendingSignal(null);
-      lastMarketLeapRef.current = null;
-      return;
-    }
-
-    if (payload.source === "city_select" || payload.source === "map_pin") {
-      const resolvedCity = getGlobalSimulationCity(payload.geoConfig.cityId)?.label || payload.geoConfig.cityLabel;
-      setStrategyPendingSignal(
-        `[DETECTED] ENTERING NEW MARKET: ${getExpansionMarketLabel(resolvedCity)}. CALIBRATING DENSITY PARAMETERS...`,
-      );
-    }
-
-    setMarketLeapState({
-      geoConfig: payload.geoConfig,
-      selectedAddress: payload.selectedAddress,
-      source: payload.source,
-      scenario: payload.scenario,
-    });
-  }, []);
+    applyCommandGeoSelection(payload);
+  }, [applyCommandGeoSelection]);
 
   const requestStrategyBrief = useCallback(async (
     options?: {
@@ -1896,6 +1998,15 @@ export function IntelligenceTab({
       zoneId: targetRouteId,
       zoneLabel: targetZoneLabel,
       city: targetCity,
+      cityName: targetGeoConfig?.cityLabel || (expansionSnapshot ? expansionSnapshot.city : activeSector.city),
+      stateName: targetGeoConfig?.stateName || "",
+      stateCode: targetGeoConfig?.stateCode || "",
+      marketContext: targetGeoConfig?.marketContext || (expansionSnapshot
+        ? `${targetZoneLabel} is being evaluated through synthetic launch modeling because historical orders are not yet available.`
+        : `${targetZoneLabel} is attached to the live pilot density stack.`),
+      cityTier: targetGeoConfig?.cityTier || (isGlobalLeap ? "tier_2" : "pilot"),
+      isExistingMarket: targetGeoConfig?.isExistingMarket ?? !expansionSnapshot,
+      hasHistoricalData: targetGeoConfig?.hasHistoricalData ?? !expansionSnapshot,
       scenarioType: purpose === "expansion_brief" ? "baseline" : (simulation?.scenario ?? "baseline"),
       scenario: purpose === "expansion_brief"
         ? "baseline"
@@ -2275,6 +2386,7 @@ export function IntelligenceTab({
   }, [selectedSeriesPoint]);
 
   const handleZoneSelection = (zoneId: string) => {
+    setCommandGeoSelection(INITIAL_COMMAND_SELECTION);
     setMarketLeapState(null);
     setSelectedCoordinates(null);
     setStrategyPendingSignal(null);
@@ -2441,9 +2553,13 @@ export function IntelligenceTab({
   };
 
   return (
-    <div className="space-y-8">
+    <div className="relative grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden bg-[#020617] text-slate-100">
       <CommandCenterMotionStyles />
-      <section className="relative overflow-hidden rounded-[2rem] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.16),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.18),_transparent_28%),linear-gradient(135deg,_#07111f_0%,_#0f172a_48%,_#10243d_100%)] p-6 text-white shadow-2xl shadow-slate-950/10 md:p-8">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(30,41,59,0.18),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(79,70,229,0.16),transparent_32%),linear-gradient(180deg,rgba(2,6,23,0.35),rgba(2,6,23,0.92))]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-[linear-gradient(180deg,rgba(15,23,42,0.66),transparent)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-[linear-gradient(0deg,rgba(2,6,23,0.92),transparent)]" />
+
+      <section className="relative z-10 mx-4 mt-4 overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.16),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.18),_transparent_28%),linear-gradient(135deg,_#07111f_0%,_#0f172a_48%,_#10243d_100%)] p-6 text-white shadow-2xl shadow-slate-950/10 md:p-8 xl:mx-5">
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
         {llmHealth?.mode === "fallback" && (
           <div className="pointer-events-none absolute right-6 top-6 z-20 rounded-full border border-amber-300/35 bg-amber-400/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-amber-100 shadow-[0_18px_45px_-24px_rgba(251,191,36,0.45)] backdrop-blur">
@@ -2554,7 +2670,7 @@ export function IntelligenceTab({
                   ]);
                 }}
                 disabled={loading}
-                className="inline-flex h-12 items-center gap-2 rounded-2xl bg-white px-4 text-sm font-black text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex h-12 items-center gap-2 rounded-2xl bg-emerald-400 px-4 text-sm font-black text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Sync live signals
@@ -2587,11 +2703,11 @@ export function IntelligenceTab({
 
       <section
         className={cn(
-          "overflow-hidden rounded-[1.8rem] border p-6 shadow-sm",
-          displayInterventionState.tone === "amber" && "border-amber-200 bg-[linear-gradient(135deg,_#fff7ed_0%,_#ffffff_42%,_#fffbeb_100%)]",
-          displayInterventionState.tone === "rose" && "border-rose-200 bg-[linear-gradient(135deg,_#fff1f2_0%,_#ffffff_42%,_#fff7ed_100%)]",
-          displayInterventionState.tone === "sky" && "border-sky-200 bg-[linear-gradient(135deg,_#f0f9ff_0%,_#ffffff_42%,_#eff6ff_100%)]",
-          displayInterventionState.tone === "emerald" && "border-emerald-200 bg-[linear-gradient(135deg,_#ecfdf5_0%,_#ffffff_42%,_#f0fdf4_100%)]",
+          "relative z-10 mx-4 overflow-hidden rounded-[1.8rem] border p-5 shadow-[0_28px_80px_-48px_rgba(2,6,23,1)] backdrop-blur-2xl xl:mx-5 xl:p-6",
+          displayInterventionState.tone === "amber" && "border-amber-300/18 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.16),transparent_32%),linear-gradient(135deg,rgba(8,15,29,0.94)_0%,rgba(17,24,39,0.96)_48%,rgba(41,24,7,0.98)_100%)]",
+          displayInterventionState.tone === "rose" && "border-rose-300/18 bg-[radial-gradient(circle_at_top_left,rgba(244,63,94,0.18),transparent_32%),linear-gradient(135deg,rgba(8,15,29,0.94)_0%,rgba(17,24,39,0.96)_48%,rgba(48,12,24,0.98)_100%)]",
+          displayInterventionState.tone === "sky" && "border-sky-300/18 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_32%),linear-gradient(135deg,rgba(8,15,29,0.94)_0%,rgba(17,24,39,0.96)_48%,rgba(5,32,48,0.98)_100%)]",
+          displayInterventionState.tone === "emerald" && "border-emerald-300/18 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_32%),linear-gradient(135deg,rgba(8,15,29,0.94)_0%,rgba(17,24,39,0.96)_48%,rgba(6,39,31,0.98)_100%)]",
         )}
       >
         <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
@@ -2600,35 +2716,35 @@ export function IntelligenceTab({
               <span
                 className={cn(
                   "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em]",
-                  displayInterventionState.tone === "amber" && "border-amber-200 bg-amber-100 text-amber-900",
-                  displayInterventionState.tone === "rose" && "border-rose-200 bg-rose-100 text-rose-900",
-                  displayInterventionState.tone === "sky" && "border-sky-200 bg-sky-100 text-sky-900",
-                  displayInterventionState.tone === "emerald" && "border-emerald-200 bg-emerald-100 text-emerald-900",
+                  displayInterventionState.tone === "amber" && "border-amber-300/24 bg-amber-300/12 text-amber-100",
+                  displayInterventionState.tone === "rose" && "border-rose-300/24 bg-rose-300/12 text-rose-100",
+                  displayInterventionState.tone === "sky" && "border-sky-300/24 bg-sky-300/12 text-sky-100",
+                  displayInterventionState.tone === "emerald" && "border-emerald-300/24 bg-emerald-300/12 text-emerald-100",
                 )}
               >
                 <span
                   className={cn(
                     "h-2.5 w-2.5 rounded-full",
-                    displayInterventionState.tone === "amber" && "bg-amber-500",
-                    displayInterventionState.tone === "rose" && "bg-rose-500",
-                    displayInterventionState.tone === "sky" && "bg-sky-500",
-                    displayInterventionState.tone === "emerald" && "bg-emerald-500",
+                    displayInterventionState.tone === "amber" && "bg-amber-400",
+                    displayInterventionState.tone === "rose" && "bg-rose-400",
+                    displayInterventionState.tone === "sky" && "bg-sky-400",
+                    displayInterventionState.tone === "emerald" && "bg-emerald-400",
                   )}
                 />
                 {displayInterventionState.badge}
               </span>
-              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+              <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em] text-slate-300">
                 Decision-first analytics
               </span>
             </div>
 
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">
               Immediate operating recommendation for {displayRouteLabel}
             </p>
-            <h3 className="mt-3 max-w-4xl text-3xl font-black leading-tight text-slate-950 md:text-4xl">
+            <h3 className="mt-3 max-w-4xl text-2xl font-black leading-tight text-white md:text-[2rem]">
               {displayInterventionState.headline}
             </h3>
-            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-slate-600 md:text-base">
+            <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-slate-300 md:text-base">
               {displayInterventionState.summary}
             </p>
 
@@ -2636,9 +2752,9 @@ export function IntelligenceTab({
               {["Map", "Model", "Strategy", "Intervention"].map((step, index) => (
                 <span
                   key={step}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-600"
+                  className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300"
                 >
-                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-950 text-[10px] text-white">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-slate-950">
                     {index + 1}
                   </span>
                   {step}
@@ -2647,38 +2763,38 @@ export function IntelligenceTab({
             </div>
 
             <div className={cn(
-              "mt-5 max-w-3xl rounded-[1.4rem] border bg-white/90 p-4 shadow-sm",
+              "mt-5 max-w-3xl rounded-[1.4rem] border bg-white/[0.05] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]",
               isGlobalLeap
-                ? "border-emerald-200 shadow-emerald-100/60"
-                : "border-amber-200 shadow-amber-100/60",
+                ? "border-emerald-300/18 shadow-emerald-900/20"
+                : "border-amber-300/18 shadow-amber-900/20",
             )}>
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
                   <p className={cn(
                     "text-[10px] font-black uppercase tracking-[0.22em]",
-                    isGlobalLeap ? "text-emerald-700" : "text-amber-700",
+                    isGlobalLeap ? "text-emerald-200" : "text-amber-200",
                   )}>
                     {isGlobalLeap ? "Market Entry Signal" : "Competitor Pulse"}
                   </p>
-                  <h4 className="mt-2 text-base font-black text-slate-950 md:text-lg">
-                    {isGlobalLeap && marketLeapSnapshot
-                      ? `${marketLeapSnapshot.city} launch ring is active at ${marketLeapSnapshot.radiusKm} km around the command pin.`
+                  <h4 className="mt-2 text-base font-black text-white md:text-lg">
+                    {isPinnedCommandMode && marketLeapSnapshot
+                      ? `${marketLeapSnapshot.city} ${isGlobalLeap ? "launch ring" : "command radius"} is active at ${marketLeapSnapshot.radiusKm} km around the command pin.`
                       : `${competitorPulse.competitor} launched ${competitorPulse.discountPercent}% discount in ${competitorPulse.zoneLabel}`}
                   </h4>
-                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
-                    {isGlobalLeap && marketLeapState
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-300">
+                    {isPinnedCommandMode && marketLeapState
                       ? `${marketLeapState.selectedAddress}. Burn protection is the lead move; competitor positioning stays in reserve until the launch corridor proves contribution discipline.`
                       : competitorPulse.response}
                   </p>
                 </div>
                 <div className={cn(
                   "inline-flex items-center gap-2 self-start rounded-full border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em]",
-                  isGlobalLeap
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                    : "border-indigo-200 bg-indigo-50 text-indigo-700",
+                  isPinnedCommandMode
+                    ? "border-emerald-300/18 bg-emerald-300/12 text-emerald-100"
+                    : "border-indigo-300/18 bg-indigo-300/12 text-indigo-100",
                 )}>
-                  {isGlobalLeap ? <MapPin className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-                  {isGlobalLeap ? "Global Leap Ready" : "Verified Pro Counter"}
+                  {isPinnedCommandMode ? <MapPin className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                  {isPinnedCommandMode ? (isGlobalLeap ? "Global Leap Ready" : "Command Radius Live") : "Verified Pro Counter"}
                 </div>
               </div>
             </div>
@@ -2696,21 +2812,21 @@ export function IntelligenceTab({
               <button
                 type="button"
                 onClick={() => handleInterventionAction(displayInterventionState.primaryAction.key)}
-                className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
+                className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-emerald-400 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-slate-950 transition hover:-translate-y-0.5 hover:bg-emerald-300"
               >
                 {displayInterventionState.primaryAction.label}
               </button>
               <button
                 type="button"
                 onClick={() => handleInterventionAction(displayInterventionState.secondaryAction.key)}
-                className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950"
+                className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05] px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:-translate-y-0.5 hover:bg-white/[0.12]"
               >
                 {displayInterventionState.secondaryAction.label}
               </button>
               <button
                 type="button"
                 onClick={jumpToStrategyTerminal}
-                className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-emerald-800 transition hover:-translate-y-0.5 hover:bg-emerald-100"
+                className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05] px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-emerald-100 transition hover:-translate-y-0.5 hover:bg-white/[0.12]"
               >
                 Open Strategy Lane
               </button>
@@ -2719,32 +2835,36 @@ export function IntelligenceTab({
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-6 py-5">
+      <section className="relative z-10 grid min-h-0 gap-4 overflow-hidden px-4 pb-4 pt-4 xl:grid-cols-[minmax(0,1fr)_25rem] xl:px-5">
+        <div className="h-full overflow-hidden rounded-[1.8rem] border border-white/10 bg-slate-950/78 shadow-[0_32px_90px_-44px_rgba(2,6,23,1)] backdrop-blur-2xl">
+          <div className="border-b border-white/10 px-6 py-5">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Geospatial command map</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Geospatial command map</p>
+                <h3 className="mt-2 text-2xl font-black text-white">
                   {isGlobalLeap
                     ? "Launch corridor map with zero-click market-entry intelligence"
+                    : isPinnedCommandMode
+                      ? "Command-pin map with radius-driven market intelligence"
                     : "Sector shape map with route-aware density context"}
                 </h3>
-                <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
+                <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-300">
                   {isGlobalLeap && marketLeapState
                     ? `The command surface has left Agra operating mode. ${marketLeapState.selectedAddress} is now the live launch pin, and the strategy lane is drafting a burn-first market-entry playbook automatically.`
+                    : isPinnedCommandMode && marketLeapState
+                      ? `${marketLeapState.selectedAddress} is now the active command radius. The map, simulation engine, and strategy terminal are reading the same pinned coordinates in real time.`
                     : "Click any Agra zone to switch the route, fetch zone-specific density, and open the exact control surface for that geography."}
                 </p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Dynamic route</p>
-                <p className="mt-2 text-sm font-black text-slate-950">/admin-portal-2026/intelligence/{displayRouteId}</p>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.05] px-4 py-3 text-right">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Dynamic route</p>
+                <p className="mt-2 text-sm font-black text-white" style={{ fontFamily: monoMetricFont }}>/admin-portal-2026/intelligence/{displayRouteId}</p>
               </div>
             </div>
           </div>
 
-          <div className="grid min-h-[34rem] xl:grid-cols-[minmax(0,1fr)_21rem]">
-            <div className="relative min-h-[34rem] border-b border-slate-200 xl:border-b-0 xl:border-r">
+          <div className="grid min-h-[34rem] xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_21rem]">
+            <div className="relative min-h-[34rem] border-b border-white/10 xl:min-h-0 xl:border-b-0 xl:border-r xl:border-white/10">
               <MapContainer
                 center={commandMapCenter}
                 zoom={commandMapZoom}
@@ -2761,7 +2881,7 @@ export function IntelligenceTab({
                   attribution="&copy; CARTO"
                 />
 
-                {!isGlobalLeap && commandMapZones.map((zone) => {
+                {!isPinnedCommandMode && commandMapZones.map((zone) => {
                   const density = zoneDensityMap[zone.id] ?? 0;
                   const tone = getDensityTone(density);
                   const active = zone.id === activeSector.id;
@@ -2790,7 +2910,7 @@ export function IntelligenceTab({
                   );
                 })}
 
-                {isGlobalLeap && marketLeapSnapshot && (
+                {isPinnedCommandMode && marketLeapSnapshot && (
                   <>
                     <Circle
                       center={marketLeapSnapshot.center}
@@ -2817,7 +2937,7 @@ export function IntelligenceTab({
                   </>
                 )}
 
-                {(isGlobalLeap ? globalPreviewSignals : visiblePreviewSignals).map((signal) => (
+                {(isPinnedCommandMode ? globalPreviewSignals : visiblePreviewSignals).map((signal) => (
                   <CircleMarker
                     key={signal.id}
                     center={signal.position}
@@ -2825,7 +2945,7 @@ export function IntelligenceTab({
                     pathOptions={{
                       color: signal.isEmergency ? "#b91c1c" : "#4338ca",
                       fillColor: signal.isEmergency ? "#f97316" : "#6366f1",
-                      fillOpacity: signal.isEmergency ? 0.88 : isGlobalLeap ? 0.72 : 0.62,
+                      fillOpacity: signal.isEmergency ? 0.88 : isPinnedCommandMode ? 0.72 : 0.62,
                       weight: signal.isEmergency ? 2 : 1,
                     }}
                   >
@@ -2857,7 +2977,7 @@ export function IntelligenceTab({
                   />
                 ))}
 
-                {isGlobalLeap && marketLeapSnapshot ? (
+                {isPinnedCommandMode && marketLeapSnapshot ? (
                   <CircleMarker
                     center={marketLeapSnapshot.center}
                     radius={18}
@@ -2892,15 +3012,48 @@ export function IntelligenceTab({
                 )}
               </MapContainer>
 
-              <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+              <div className="absolute left-4 top-4 z-[700] w-[min(24rem,calc(100%-2rem))]">
+                <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/88 p-3 shadow-[0_28px_70px_-34px_rgba(2,6,23,1)] backdrop-blur">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">HUD Search</p>
+                  <MarketCommandSearch
+                    className="mt-2"
+                    initialValue={commandGeoSelection.selectedAddress}
+                    radiusKm={commandGeoSelection.geoConfig.radiusKm}
+                    onSelect={handleHudMarketSelect}
+                    placeholder="Search Chandigarh Sector 17, New Delhi..."
+                    variant="dark"
+                  />
+                  <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Active Analysis Radius</p>
+                        <p className="mt-1 text-sm font-black text-white" style={{ fontFamily: monoMetricFont }}>{commandGeoSelection.geoConfig.radiusKm.toFixed(0)} km</p>
+                      </div>
+                      <span className="rounded-full border border-indigo-300/20 bg-indigo-300/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-100">
+                        {commandGeoSelection.geoConfig.cityTier.replace("_", "-")}
+                      </span>
+                    </div>
+                    <Slider
+                      min={1}
+                      max={50}
+                      step={1}
+                      value={[commandGeoSelection.geoConfig.radiusKm]}
+                      onValueChange={handleCommandRadiusChange}
+                      className="mt-3 [&_[role=slider]]:border-indigo-600 [&_[role=slider]]:bg-white [&_[data-orientation=horizontal]]:h-2.5 [&_[data-orientation=horizontal]_.bg-primary]:bg-indigo-600"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pointer-events-none absolute left-4 top-[12.8rem] rounded-2xl border border-white/10 bg-slate-950/88 px-4 py-3 shadow-[0_18px_40px_-26px_rgba(2,6,23,1)] backdrop-blur">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Legend</p>
-                <div className="mt-3 space-y-2 text-xs font-bold text-slate-600">
+                <div className="mt-3 space-y-2 text-xs font-bold text-slate-300">
                   {[
                     { label: "Critical density", color: "bg-rose-500" },
                     { label: "High density", color: "bg-orange-500" },
                     { label: "Balanced density", color: "bg-indigo-500" },
                     { label: "Freelancer-led", color: "bg-sky-500" },
-                    { label: isGlobalLeap ? "Launch ring + proofs" : "Verified audits", color: "bg-emerald-500" },
+                    { label: isPinnedCommandMode ? "Command ring + proofs" : "Verified audits", color: "bg-emerald-500" },
                   ].map((item) => (
                     <div key={item.label} className="flex items-center gap-2">
                       <span className={cn("h-2.5 w-2.5 rounded-full", item.color)} />
@@ -2910,18 +3063,18 @@ export function IntelligenceTab({
                 </div>
               </div>
 
-              <div className="pointer-events-none absolute bottom-4 left-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+              <div className="pointer-events-none absolute bottom-4 left-4 rounded-2xl border border-white/10 bg-slate-950/88 px-4 py-3 shadow-[0_18px_40px_-26px_rgba(2,6,23,1)] backdrop-blur">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                  {isGlobalLeap ? "Launch signal sample" : "Synthetic load sample"}
+                  {isPinnedCommandMode ? "Command signal sample" : "Synthetic load sample"}
                 </p>
-                <p className="mt-2 text-sm font-black text-slate-950">
-                  {(isGlobalLeap ? globalPreviewSignals.length : visiblePreviewSignals.length)} preview points from the 400k simulation engine
+                <p className="mt-2 text-sm font-black text-white" style={{ fontFamily: monoMetricFont }}>
+                  {(isPinnedCommandMode ? globalPreviewSignals.length : visiblePreviewSignals.length)} preview points from the 400k simulation engine
                 </p>
               </div>
 
-              <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-indigo-200 bg-white/95 px-4 py-3 shadow-sm">
+              <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-indigo-300/20 bg-slate-950/88 px-4 py-3 shadow-[0_18px_40px_-26px_rgba(2,6,23,1)] backdrop-blur">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Terminal focus</p>
-                <p className="mt-2 text-sm font-black text-slate-950">{displayRouteLabel}</p>
+                <p className="mt-2 text-sm font-black text-white">{displayRouteLabel}</p>
               </div>
 
               {(simulationRunning || strategyStatus === "thinking") && (
@@ -2965,12 +3118,12 @@ export function IntelligenceTab({
               )}
             </div>
 
-            <div className="bg-[linear-gradient(180deg,_rgba(15,23,42,0.02),_rgba(79,70,229,0.08))] p-4">
-              <div className="rahi-glass-panel h-full rounded-[1.5rem] border border-white/70 bg-white/75 p-4 backdrop-blur-xl">
+            <div className="border-l border-white/10 bg-[linear-gradient(180deg,_rgba(15,23,42,0.88),_rgba(2,6,23,0.96))] p-4">
+              <div className="rahi-glass-panel h-full rounded-[1.5rem] border border-white/10 bg-slate-950/80 p-4 backdrop-blur-xl">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">LOGISTICS_CORE_AUDIT [STRICT_PERSISTENCE]</p>
-                    <h4 className="mt-2 text-lg font-black text-slate-950">System thoughts and model checkpoints</h4>
+                    <h4 className="mt-2 text-lg font-black text-white">System thoughts and model checkpoints</h4>
                   </div>
                   <span className={cn(
                     "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]",
@@ -3003,10 +3156,10 @@ export function IntelligenceTab({
                       key={entry.id}
                       className={cn(
                         "rounded-[1.25rem] border px-4 py-3 shadow-sm backdrop-blur",
-                        entry.tone === "success" && "border-emerald-200 bg-emerald-50/85",
-                        entry.tone === "warning" && "border-amber-200 bg-amber-50/90",
-                        entry.tone === "critical" && "border-rose-200 bg-rose-50/90",
-                        entry.tone === "info" && "border-white/80 bg-white/80",
+                        entry.tone === "success" && "border-emerald-300/18 bg-emerald-300/10",
+                        entry.tone === "warning" && "border-amber-300/18 bg-amber-300/10",
+                        entry.tone === "critical" && "border-rose-300/18 bg-rose-300/10",
+                        entry.tone === "info" && "border-white/10 bg-white/[0.05]",
                       )}
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -3017,7 +3170,7 @@ export function IntelligenceTab({
                           {entry.source}
                         </span>
                       </div>
-                      <p className="mt-2 text-xs font-semibold leading-6 text-slate-700/90">{entry.message}</p>
+                      <p className="mt-2 text-xs font-semibold leading-6 text-slate-200/90">{entry.message}</p>
                     </div>
                   ))}
                 </div>
@@ -3026,7 +3179,7 @@ export function IntelligenceTab({
           </div>
         </div>
 
-        <div className="space-y-6">
+        <div className="mission-scrollbar flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
           <StrategyTerminal
             activeZoneId={displayRouteId}
             activeZoneLabel={displayRouteLabel}
@@ -3057,33 +3210,33 @@ export function IntelligenceTab({
             canExecuteStrategy={canExecuteAiStrategy}
           />
 
-          <div className="rounded-[1.8rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rahi-ops-panel p-6">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Scenario console</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">Workforce slider and AI comparison</h3>
+                <h3 className="mt-2 text-2xl font-black text-white">Workforce slider and AI comparison</h3>
               </div>
               <div className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black uppercase tracking-[0.18em] text-white">
                 {strategyLabel[analysis.allocation_strategy]}
               </div>
             </div>
 
-            <div className="mt-5 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+            <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Selected zone</p>
-                  <p className="mt-2 text-lg font-black text-slate-950">{activeSector.label}</p>
+                  <p className="mt-2 text-lg font-black text-white">{activeSector.label}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Live density</p>
-                  <p className="mt-2 text-lg font-black text-slate-950">{analysis.density_score.toFixed(2)}</p>
+                  <p className="mt-2 text-lg font-black text-white" style={{ fontFamily: monoMetricFont }}>{analysis.density_score.toFixed(2)}</p>
                 </div>
               </div>
 
               <div className="mt-5">
-                <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-700">
+                <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-200">
                   <span>Salaried core override</span>
-                  <span>{manualCoreWorkers} workers</span>
+                  <span style={{ fontFamily: monoMetricFont }}>{manualCoreWorkers} workers</span>
                 </div>
                 <input
                   type="range"
@@ -3142,7 +3295,7 @@ export function IntelligenceTab({
             </div>
           </div>
 
-          <div className="rounded-[1.8rem] border border-slate-200 bg-slate-950 p-6 text-white shadow-sm">
+          <div className="rounded-[1.8rem] border border-white/10 bg-slate-950/88 p-6 text-white shadow-[0_28px_60px_-36px_rgba(2,6,23,1)] backdrop-blur-xl">
             <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Why this page matters</p>
             <h3 className="mt-2 text-2xl font-black">This is now a zone operating system, not a poster.</h3>
             <div className="mt-5 grid gap-3">
@@ -3154,54 +3307,108 @@ export function IntelligenceTab({
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1fr_0.92fr]">
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="relative z-10 border-t border-white/10 bg-slate-950/88 px-4 py-3 backdrop-blur-2xl xl:px-5">
+        <div className="flex flex-col gap-3 border-b border-white/10 pb-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Bottom-docked intelligence terminal</p>
+            <h3 className="mt-2 text-sm font-black uppercase tracking-[0.18em] text-white">
+              Forecast lab, investor analytics, and simulation evidence
+            </h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setIntelDockExpanded((current) => !current)}
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-white transition hover:bg-white/[0.12]"
+            >
+              {intelDockExpanded ? "Compact analytics dock" : "Expand analytics dock"}
+            </button>
+            <button
+              type="button"
+              onClick={jumpToSimulationLab}
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-100 transition hover:bg-emerald-300/16"
+            >
+              Open simulation lab
+            </button>
+          </div>
+        </div>
+
+        <div className={cn(
+          "overflow-hidden transition-[max-height,margin] duration-300 ease-out",
+          intelDockExpanded ? "mt-4 max-h-[35vh]" : "max-h-0",
+        )}>
+          <div className="mission-scrollbar h-full overflow-y-auto pr-1">
+            <div className="space-y-4 pb-1">
+        <section className="grid gap-6 xl:grid-cols-[1fr_0.92fr]">
+        <div className="rahi-ops-panel p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Run allocation forecast</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">Analyze a live launch zone</h3>
+              <h3 className="mt-2 text-2xl font-black text-slate-950">Analyze a live command radius</h3>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
-              <div className="relative">
-                <MapPin className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={areaId}
-                  onChange={(event) => setAreaId(event.target.value)}
-                  className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-black text-slate-800 outline-none transition focus:border-slate-900 focus:bg-white sm:w-64"
-                  placeholder="agra-cantt, taj-ganj, civil-lines"
-                />
-              </div>
+              <MarketCommandSearch
+                className="sm:w-80"
+                initialValue={commandGeoSelection.selectedAddress}
+                radiusKm={commandGeoSelection.geoConfig.radiusKm}
+                onSelect={handleHudMarketSelect}
+                placeholder="Search a city or local market"
+                variant="dark"
+              />
+              <button
+                onClick={() => {
+                  setCommandGeoSelection(INITIAL_COMMAND_SELECTION);
+                  setMarketLeapState(null);
+                  setSelectedCoordinates(null);
+                  setStrategyPendingSignal(null);
+                  lastMarketLeapRef.current = null;
+                }}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-sm font-black text-slate-100 transition hover:border-white/20 hover:bg-white/[0.08]"
+              >
+                <MapPin className="h-4 w-4" />
+                Restore Agra Pilot
+              </button>
               <button
                 onClick={() => void runAnalysis({ nextAreaId: areaId })}
                 disabled={loading}
                 className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Run density model
+                Refresh pilot density
               </button>
             </div>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            {sectorSignals.map((sector) => (
-              <button
-                key={sector.id}
-                type="button"
-                onClick={() => handleZoneSelection(sector.id)}
-                className={cn(
-                  "rounded-full border px-3 py-2 text-xs font-black uppercase tracking-[0.18em] transition",
-                  analysis.area_id === sector.id
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                    : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-white hover:text-slate-900",
-                )}
-              >
-                {sector.label}
-              </button>
-            ))}
+          <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="rounded-[1.4rem] border border-white/10 bg-white/[0.04] px-4 py-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Command market</p>
+              <p className="mt-2 text-lg font-black text-white">{commandGeoSelection.geoConfig.cityLabel}{commandGeoSelection.geoConfig.stateCode ? `, ${commandGeoSelection.geoConfig.stateCode}` : ""}</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-slate-300">{commandGeoSelection.selectedAddress}</p>
+              <p className="mt-2 text-xs font-semibold leading-5 text-slate-400">{commandGeoSelection.geoConfig.marketContext}</p>
+            </div>
+            <div className="rounded-[1.4rem] border border-indigo-300/18 bg-indigo-300/10 px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-100">Active Analysis Radius</p>
+                  <p className="mt-2 text-lg font-black text-white" style={{ fontFamily: monoMetricFont }}>{commandGeoSelection.geoConfig.radiusKm.toFixed(0)} km</p>
+                </div>
+                <span className="rounded-full border border-white/10 bg-white/[0.07] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-100">
+                  1-50 km
+                </span>
+              </div>
+              <Slider
+                min={1}
+                max={50}
+                step={1}
+                value={[commandGeoSelection.geoConfig.radiusKm]}
+                onValueChange={handleCommandRadiusChange}
+                className="mt-4 [&_[role=slider]]:border-indigo-600 [&_[role=slider]]:bg-white [&_[data-orientation=horizontal]]:h-2.5 [&_[data-orientation=horizontal]_.bg-primary]:bg-indigo-600"
+              />
+            </div>
           </div>
 
           {notice && (
-            <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-800">
+            <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-300/18 bg-amber-300/10 px-4 py-3 text-sm font-bold leading-6 text-amber-100">
               <Sparkles className="mt-0.5 h-4 w-4" />
               <span>{notice}</span>
             </div>
@@ -3214,16 +3421,16 @@ export function IntelligenceTab({
             <RiskCard icon={Target} label="Confidence" value={`${Math.round(analysis.confidence_score * 100)}%`} />
           </div>
 
-          <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold leading-6 text-emerald-800">
+          <div className="mt-4 rounded-2xl border border-emerald-300/18 bg-emerald-300/10 px-4 py-3 text-sm font-bold leading-6 text-emerald-100">
             Dynamic pricing signal: {pricingSignal}. Formula: clamp(0.85, 1.50, 1 + 0.25 x (density - 1.2)).
           </div>
 
-          <div className="mt-6 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+          <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Zone snapshot</p>
-                <h4 className="mt-2 text-xl font-black text-slate-950">{activeSector.label}</h4>
-                <p className="mt-1 text-sm font-semibold text-slate-500">{activeSector.city}</p>
+                <h4 className="mt-2 text-xl font-black text-white">{activeSector.label}</h4>
+                <p className="mt-1 text-sm font-semibold text-slate-400">{activeSector.city}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <ActionButton label="Focus demand" onClick={() => setActiveMode("monitor")} />
@@ -3241,7 +3448,7 @@ export function IntelligenceTab({
 
             <div className="mt-5 space-y-3">
               {zoneChecklist.map((item) => (
-                <div key={item} className="flex items-start gap-3 rounded-2xl border border-white bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm">
+                <div key={item} className="flex items-start gap-3 rounded-2xl border border-white/10 bg-slate-950/62 px-4 py-3 text-sm font-semibold text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                   <ChevronRight className="mt-0.5 h-4 w-4 text-emerald-500" />
                   <span>{item}</span>
                 </div>
@@ -3250,18 +3457,18 @@ export function IntelligenceTab({
           </div>
         </div>
 
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rahi-ops-panel p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Recommended workforce mix</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">{strategyLabel[analysis.allocation_strategy]}</h3>
+              <h3 className="mt-2 text-2xl font-black text-white">{strategyLabel[analysis.allocation_strategy]}</h3>
             </div>
             <span className={cn("rounded-full border px-3 py-1.5 text-xs font-black uppercase tracking-wider", strategyTone[analysis.allocation_strategy])}>
               {analysis.source === "random_forest_service" ? "Random Forest" : analysis.source === "demo_density_engine" ? "Demo Model" : "Fallback"}
             </span>
           </div>
 
-          <p className="mt-4 text-sm font-semibold leading-6 text-slate-600">{analysis.reasoning}</p>
+          <p className="mt-4 text-sm font-semibold leading-6 text-slate-300">{analysis.reasoning}</p>
 
           <div className="mt-6 space-y-5">
             <AllocationBar label="Salaried core staff" value={salariedPercent} color="bg-emerald-500" />
@@ -3302,17 +3509,17 @@ export function IntelligenceTab({
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1fr_0.92fr]">
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rahi-ops-panel p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Zone portfolio</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">Density decides the workforce model</h3>
+              <h3 className="mt-2 text-2xl font-black text-white">Density decides the workforce model</h3>
             </div>
-            <ListFilter className="hidden h-6 w-6 text-slate-300 sm:block" />
+            <ListFilter className="hidden h-6 w-6 text-slate-500 sm:block" />
           </div>
 
-          <div className="mt-6 overflow-hidden rounded-2xl border border-slate-200">
-            <div className="grid grid-cols-[1.3fr_0.8fr_0.8fr_0.9fr_1fr] bg-slate-50 px-4 py-3 text-xs font-black uppercase tracking-wider text-slate-500">
+          <div className="mt-6 overflow-hidden rounded-2xl border border-white/10">
+            <div className="grid grid-cols-[1.3fr_0.8fr_0.8fr_0.9fr_1fr] bg-white/[0.04] px-4 py-3 text-xs font-black uppercase tracking-wider text-slate-400">
               <span>Zone</span>
               <span>Demand</span>
               <span>Workers</span>
@@ -3330,18 +3537,18 @@ export function IntelligenceTab({
                   type="button"
                   onClick={() => handleZoneSelection(sector.id)}
                   className={cn(
-                    "grid w-full grid-cols-[1.3fr_0.8fr_0.8fr_0.9fr_1fr] items-center gap-2 border-t border-slate-100 px-4 py-4 text-left text-sm transition hover:bg-slate-50",
-                    selected && "bg-emerald-50/60",
+                    "grid w-full grid-cols-[1.3fr_0.8fr_0.8fr_0.9fr_1fr] items-center gap-2 border-t border-white/10 px-4 py-4 text-left text-sm transition hover:bg-white/[0.04]",
+                    selected && "bg-emerald-300/10",
                   )}
                 >
                   <span>
-                    <span className="block font-black text-slate-950">{sector.label}</span>
-                    <span className="text-xs font-bold text-slate-400">{sector.city}</span>
+                    <span className="block font-black text-white">{sector.label}</span>
+                    <span className="text-xs font-bold text-slate-500">{sector.city}</span>
                   </span>
-                  <span className="font-black text-slate-800">{sector.predicted}</span>
-                  <span className="font-black text-slate-800">{sector.workers}</span>
-                  <span className="font-black text-emerald-700">{density.toFixed(2)}</span>
-                  <span className="text-xs font-black uppercase tracking-wide text-slate-600">
+                  <span className="font-black text-slate-200" style={{ fontFamily: monoMetricFont }}>{sector.predicted}</span>
+                  <span className="font-black text-slate-200" style={{ fontFamily: monoMetricFont }}>{sector.workers}</span>
+                  <span className="font-black text-emerald-300" style={{ fontFamily: monoMetricFont }}>{density.toFixed(2)}</span>
+                  <span className="text-xs font-black uppercase tracking-wide text-slate-300">
                     {strategyLabel[strategy.allocation_strategy]}
                   </span>
                 </button>
@@ -3349,12 +3556,12 @@ export function IntelligenceTab({
             })}
           </div>
 
-          <div className="mt-5 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+          <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Selected zone drill-down</p>
-                <h4 className="mt-2 text-xl font-black text-slate-950">{activeSector.label}</h4>
-                <p className="mt-1 text-sm font-semibold text-slate-500">
+                <h4 className="mt-2 text-xl font-black text-white">{activeSector.label}</h4>
+                <p className="mt-1 text-sm font-semibold text-slate-400">
                   {activeSector.city} is running at {analysis.density_score.toFixed(2)} density with {analysis.current_workers} workers active.
                 </p>
               </div>
@@ -3372,16 +3579,16 @@ export function IntelligenceTab({
           </div>
         </div>
 
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rahi-ops-panel p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">12-week demand forecast</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">Growth pressure curve</h3>
+              <h3 className="mt-2 text-2xl font-black text-white">Growth pressure curve</h3>
             </div>
             <TrendingUp className="h-6 w-6 text-emerald-500" />
           </div>
 
-          <div className="mt-8 flex h-64 items-end gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4">
+          <div className="mt-8 flex h-64 items-end gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
             {forecastBars.map((value, index) => {
               const isActive = selectedWeek === index;
               const tone = index > 8 ? "bg-emerald-500" : index > 4 ? "bg-amber-400" : "bg-slate-300";
@@ -3400,7 +3607,7 @@ export function IntelligenceTab({
                     )}
                     style={{ height: `${Math.max(22, value * 1.7)}px` }}
                   />
-                  <span className={cn("text-[10px] font-black", isActive ? "text-slate-950" : "text-slate-400")}>
+                  <span className={cn("text-[10px] font-black", isActive ? "text-white" : "text-slate-500")}>
                     W{index + 1}
                   </span>
                 </button>
@@ -3426,11 +3633,11 @@ export function IntelligenceTab({
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rahi-ops-panel p-6">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Investor-grade business brain</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">Predicted demand vs. actual orders</h3>
+              <h3 className="mt-2 text-2xl font-black text-white">Predicted demand vs. actual orders</h3>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -3439,8 +3646,8 @@ export function IntelligenceTab({
                 className={cn(
                   "rounded-full border px-3 py-2 text-xs font-black uppercase tracking-[0.18em] transition",
                   chartView === "comparison"
-                    ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                    : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-white",
+                    ? "border-indigo-300/20 bg-indigo-300/10 text-indigo-100"
+                    : "border-white/10 bg-white/[0.04] text-slate-300 hover:border-white/20 hover:bg-white/[0.08]",
                 )}
               >
                 Actual vs predicted
@@ -3451,8 +3658,8 @@ export function IntelligenceTab({
                 className={cn(
                   "rounded-full border px-3 py-2 text-xs font-black uppercase tracking-[0.18em] transition",
                   chartView === "delta"
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                    : "border-slate-200 bg-slate-50 text-slate-500 hover:border-slate-300 hover:bg-white",
+                    ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+                    : "border-white/10 bg-white/[0.04] text-slate-300 hover:border-white/20 hover:bg-white/[0.08]",
                 )}
               >
                 Gap pressure
@@ -3460,7 +3667,7 @@ export function IntelligenceTab({
             </div>
           </div>
 
-          <div className="mt-6 rounded-[1.5rem] border border-slate-100 bg-slate-50 p-4">
+          <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-4">
             <div className="mb-4 flex flex-wrap gap-2">
               {demandSeries.map((point, index) => (
                 <button
@@ -3470,8 +3677,8 @@ export function IntelligenceTab({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-xs font-black uppercase tracking-[0.18em] transition",
                     selectedWeek === index
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900",
+                      ? "border-emerald-300/20 bg-emerald-300/12 text-white"
+                      : "border-white/10 bg-slate-950/62 text-slate-400 hover:border-white/20 hover:text-white",
                   )}
                 >
                   {point.label}
@@ -3483,14 +3690,14 @@ export function IntelligenceTab({
               <ResponsiveContainer width="100%" height="100%">
                 {chartView === "comparison" ? (
                   <LineChart data={demandSeries}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef" />
-                    <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700 }} />
-                    <YAxis tick={{ fontSize: 12, fontWeight: 700 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.18)" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700, fill: "#94a3b8" }} />
+                    <YAxis tick={{ fontSize: 12, fontWeight: 700, fill: "#94a3b8" }} />
                     <RechartsTooltip content={<DemandTooltip />} />
                     <Line
                       type="monotone"
                       dataKey="actual"
-                      stroke="#0f172a"
+                      stroke="#f8fafc"
                       strokeWidth={3}
                       dot={{ r: 4 }}
                       activeDot={{ r: 6, strokeWidth: 0, fill: "#0f172a" }}
@@ -3513,9 +3720,9 @@ export function IntelligenceTab({
                         <stop offset="100%" stopColor="#14b8a6" stopOpacity={0.06} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef" />
-                    <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700 }} />
-                    <YAxis tick={{ fontSize: 12, fontWeight: 700 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.18)" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700, fill: "#94a3b8" }} />
+                    <YAxis tick={{ fontSize: 12, fontWeight: 700, fill: "#94a3b8" }} />
                     <RechartsTooltip content={<GapTooltip />} />
                     <Area
                       type="monotone"
@@ -3532,12 +3739,12 @@ export function IntelligenceTab({
           </div>
 
           {selectedWeekDetail && (
-            <div className="mt-5 rounded-[1.5rem] border border-slate-200 bg-white p-5">
+            <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/[0.04] p-5">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Selected checkpoint</p>
-                  <h4 className="mt-2 text-xl font-black text-slate-950">{selectedWeekDetail.label}</h4>
-                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">{selectedWeekDetail.cue}</p>
+                  <h4 className="mt-2 text-xl font-black text-white">{selectedWeekDetail.label}</h4>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-400">{selectedWeekDetail.cue}</p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <MiniStat label="Actual" value={`${selectedWeekDetail.actual}`} />
@@ -3583,11 +3790,11 @@ export function IntelligenceTab({
         </div>
 
         <div className="grid gap-6">
-          <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rahi-ops-panel p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Revenue split</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">Worker earnings vs. platform commission</h3>
+                <h3 className="mt-2 text-2xl font-black text-white">Worker earnings vs. platform commission</h3>
               </div>
               <WalletCards className="h-6 w-6 text-indigo-500" />
             </div>
@@ -3607,16 +3814,16 @@ export function IntelligenceTab({
               />
             </div>
 
-            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-700">
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-bold text-slate-300">
               Gross booking value tracked here: {formatCurrency(investorAnalytics.summary.revenue)}.
             </div>
           </div>
 
-          <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rahi-ops-panel p-6">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Top worker quality scores</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">Service quality roster</h3>
+                <h3 className="mt-2 text-2xl font-black text-white">Service quality roster</h3>
               </div>
               <ShieldCheck className="h-6 w-6 text-emerald-500" />
             </div>
@@ -3633,16 +3840,16 @@ export function IntelligenceTab({
                     className={cn(
                       "w-full rounded-2xl border p-4 text-left transition",
                       selected
-                        ? "border-emerald-300 bg-emerald-50"
-                        : "border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white",
+                        ? "border-emerald-300/18 bg-emerald-300/10"
+                        : "border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.08]",
                     )}
                   >
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-black text-slate-950">{worker.name}</p>
-                        <p className="text-xs font-bold text-slate-500">{worker.service} - {worker.completedJobs} jobs - {worker.rating}/5</p>
+                        <p className="font-black text-white">{worker.name}</p>
+                        <p className="text-xs font-bold text-slate-400">{worker.service} - {worker.completedJobs} jobs - {worker.rating}/5</p>
                       </div>
-                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-black text-emerald-700">
+                      <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-3 py-1 text-sm font-black text-emerald-100">
                         {worker.qualityScore}
                       </span>
                     </div>
@@ -3679,29 +3886,29 @@ export function IntelligenceTab({
             )}
           </div>
 
-          <div className="rounded-[1.6rem] border border-amber-200 bg-amber-50 p-6 shadow-sm">
+          <div className="rounded-[1.6rem] border border-amber-300/20 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.14),transparent_28%),linear-gradient(180deg,rgba(15,23,42,0.9),rgba(2,6,23,0.96))] p-6 shadow-[0_22px_55px_-32px_rgba(2,6,23,1)]">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-700/70">Rejected job escalation queue</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">Queue requiring admin intervention</h3>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-200/70">Rejected job escalation queue</p>
+                <h3 className="mt-2 text-2xl font-black text-white">Queue requiring admin intervention</h3>
               </div>
               <TriangleAlert className="h-6 w-6 text-amber-600" />
             </div>
 
             <div className="mt-4 space-y-3">
               {liveEscalations.length === 0 ? (
-                <div className="rounded-2xl border border-emerald-200 bg-white/80 px-4 py-4 text-sm font-bold text-emerald-700">
+                <div className="rounded-2xl border border-emerald-300/18 bg-emerald-300/10 px-4 py-4 text-sm font-bold text-emerald-100">
                   The live escalation queue is clear.
                 </div>
               ) : (
                 liveEscalations.slice(0, 3).map((item) => (
-                  <div key={item.bookingId} className="rounded-2xl border border-amber-200 bg-white/75 p-4">
+                  <div key={item.bookingId} className="rounded-2xl border border-amber-300/18 bg-white/[0.04] p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-black text-slate-950">{item.serviceName}</p>
-                        <p className="mt-1 text-xs font-bold text-amber-800">{item.areaId} - {item.reason}</p>
+                        <p className="font-black text-white">{item.serviceName}</p>
+                        <p className="mt-1 text-xs font-bold text-amber-200">{item.areaId} - {item.reason}</p>
                       </div>
-                      <span className="rounded-full bg-amber-200 px-3 py-1 text-sm font-black text-amber-950">
+                      <span className="rounded-full border border-amber-300/18 bg-amber-300/10 px-3 py-1 text-sm font-black text-amber-100">
                         {item.suggestedPriceMultiplier.toFixed(2)}x
                       </span>
                     </div>
@@ -3730,7 +3937,12 @@ export function IntelligenceTab({
           onSimulationComplete={handleSimulationComplete}
           onTelemetryChange={handleSimulationTelemetry}
           onGeoConfigChange={handleSimulationGeoConfigChange}
+          externalGeoSelection={commandGeoSelection}
         />
+      </section>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
   );
@@ -3786,6 +3998,15 @@ function CommandCenterMotionStyles() {
 
       .rahi-glass-panel {
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+      }
+
+      .rahi-ops-panel {
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        background:
+          radial-gradient(circle at top left, rgba(99, 102, 241, 0.09), transparent 28%),
+          linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(2, 6, 23, 0.92));
+        box-shadow: 0 24px 60px -38px rgba(2, 6, 23, 1);
+        backdrop-filter: blur(20px);
       }
 
       .rahi-terminal-caret {
@@ -3872,22 +4093,22 @@ function MonitoringStat({
 }) {
   return (
     <div className={cn(
-      "rounded-2xl border p-4",
-      light ? "border-slate-200 bg-white" : "border-white/10 bg-white/[0.04]",
+      "rounded-2xl border p-4 backdrop-blur-xl",
+      light ? "border-white/10 bg-slate-950/72" : "border-white/10 bg-white/[0.04]",
     )}>
-      <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", light ? "text-slate-400" : "text-slate-500")}>{label}</p>
-      <p className={cn("mt-2 text-sm font-black", light ? "text-slate-950" : "text-white")}>{value}</p>
-      <p className={cn("mt-2 text-xs font-semibold", light ? "text-slate-500" : "text-slate-300")}>{hint}</p>
+      <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", light ? "text-slate-500" : "text-slate-500")}>{label}</p>
+      <p className={cn("mt-2 text-sm font-black", light ? "text-white" : "text-white")}>{value}</p>
+      <p className={cn("mt-2 text-xs font-semibold", light ? "text-slate-300" : "text-slate-300")}>{hint}</p>
     </div>
   );
 }
 
 function RiskCard({ label, value, icon: Icon }: { label: string; value: string; icon: typeof ShieldCheck }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 transition duration-300 hover:-translate-y-0.5 hover:bg-white">
+    <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-4 shadow-[0_18px_45px_-30px_rgba(2,6,23,1)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-white/20 hover:bg-slate-900/82">
       <Icon className="mb-4 h-5 w-5 text-slate-400" />
-      <p className="text-xs font-black uppercase tracking-wider text-slate-400">{label}</p>
-      <p className="mt-2 text-sm font-black text-slate-950">{value}</p>
+      <p className="text-xs font-black uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="mt-2 text-sm font-black text-white">{value}</p>
     </div>
   );
 }
@@ -3895,11 +4116,11 @@ function RiskCard({ label, value, icon: Icon }: { label: string; value: string; 
 function AllocationBar({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-700">
+      <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-200">
         <span>{label}</span>
         <span>{value}%</span>
       </div>
-      <div className="h-4 overflow-hidden rounded-full bg-slate-100">
+      <div className="h-4 overflow-hidden rounded-full bg-white/10">
         <div className={cn("h-full rounded-full transition-all duration-700", color)} style={{ width: `${value}%` }} />
       </div>
     </div>
@@ -3908,9 +4129,9 @@ function AllocationBar({ label, value, color }: { label: string; value: number; 
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
-      <p className="mt-2 text-base font-black text-slate-950">{value}</p>
+    <div className="rounded-2xl border border-white/10 bg-slate-950/72 p-4 backdrop-blur-xl">
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-base font-black text-white">{value}</p>
     </div>
   );
 }
@@ -3933,9 +4154,9 @@ function ScenarioCard({
   workforce: string;
 }) {
   const toneStyles = {
-    slate: "border-slate-200 bg-white text-slate-950",
-    indigo: "border-indigo-200 bg-indigo-50 text-indigo-950",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    slate: "border-white/10 bg-slate-950/74 text-white",
+    indigo: "border-indigo-300/20 bg-indigo-500/10 text-white",
+    emerald: "border-emerald-300/20 bg-emerald-500/10 text-white",
   } as const;
 
   return (
@@ -3954,7 +4175,7 @@ function ScenarioCard({
 
 function ScenarioMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-black/5 pb-2 last:border-b-0 last:pb-0">
+    <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2 last:border-b-0 last:pb-0">
       <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{label}</span>
       <span className="text-sm font-black text-current">{value}</span>
     </div>
@@ -3978,7 +4199,7 @@ function ActionButton({
         "inline-flex items-center rounded-full border px-4 py-2 text-xs font-black uppercase tracking-[0.18em] transition",
         inverse
           ? "border-white/10 bg-white/[0.06] text-white hover:bg-white/[0.12]"
-          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-950",
+          : "border-white/10 bg-slate-950/72 text-slate-100 hover:border-white/20 hover:bg-slate-900/82 hover:text-white",
       )}
     >
       {label}
@@ -4005,7 +4226,7 @@ function MetricButton({
         "rounded-2xl border p-4 text-left transition duration-300 hover:-translate-y-0.5",
         active
           ? "border-slate-950 bg-slate-950 text-white"
-          : "border-slate-200 bg-white text-slate-950 hover:border-slate-300 hover:bg-slate-50",
+          : "border-white/10 bg-slate-950/72 text-white hover:border-white/20 hover:bg-slate-900/82",
       )}
     >
       <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", active ? "text-slate-400" : "text-slate-400")}>{label}</p>
@@ -4029,11 +4250,11 @@ function RevenueStrip({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-700">
+      <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-200">
         <span>{label}</span>
         <span>{formatCurrency(value)}</span>
       </div>
-      <div className="h-4 overflow-hidden rounded-full bg-slate-100">
+      <div className="h-4 overflow-hidden rounded-full bg-white/10">
         <div className={cn("h-full rounded-full transition-all duration-700", tone)} style={{ width: `${ratio}%` }} />
       </div>
     </div>
@@ -4042,10 +4263,10 @@ function RevenueStrip({
 
 function LensCard({ title, body, icon: Icon }: { title: string; body: string; icon: typeof MapPin }) {
   return (
-    <div className="rounded-[1.5rem] border border-slate-200 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-md">
-      <Icon className="mb-5 h-6 w-6 text-slate-400" />
-      <h4 className="text-lg font-black text-slate-950">{title}</h4>
-      <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">{body}</p>
+    <div className="rounded-[1.5rem] border border-white/10 bg-slate-950/72 p-6 shadow-[0_22px_55px_-36px_rgba(2,6,23,1)] backdrop-blur-xl transition duration-300 hover:-translate-y-1 hover:border-white/20 hover:bg-slate-900/84">
+      <Icon className="mb-5 h-6 w-6 text-emerald-300" />
+      <h4 className="text-lg font-black text-white">{title}</h4>
+      <p className="mt-3 text-sm font-semibold leading-6 text-slate-300">{body}</p>
     </div>
   );
 }
@@ -4076,11 +4297,11 @@ function DemandTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-lg">
-      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
+    <div className="rounded-2xl border border-white/10 bg-slate-950/92 px-4 py-3 shadow-[0_22px_45px_-28px_rgba(2,6,23,1)] backdrop-blur-xl">
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
       <div className="mt-3 space-y-1 text-sm font-bold">
-        <p className="text-slate-900">Actual: {payload[0]?.value}</p>
-        <p className="text-indigo-600">Predicted: {payload[1]?.value}</p>
+        <p className="text-white">Actual: {payload[0]?.value}</p>
+        <p className="text-indigo-300">Predicted: {payload[1]?.value}</p>
       </div>
     </div>
   );
@@ -4090,9 +4311,9 @@ function GapTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-lg">
-      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
-      <div className="mt-3 text-sm font-bold text-emerald-700">
+    <div className="rounded-2xl border border-white/10 bg-slate-950/92 px-4 py-3 shadow-[0_22px_45px_-28px_rgba(2,6,23,1)] backdrop-blur-xl">
+      <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <div className="mt-3 text-sm font-bold text-emerald-300">
         Gap pressure: {payload[0]?.value > 0 ? "+" : ""}{payload[0]?.value}
       </div>
     </div>

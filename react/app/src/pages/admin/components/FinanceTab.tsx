@@ -1,216 +1,325 @@
-import React from 'react';
-import { 
-  DollarSign, 
-  TrendingUp, 
-  CreditCard, 
-  ArrowDownCircle, 
-  Download,
-  Filter,
+import {
+  ArrowDownCircle,
+  CreditCard,
+  DollarSign,
+  HandCoins,
   PieChart as PieIcon,
-  MapPin
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer, 
-  PieChart, 
-  Pie, 
-  Cell 
-} from 'recharts';
-import { DataTable } from './DataTable';
-import { cn } from '@/lib/utils';
+  ShieldCheck,
+  TrendingDown,
+  TrendingUp,
+  WalletCards,
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { DataTable } from "./DataTable";
+import { cn } from "@/lib/utils";
 
 interface FinanceTabProps {
   revenue?: number;
-  bookings?: any[];
+  bookings?: Array<{
+    _id: string;
+    service?: string;
+    total_price?: number | string;
+    status?: string;
+  }>;
 }
 
 export const FinanceTab: React.FC<FinanceTabProps> = ({ revenue = 0, bookings = [] }) => {
-  // Compute chart from real data
-  const completed = bookings.filter(b => b.status === "completed" && b.total_price);
-  
-  const aggregatedServices = completed.reduce((acc, b) => {
-    const sName = b.service || "Other";
-    if (!acc[sName]) acc[sName] = 0;
-    acc[sName] += Number(b.total_price);
-    return acc;
+  const completed = bookings.filter((booking) => booking.status === "completed" && booking.total_price);
+  const pendingPayouts = bookings
+    .filter((booking) => booking.status === "in_progress" || booking.status === "matched")
+    .reduce((sum, booking) => sum + Number(booking.total_price || 0), 0);
+  const avgTicket = completed.length > 0 ? Math.round(revenue / completed.length) : 0;
+  const platformShare = Math.round(revenue * 0.08);
+  const workerShare = Math.max(0, revenue - platformShare);
+
+  const aggregatedServices = completed.reduce<Record<string, number>>((accumulator, booking) => {
+    const service = booking.service || "General";
+    accumulator[service] = (accumulator[service] || 0) + Number(booking.total_price || 0);
+    return accumulator;
   }, {});
 
-  const colors = ['#f97316', '#6366f1', '#22c55e', '#06b6d4', '#8b5cf6', '#ef4444'];
-  const serviceData = Object.keys(aggregatedServices).map((key, i) => ({
-    name: key,
-    value: aggregatedServices[key],
-    color: colors[i % colors.length]
+  const tones = ["#34d399", "#818cf8", "#f59e0b", "#38bdf8", "#fb7185", "#22c55e"];
+  const serviceData = Object.entries(aggregatedServices).map(([name, value], index) => ({
+    name,
+    value,
+    color: tones[index % tones.length],
   }));
 
-  const transactionData = completed.slice(0, 10).map((b) => ({
-    id: b._id,
-    method: 'Platform Gateway',
-    amount: b.total_price,
-    type: 'settlement',
-    status: 'success'
-  }));
+  const revenueTrend = Object.entries(aggregatedServices)
+    .slice(0, 5)
+    .map(([name, value], index) => ({
+      name: name.length > 12 ? `${name.slice(0, 12)}…` : name,
+      value,
+      fill: index === 0 ? "#34d399" : "#1e293b",
+    }));
 
-  const commission = revenue * 0.08;
-  const pendingPayouts = bookings.filter(b => b.status === 'in_progress').reduce((sum, b) => sum + (Number(b.total_price) || 0), 0);
-  const avgTicket = completed.length > 0 ? revenue / completed.length : 0;
+  const transactionData = completed.slice(0, 8).map((booking) => ({
+    id: booking._id,
+    method: "Platform Gateway",
+    amount: Number(booking.total_price || 0),
+    type: "settlement",
+    status: "success",
+  }));
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="bg-gradient-to-br from-green-600 to-green-700 text-white shadow-xl">
-           <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase tracking-widest opacity-80 flex items-center gap-2">
-                 <DollarSign size={14} /> Total Gross Volume
-              </CardTitle>
-           </CardHeader>
-           <CardContent>
-              <div className="text-3xl font-black">₹{revenue.toLocaleString()}</div>
-              <div className="flex items-center gap-1 text-[10px] font-bold mt-2 bg-white/20 w-fit px-2 py-0.5 rounded-full">
-                 <TrendingUp size={10} /> +Live Updated
+    <div className="space-y-5 text-slate-100">
+      <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <Card className="rounded-[1.7rem] border border-white/10 bg-[linear-gradient(135deg,rgba(2,6,23,0.98),rgba(15,23,42,0.92)_55%,rgba(21,128,61,0.18))] shadow-[0_24px_70px_-32px_rgba(2,6,23,1)]">
+          <CardContent className="p-6">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em] text-emerald-100">
+                  <WalletCards className="h-3.5 w-3.5" />
+                  Financial Posture
+                </div>
+                <h2 className="mt-4 text-3xl font-black tracking-tight text-white md:text-4xl">
+                  Margin defense, payout pressure, and commission clarity in one finance rail.
+                </h2>
+                <p className="mt-4 max-w-xl text-sm font-semibold leading-7 text-slate-300">
+                  Treat this view like a CFO console. Read burn, payout exposure, and service yield before widening incentives or overcommitting salaried capacity.
+                </p>
               </div>
-           </CardContent>
-        </Card>
 
-        <Card className="shadow-lg">
-           <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                 <ArrowDownCircle size={14} className="text-primary" /> RAHI Commission (8%)
-              </CardTitle>
-           </CardHeader>
-           <CardContent>
-              <div className="text-3xl font-black text-slate-900">₹{commission.toLocaleString()}</div>
-              <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Net Platform Earnings</p>
-           </CardContent>
-        </Card>
-
-        <Card className="shadow-lg">
-           <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                 <CreditCard size={14} className="text-orange-500" /> Pending Payouts
-              </CardTitle>
-           </CardHeader>
-           <CardContent>
-              <div className="text-3xl font-black text-slate-900">₹{pendingPayouts.toLocaleString()}</div>
-              <p className="text-[10px] font-bold text-orange-600 mt-1 uppercase tracking-tighter">Settlement in progress</p>
-           </CardContent>
-        </Card>
-
-        <Card className="shadow-lg">
-           <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                 <PieIcon size={14} className="text-blue-500" /> Avg. Ticket Size
-              </CardTitle>
-           </CardHeader>
-           <CardContent>
-              <div className="text-3xl font-black text-slate-900">₹{Math.round(avgTicket).toLocaleString()}</div>
-              <p className="text-[10px] font-bold text-slate-400 mt-1 uppercase">Across all services</p>
-           </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <Card className="shadow-lg">
-           <CardHeader className="border-b bg-slate-50/50">
-              <div className="flex items-center justify-between">
-                 <div>
-                    <CardTitle className="text-lg font-black">Revenue by Service</CardTitle>
-                    <CardDescription>Performance breakdown by category</CardDescription>
-                 </div>
-                 <button className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                    <Filter size={18} className="text-slate-500" />
-                 </button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FinanceChip label="Gross value" value={`INR ${revenue.toLocaleString("en-IN")}`} tone="emerald" />
+                <FinanceChip label="Platform share" value={`INR ${platformShare.toLocaleString("en-IN")}`} tone="indigo" />
+                <FinanceChip label="Worker share" value={`INR ${workerShare.toLocaleString("en-IN")}`} tone="sky" />
+                <FinanceChip label="Payout exposure" value={`INR ${pendingPayouts.toLocaleString("en-IN")}`} tone="amber" />
               </div>
-           </CardHeader>
-           <CardContent className="pt-8">
-              <div className="h-[300px] w-full flex flex-col md:flex-row items-center gap-8">
-                 <div className="w-full h-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                       <PieChart>
-                          <Pie
-                             data={serviceData}
-                             innerRadius={60}
-                             outerRadius={100}
-                             paddingAngle={5}
-                             dataKey="value"
-                          >
-                             {serviceData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.color} />
-                             ))}
-                          </Pie>
-                          <Tooltip 
-                             contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                             formatter={(value) => `₹${Number(value).toLocaleString()}`}
-                          />
-                       </PieChart>
-                    </ResponsiveContainer>
-                 </div>
-                 <div className="space-y-4 min-w-[150px]">
-                    {serviceData.map((item, i) => (
-                       <div key={i} className="flex items-center gap-3">
-                          <div className="w-3 h-3 rounded-full" style={{backgroundColor: item.color}} />
-                          <div className="flex-1">
-                             <p className="text-xs font-black text-slate-800">{item.name}</p>
-                             <p className="text-[10px] font-bold text-slate-400">₹{item.value.toLocaleString()}</p>
-                          </div>
-                       </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[1.7rem] border border-white/10 bg-slate-950/86 shadow-[0_24px_70px_-32px_rgba(2,6,23,1)]">
+          <CardContent className="p-6">
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">Finance doctrine</p>
+            <div className="mt-4 space-y-3">
+              <FinanceSignal label="Commission lane" value="8%" hint="Investor-safe take rate" tone="indigo" />
+              <FinanceSignal label="Average ticket" value={`INR ${avgTicket.toLocaleString("en-IN")}`} hint="Service basket quality" tone="emerald" />
+              <FinanceSignal label="Pending settlement" value={`${bookings.filter((booking) => booking.status === "in_progress").length}`} hint="Jobs still clearing payout" tone="amber" />
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <FinanceMetricCard icon={DollarSign} label="Gross booking value" value={`INR ${revenue.toLocaleString("en-IN")}`} tone="emerald" note="Tracked completed jobs" />
+        <FinanceMetricCard icon={ArrowDownCircle} label="RAHI commission" value={`INR ${platformShare.toLocaleString("en-IN")}`} tone="indigo" note="Platform earnings rail" />
+        <FinanceMetricCard icon={CreditCard} label="Pending payouts" value={`INR ${pendingPayouts.toLocaleString("en-IN")}`} tone="amber" note="Settlement still in motion" />
+        <FinanceMetricCard icon={PieIcon} label="Average ticket" value={`INR ${avgTicket.toLocaleString("en-IN")}`} tone="sky" note="Completed booking average" />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <Card className="rounded-[1.7rem] border border-white/10 bg-slate-950/84 shadow-[0_24px_70px_-32px_rgba(2,6,23,1)]">
+          <CardHeader className="border-b border-white/10 px-6 py-5">
+            <CardTitle className="text-xl font-black text-white">Service yield split</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 px-4 py-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
+            <div className="h-[18rem]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={serviceData.length > 0 ? serviceData : [{ name: "No revenue", value: 1, color: "#1e293b" }]}
+                    innerRadius={54}
+                    outerRadius={86}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {(serviceData.length > 0 ? serviceData : [{ name: "No revenue", value: 1, color: "#1e293b" }]).map((entry, index) => (
+                      <Cell key={`${entry.name}-${index}`} fill={entry.color} />
                     ))}
-                 </div>
-              </div>
-           </CardContent>
-        </Card>
+                  </Pie>
+                  <Tooltip
+                    formatter={(value) => `INR ${Number(value).toLocaleString("en-IN")}`}
+                    contentStyle={{ background: "#020617", border: "1px solid rgba(148,163,184,0.2)", borderRadius: "18px", color: "#fff" }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
 
-        <Card className="shadow-lg">
-           <CardHeader className="border-b bg-slate-50/50">
-              <CardTitle className="text-lg font-black flex items-center gap-2">
-                 <MapPin size={20} className="text-primary" />
-                 Geographic Revenue Spread
-              </CardTitle>
-              <CardDescription>Top performing regions across India</CardDescription>
-           </CardHeader>
-           <CardContent className="pt-8 space-y-6">
-              {[
-                 { city: 'New Delhi', amount: 145000, percentage: 75, color: '#6366f1' },
-                 { city: 'Mumbai', amount: 89000, percentage: 42, color: '#f97316' },
-                 { city: 'Bangalore', amount: 56000, percentage: 28, color: '#22c55e' },
-                 { city: 'Gwalior', amount: 42000, percentage: 22, color: '#06b6d4' },
-              ].map((loc, i) => (
-                 <div key={i} className="space-y-2">
-                    <div className="flex justify-between items-center text-xs">
-                       <span className="font-black text-slate-950 uppercase tracking-tighter">{loc.city}</span>
-                       <span className="font-mono font-bold text-slate-600">₹{loc.amount.toLocaleString()}</span>
+            <div className="space-y-3">
+              {(serviceData.length > 0 ? serviceData : [{ name: "No cleared services yet", value: 0, color: "#1e293b" }]).map((service) => (
+                <div key={service.name} className="rounded-[1.2rem] border border-white/8 bg-white/[0.04] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: service.color }} />
+                      <p className="text-sm font-black text-white">{service.name}</p>
                     </div>
-                    <div className="w-full bg-slate-100 h-2 rounded-full">
-                       <div className="h-full rounded-full transition-all duration-1000" style={{width: `${loc.percentage}%`, backgroundColor: loc.color}} />
-                    </div>
-                 </div>
+                    <p className="font-mono text-sm font-bold text-slate-300">
+                      {service.value > 0 ? `INR ${service.value.toLocaleString("en-IN")}` : "--"}
+                    </p>
+                  </div>
+                </div>
               ))}
-              <div className="pt-4 border-t border-dashed">
-                 <button className="text-[10px] font-black text-primary uppercase hover:underline tracking-widest">View Detailed Growth Analytics</button>
-              </div>
-           </CardContent>
+            </div>
+          </CardContent>
         </Card>
-      </div>
 
-      <DataTable 
-        title="Transaction History"
-        description="Detailed ledger of all financial movements on the platform."
+        <Card className="rounded-[1.7rem] border border-white/10 bg-slate-950/84 shadow-[0_24px_70px_-32px_rgba(2,6,23,1)]">
+          <CardHeader className="border-b border-white/10 px-6 py-5">
+            <CardTitle className="text-xl font-black text-white">Cash concentration</CardTitle>
+          </CardHeader>
+          <CardContent className="px-3 pb-4 pt-5">
+            <div className="h-[18rem] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={revenueTrend.length > 0 ? revenueTrend : [{ name: "No data", value: 0, fill: "#1e293b" }]}>
+                  <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#64748b", fontSize: 11, fontWeight: 800 }} />
+                  <YAxis tickLine={false} axisLine={false} tick={{ fill: "#64748b", fontSize: 11, fontWeight: 800 }} />
+                  <Tooltip
+                    formatter={(value) => `INR ${Number(value).toLocaleString("en-IN")}`}
+                    contentStyle={{ background: "#020617", border: "1px solid rgba(148,163,184,0.2)", borderRadius: "18px", color: "#fff" }}
+                  />
+                  <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+                    {(revenueTrend.length > 0 ? revenueTrend : [{ name: "No data", value: 0, fill: "#1e293b" }]).map((entry, index) => (
+                      <Cell key={`${entry.name}-${index}`} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <DataTable
+        title="FINANCIAL LEDGER"
+        description="Settlement traffic, payout posture, and cleared booking value."
         columns={[
-           { key: 'id', label: 'Txn ID', render: (val) => <span className="font-mono text-xs text-slate-400">#{val}</span> },
-           { key: 'method', label: 'Payment Method', render: (val) => <span className="flex items-center gap-2"><CreditCard size={12} /> {val}</span> },
-           { key: 'amount', label: 'Amount', render: (val) => <span className="font-black text-slate-900">₹{val}</span> },
-           { key: 'type', label: 'Type', render: (val) => <span className={cn("px-2 py-0.5 rounded text-[10px] font-black uppercase", val === 'payout' ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700")}>{val}</span> },
-           { key: 'status', label: 'Status', render: (val) => <span className="text-green-600 font-bold uppercase text-[10px]">{val}</span> }
+          { key: "id", label: "Txn ID", render: (value) => <span className="font-mono text-slate-300">#{value}</span> },
+          { key: "method", label: "Rail", render: (value) => <span className="inline-flex items-center gap-2 font-mono text-slate-100"><HandCoins className="h-3.5 w-3.5 text-emerald-300" />{value}</span> },
+          { key: "amount", label: "Amount", render: (value) => <span className="font-mono text-emerald-300">INR {Number(value).toLocaleString("en-IN")}</span> },
+          {
+            key: "type",
+            label: "Type",
+            render: (value) => (
+              <span className={cn(
+                "inline-flex rounded-full border px-2 py-1 font-mono text-[10px] font-black uppercase tracking-[0.16em]",
+                value === "payout"
+                  ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
+                  : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200",
+              )}>
+                {value}
+              </span>
+            ),
+          },
+          {
+            key: "status",
+            label: "Status",
+            render: (value) => (
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] font-black uppercase tracking-[0.16em] text-emerald-200">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                {value}
+              </span>
+            ),
+          },
         ]}
         data={transactionData.length > 0 ? transactionData : [
-           { id: 'TXN-9281', method: 'UPI (PhonePe)', amount: 1200, type: 'settlement', status: 'success' },
+          { id: "TXN-0001", method: "Platform Gateway", amount: 0, type: "settlement", status: "waiting" },
         ]}
+        variant="hud"
       />
     </div>
   );
 };
+
+function FinanceMetricCard({
+  icon: Icon,
+  label,
+  value,
+  tone,
+  note,
+}: {
+  icon: typeof DollarSign;
+  label: string;
+  value: string;
+  tone: "emerald" | "indigo" | "amber" | "sky";
+  note: string;
+}) {
+  return (
+    <Card className={cn(
+      "rounded-[1.55rem] border bg-slate-950/82",
+      tone === "emerald" && "border-emerald-400/18",
+      tone === "indigo" && "border-indigo-400/18",
+      tone === "amber" && "border-amber-400/18",
+      tone === "sky" && "border-sky-400/18",
+    )}>
+      <CardContent className="p-5">
+        <div className={cn(
+          "flex h-11 w-11 items-center justify-center rounded-2xl border",
+          tone === "emerald" && "border-emerald-400/20 bg-emerald-400/10 text-emerald-200",
+          tone === "indigo" && "border-indigo-400/20 bg-indigo-400/10 text-indigo-200",
+          tone === "amber" && "border-amber-400/20 bg-amber-400/10 text-amber-200",
+          tone === "sky" && "border-sky-400/20 bg-sky-400/10 text-sky-200",
+        )}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <p className="mt-5 text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">{label}</p>
+        <p className="mt-3 font-mono text-2xl font-black text-white">{value}</p>
+        <p className="mt-3 text-xs font-semibold text-slate-300">{note}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FinanceChip({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "emerald" | "indigo" | "amber" | "sky";
+}) {
+  return (
+    <div className={cn(
+      "rounded-[1.2rem] border px-4 py-3",
+      tone === "emerald" && "border-emerald-400/18 bg-emerald-400/10 text-emerald-100",
+      tone === "indigo" && "border-indigo-400/18 bg-indigo-400/10 text-indigo-100",
+      tone === "amber" && "border-amber-400/18 bg-amber-400/10 text-amber-100",
+      tone === "sky" && "border-sky-400/18 bg-sky-400/10 text-sky-100",
+    )}>
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] opacity-80">{label}</p>
+      <p className="mt-2 text-sm font-black">{value}</p>
+    </div>
+  );
+}
+
+function FinanceSignal({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  tone: "emerald" | "indigo" | "amber";
+}) {
+  return (
+    <div className="rounded-[1.2rem] border border-white/8 bg-white/[0.04] px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
+        <span className={cn(
+          "rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em]",
+          tone === "emerald" && "bg-emerald-400/12 text-emerald-200",
+          tone === "indigo" && "bg-indigo-400/12 text-indigo-200",
+          tone === "amber" && "bg-amber-400/12 text-amber-200",
+        )}>
+          {value}
+        </span>
+      </div>
+      <p className="mt-2 text-xs font-semibold text-slate-300">{hint}</p>
+    </div>
+  );
+}

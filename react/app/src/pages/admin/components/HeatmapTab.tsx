@@ -20,6 +20,7 @@ interface HeatmapData {
 interface HeatmapTabProps {
   token: string;
   scenario?: SimulationScenario;
+  embeddedMap?: boolean;
 }
 
 const DEFAULT_CENTER: [number, number] = [20.5937, 78.9629];
@@ -30,7 +31,7 @@ const isPriorityRepairService = (service: string) => (
   PRIORITY_REPAIR_SERVICES.has(String(service || "").trim().toLowerCase())
 );
 
-export function HeatmapTab({ token, scenario: scenarioOverride }: HeatmapTabProps) {
+export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = true }: HeatmapTabProps) {
   const [heatmapData, setHeatmapData] = useState<HeatmapData[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "pending" | "completed">("all");
@@ -372,131 +373,207 @@ export function HeatmapTab({ token, scenario: scenarioOverride }: HeatmapTabProp
         ))}
       </div>
 
-      <div className={cn(
-        "relative h-[560px] overflow-hidden rounded-[2rem] border",
-        isMonsoon || isPriceWar ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white",
-      )}>
-        <MapContainer
-          center={center}
-          zoom={points.length > 0 ? 10 : 5}
-          preferCanvas
-          scrollWheelZoom
-          style={{ height: "100%", width: "100%" }}
-        >
-          <TileLayer
-            url={isMonsoon || isPriceWar
-              ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
-            attribution="&copy; CARTO"
-          />
-          <HeatmapViewport points={points} fallbackCenter={center} />
-          {points.map((item) => {
-            const color = getHeatColor(item.count);
-            return (
+      {embeddedMap ? (
+        <div className={cn(
+          "relative h-[560px] overflow-hidden rounded-[2rem] border",
+          isMonsoon || isPriceWar ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white",
+        )}>
+          <MapContainer
+            center={center}
+            zoom={points.length > 0 ? 10 : 5}
+            preferCanvas
+            scrollWheelZoom
+            style={{ height: "100%", width: "100%" }}
+          >
+            <TileLayer
+              url={isMonsoon || isPriceWar
+                ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
+              attribution="&copy; CARTO"
+            />
+            <HeatmapViewport points={points} fallbackCenter={center} />
+            {points.map((item) => {
+              const color = getHeatColor(item.count);
+              return (
+                <Circle
+                  key={`heat-${item._id}`}
+                  center={[item.lat, item.lng]}
+                  radius={getRadius(item.count)}
+                  pathOptions={{
+                    color,
+                    weight: isMonsoon ? 1.2 : isPriceWar ? 1.1 : 1,
+                    fillColor: color,
+                    fillOpacity: isMonsoon ? 0.2 : isPriceWar ? 0.16 : 0.14,
+                  }}
+                />
+              );
+            })}
+            {isPriceWar && points.filter((item) => item.competitorPressure).map((item) => (
               <Circle
-                key={`heat-${item._id}`}
+                key={`competitor-${item._id}`}
                 center={[item.lat, item.lng]}
-                radius={getRadius(item.count)}
+                radius={Math.round(getRadius(item.count) * 1.14)}
                 pathOptions={{
-                  color,
-                  weight: isMonsoon ? 1.2 : isPriceWar ? 1.1 : 1,
-                  fillColor: color,
-                  fillOpacity: isMonsoon ? 0.2 : isPriceWar ? 0.16 : 0.14,
+                  color: "#f59e0b",
+                  weight: 2.4,
+                  opacity: 0.92,
+                  fillOpacity: 0.02,
+                  fillColor: "#f59e0b",
+                  dashArray: "10 12",
                 }}
               />
-            );
-          })}
-          {isPriceWar && points.filter((item) => item.competitorPressure).map((item) => (
-            <Circle
-              key={`competitor-${item._id}`}
-              center={[item.lat, item.lng]}
-              radius={Math.round(getRadius(item.count) * 1.14)}
-              pathOptions={{
-                color: "#f59e0b",
-                weight: 2.4,
-                opacity: 0.92,
-                fillOpacity: 0.02,
-                fillColor: "#f59e0b",
-                dashArray: "10 12",
-              }}
-            />
-          ))}
-          {points.map((item) => {
-            const color = getHeatColor(item.count);
-            return (
-              <CircleMarker
-                key={item._id}
-                center={[item.lat, item.lng]}
-                radius={getMarkerRadius(item.count)}
-                pathOptions={{
-                  fillColor: color,
-                  fillOpacity: isMonsoon || isPriceWar ? 0.82 : 0.68,
-                  color,
-                  weight: isMonsoon || isPriceWar ? 1.6 : 1.2,
-                }}
-              >
-                <Popup>
-                  <div className="p-2">
-                    <p className="text-sm font-bold">{item.service || "Service"}</p>
-                    <p className="text-xs text-slate-500">
-                      {item.count} booking{item.count > 1 ? "s" : ""}
-                    </p>
-                    <p className="text-xs capitalize text-slate-400">
-                      Status: {item.status}
-                    </p>
-                    {item.priorityRepair && (
-                      <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-600">
-                        Priority repair lane
+            ))}
+            {points.map((item) => {
+              const color = getHeatColor(item.count);
+              return (
+                <CircleMarker
+                  key={item._id}
+                  center={[item.lat, item.lng]}
+                  radius={getMarkerRadius(item.count)}
+                  pathOptions={{
+                    fillColor: color,
+                    fillOpacity: isMonsoon || isPriceWar ? 0.82 : 0.68,
+                    color,
+                    weight: isMonsoon || isPriceWar ? 1.6 : 1.2,
+                  }}
+                >
+                  <Popup>
+                    <div className="p-2">
+                      <p className="text-sm font-bold">{item.service || "Service"}</p>
+                      <p className="text-xs text-slate-500">
+                        {item.count} booking{item.count > 1 ? "s" : ""}
                       </p>
-                    )}
-                    {item.competitorPressure && (
-                      <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-500">
-                        Competitor pulse active
+                      <p className="text-xs capitalize text-slate-400">
+                        Status: {item.status}
                       </p>
-                    )}
-                  </div>
-                </Popup>
-              </CircleMarker>
-            );
-          })}
-        </MapContainer>
+                      {item.priorityRepair && (
+                        <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-600">
+                          Priority repair lane
+                        </p>
+                      )}
+                      {item.competitorPressure && (
+                        <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.16em] text-amber-500">
+                          Competitor pulse active
+                        </p>
+                      )}
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              );
+            })}
+          </MapContainer>
 
-        <StormCanvasOverlay active={isMonsoon} intensity={stormIntensity} />
-        {isMonsoon && (
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-[420] h-32 bg-gradient-to-b from-slate-950/70 via-slate-900/18 to-transparent" />
-        )}
+          <StormCanvasOverlay active={isMonsoon} intensity={stormIntensity} />
+          {isMonsoon && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-[420] h-32 bg-gradient-to-b from-slate-950/70 via-slate-900/18 to-transparent" />
+          )}
 
-        <div className="pointer-events-none absolute left-5 top-5 z-[430] max-w-sm rounded-[1.4rem] border border-white/10 bg-slate-950/78 p-4 text-white backdrop-blur-md">
-          <div className="flex items-start gap-3">
-            <div className={cn(
-              "mt-1 rounded-2xl p-2",
-              isMonsoon ? "bg-amber-400/15 text-amber-300" : isPriceWar ? "bg-amber-400/15 text-amber-200" : "bg-indigo-400/15 text-indigo-200",
-            )}>
-              {isMonsoon ? <CloudRain className="h-4 w-4" /> : isPriceWar ? <AlertTriangle className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
+          <div className="pointer-events-none absolute left-5 top-5 z-[430] max-w-sm rounded-[1.4rem] border border-white/10 bg-slate-950/78 p-4 text-white backdrop-blur-md">
+            <div className="flex items-start gap-3">
+              <div className={cn(
+                "mt-1 rounded-2xl p-2",
+                isMonsoon ? "bg-amber-400/15 text-amber-300" : isPriceWar ? "bg-amber-400/15 text-amber-200" : "bg-indigo-400/15 text-indigo-200",
+              )}>
+                {isMonsoon ? <CloudRain className="h-4 w-4" /> : isPriceWar ? <AlertTriangle className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
+              </div>
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">Map brief</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-slate-100">
+                  {isMonsoon
+                    ? "Amber zones are absorbing repair shock first. Use this surface to decide where salaried core must move before fill-rate collapses."
+                    : isPriceWar
+                      ? "Indigo remains the demand truth layer. Dashed amber rings mark competitor-heavy hotspots where RAHI should defend trust, margin, and audit-backed proof instead of matching blanket discounts."
+                    : "Read hotspot spread first, then use the command-center simulation to decide staffing and pricing moves."}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">Map brief</p>
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-100">
-                {isMonsoon
-                  ? "Amber zones are absorbing repair shock first. Use this surface to decide where salaried core must move before fill-rate collapses."
-                  : isPriceWar
-                    ? "Indigo remains the demand truth layer. Dashed amber rings mark competitor-heavy hotspots where RAHI should defend trust, margin, and audit-backed proof instead of matching blanket discounts."
-                  : "Read hotspot spread first, then use the command-center simulation to decide staffing and pricing moves."}
+          </div>
+
+          <div className="pointer-events-none absolute bottom-5 right-5 z-[430] rounded-[1.4rem] border border-white/10 bg-slate-950/78 p-4 text-white backdrop-blur-md">
+            <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">Legend</p>
+            <div className="mt-3 space-y-2 text-sm font-semibold">
+              <LegendRow color={isMonsoon ? "#f59e0b" : isPriceWar ? "#4338ca" : "#ef4444"} label="High pressure hotspot" />
+              <LegendRow color={isMonsoon ? "#818cf8" : "#6366f1"} label="Balanced demand zone" />
+              <LegendRow color="#34d399" label="Healthy or low-pressure lane" />
+              {isPriceWar && <LegendRow color="#f59e0b" label="Competitor pulse overlay" dashed />}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className={cn(
+          "rounded-[2rem] border p-5 shadow-[0_30px_90px_-48px_rgba(2,6,23,1)] backdrop-blur-xl",
+          isMonsoon || isPriceWar ? "border-slate-800 bg-slate-950/78 text-white" : "border-indigo-200/80 bg-white/88 text-indigo-950",
+        )}>
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-2xl">
+              <p className={cn(
+                "text-[11px] font-black uppercase tracking-[0.22em]",
+                isMonsoon ? "text-amber-300" : isPriceWar ? "text-amber-200" : "text-indigo-500",
+              )}>
+                War Room Surface
+              </p>
+              <h4 className="mt-2 text-2xl font-black">
+                The city map is now the background operating surface.
+              </h4>
+              <p className={cn(
+                "mt-3 text-sm font-semibold leading-6",
+                isMonsoon || isPriceWar ? "text-slate-300" : "text-indigo-900/75",
+              )}>
+                Use the satellite command layer behind this module to steer the city directly. These controls now classify what you are seeing on the global map instead of embedding a second map inside the heat desk.
               </p>
             </div>
-          </div>
-        </div>
 
-        <div className="pointer-events-none absolute bottom-5 right-5 z-[430] rounded-[1.4rem] border border-white/10 bg-slate-950/78 p-4 text-white backdrop-blur-md">
-          <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-300">Legend</p>
-          <div className="mt-3 space-y-2 text-sm font-semibold">
-            <LegendRow color={isMonsoon ? "#f59e0b" : isPriceWar ? "#4338ca" : "#ef4444"} label="High pressure hotspot" />
-            <LegendRow color={isMonsoon ? "#818cf8" : "#6366f1"} label="Balanced demand zone" />
-            <LegendRow color="#34d399" label="Healthy or low-pressure lane" />
-            {isPriceWar && <LegendRow color="#f59e0b" label="Competitor pulse overlay" dashed />}
+            <div className="grid gap-3 sm:grid-cols-2 xl:w-[24rem]">
+              <MetricPanel
+                label="Visible filter"
+                value={filter.toUpperCase()}
+                note="Applied to the command layer beneath this panel"
+                tone={isMonsoon ? "amber" : isPriceWar ? "amber" : "indigo"}
+              />
+              <MetricPanel
+                label="Scene mode"
+                value={isMonsoon ? "MONSOON" : isPriceWar ? "MARKET COMPETITION" : "BASELINE"}
+                note="Scenario pulses remain active on the shared city surface"
+                tone={isMonsoon ? "rose" : isPriceWar ? "amber" : "sky"}
+              />
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className={cn(
+              "rounded-[1.5rem] border p-4",
+              isMonsoon || isPriceWar ? "border-white/10 bg-white/5" : "border-indigo-100 bg-indigo-50/80",
+            )}>
+              <p className={cn(
+                "text-[11px] font-black uppercase tracking-[0.2em]",
+                isMonsoon || isPriceWar ? "text-slate-400" : "text-indigo-500",
+              )}>
+                Live Legend
+              </p>
+              <div className={cn(
+                "mt-3 space-y-2 text-sm font-semibold",
+                isMonsoon || isPriceWar ? "text-slate-100" : "text-slate-700",
+              )}>
+                <LegendRow color={isMonsoon ? "#f59e0b" : isPriceWar ? "#4338ca" : "#ef4444"} label="High pressure hotspot" />
+                <LegendRow color={isMonsoon ? "#818cf8" : "#6366f1"} label="Balanced demand zone" />
+                <LegendRow color="#34d399" label="Healthy or low-pressure lane" />
+                {isPriceWar && <LegendRow color="#f59e0b" label="Competitor pulse overlay" dashed />}
+              </div>
+            </div>
+
+            <div className={cn(
+              "rounded-[1.5rem] border p-4 text-sm font-semibold leading-6",
+              isMonsoon || isPriceWar ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-200 bg-slate-50 text-slate-600",
+            )}>
+              {isMonsoon
+                ? "Monsoon mode is now read directly on the full-screen terrain. Watch the amber pressure lanes beneath this module and shift salaried core before repair density overwhelms response time."
+                : isPriceWar
+                  ? "Market Competition Stress should be read as a contested overlay on the shared map. Indigo is still the truth layer; amber pulses only signal where trust and retention need defensive action."
+                : "Baseline mode keeps the terrain calm so worker reticles, demand plumes, and route pressure can be read from one unified city surface."}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
