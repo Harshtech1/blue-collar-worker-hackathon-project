@@ -1,49 +1,20 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import {
   Activity,
-  AlertCircle,
-  BarChart3,
-  BrainCircuit,
   Briefcase,
-  Database,
   DollarSign,
   LayoutDashboard,
   LogOut,
+  Map,
   Menu,
-  MoreVertical,
   Settings,
   ShieldCheck,
-  Waypoints,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { AdminMission, AdminToolAction } from "../adminRoutes";
 
-export type AdminTab =
-  | "overview"
-  | "users"
-  | "workers"
-  | "bookings"
-  | "finance"
-  | "heatmap"
-  | "intelligence"
-  | "system"
-  | "bugs"
-  | "audit"
-  | "settings";
-
-export type AdminMission =
-  | "overview"
-  | "intelligence"
-  | "workforce"
-  | "finance"
-  | "observability"
-  | "settings";
-
-export type AdminToolAction =
-  | "bug-monitor"
-  | "api-telemetry"
-  | "database-status"
-  | "settings";
+export type { AdminMission, AdminTab, AdminToolAction } from "../adminRoutes";
 
 interface AdminSidebarProps {
   activeMission: AdminMission;
@@ -55,43 +26,51 @@ interface AdminSidebarProps {
 const primaryItems: Array<{
   id: AdminMission;
   label: string;
+  description: string;
   icon: typeof LayoutDashboard;
 }> = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "intelligence", label: "War Room", icon: BrainCircuit },
-  { id: "workforce", label: "Workforce", icon: Briefcase },
-  { id: "finance", label: "Finance", icon: DollarSign },
-  { id: "observability", label: "Engine Room", icon: Activity },
+  {
+    id: "overview",
+    label: "Overview",
+    description: "Morning brief and business snapshot",
+    icon: LayoutDashboard,
+  },
+  {
+    id: "war-room",
+    label: "Location Center",
+    description: "Map, market signals, and delivery coverage",
+    icon: Map,
+  },
+  {
+    id: "workforce",
+    label: "Workforce",
+    description: "Workers, customers, and bookings",
+    icon: Briefcase,
+  },
+  {
+    id: "finance",
+    label: "Finance",
+    description: "Revenue, payouts, and unit economics",
+    icon: DollarSign,
+  },
 ];
 
-const toolItems: Array<{
+const secondaryItems: Array<{
   id: AdminToolAction;
   label: string;
-  note: string;
-  icon: typeof AlertCircle;
+  description: string;
+  icon: typeof Activity;
 }> = [
   {
-    id: "bug-monitor",
-    label: "Bug Monitor",
-    note: "Exception rail and incident traces",
-    icon: AlertCircle,
-  },
-  {
-    id: "api-telemetry",
-    label: "API Telemetry",
-    note: "Latency, provider, and service rails",
-    icon: Waypoints,
-  },
-  {
-    id: "database-status",
-    label: "Database Status",
-    note: "Persistence mesh and secure media state",
-    icon: Database,
+    id: "system-health",
+    label: "System Health",
+    description: "Uptime, APIs, and provider status",
+    icon: Activity,
   },
   {
     id: "settings",
     label: "Settings",
-    note: "Shell controls and platform preferences",
+    description: "Admin access and platform controls",
     icon: Settings,
   },
 ];
@@ -103,194 +82,151 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   onLogout,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const toolsRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!toolsRef.current) return;
-      if (toolsRef.current.contains(event.target as Node)) return;
-      setToolsOpen(false);
-    };
-
-    if (toolsOpen) {
-      document.addEventListener("mousedown", handlePointerDown);
-    }
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-    };
-  }, [toolsOpen]);
+  const isSecondaryActive = activeMission === "observability" || activeMission === "settings";
 
   return (
     <>
       <button
+        type="button"
         onClick={() => setIsOpen((value) => !value)}
-        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-[0_10px_40px_rgba(79,70,229,0.4)] transition-all active:scale-90 lg:hidden"
+        className="fixed bottom-6 right-6 z-50 inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-900 shadow-[0_18px_45px_-28px_rgba(15,23,42,0.45)] transition active:scale-95 lg:hidden"
       >
-        {isOpen ? <X size={24} /> : <Menu size={24} />}
+        {isOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
+
+      {isOpen ? (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => setIsOpen(false)}
+          className="fixed inset-0 z-30 bg-slate-900/25 backdrop-blur-[2px] lg:hidden"
+        />
+      ) : null}
 
       <aside
         className={cn(
-          "fixed inset-y-4 left-4 z-40 w-[18rem] rounded-[1.8rem] border border-slate-800/90 bg-slate-950/84 text-slate-400 shadow-[0_28px_60px_-30px_rgba(2,6,23,0.95)] backdrop-blur-2xl transition-all duration-500 ease-in-out lg:relative lg:inset-y-0 lg:left-0 lg:z-10 lg:h-full lg:w-[4.75rem] lg:rounded-[1.45rem] lg:bg-slate-950/72 lg:translate-x-0",
-          isOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
+          "fixed inset-y-4 left-4 z-40 flex w-[18.5rem] flex-col rounded-[2rem] border border-slate-200 bg-white/96 p-4 shadow-[0_28px_80px_-40px_rgba(15,23,42,0.28)] backdrop-blur transition-transform duration-300 lg:relative lg:inset-auto lg:z-10 lg:h-full lg:w-[18rem] lg:translate-x-0",
+          isOpen ? "translate-x-0" : "-translate-x-[120%]",
         )}
       >
-        <div className="flex h-full flex-col">
-          <div className="px-5 pb-4 pt-5 lg:px-2 lg:pb-3 lg:pt-4">
-            <div className="hidden items-center justify-center lg:flex lg:flex-col lg:gap-2">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-indigo-400/30 bg-indigo-500/14 shadow-[0_0_0_1px_rgba(99,102,241,0.16)]">
-                <BarChart3 className="h-5 w-5 text-white" />
-              </div>
-              <p className="font-mono text-[9px] font-black uppercase tracking-[0.28em] text-emerald-300">
-                HQ
-              </p>
+        <div className="rounded-[1.5rem] border border-slate-200 bg-slate-50/90 p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white shadow-sm">
+              <ShieldCheck className="h-5 w-5" />
             </div>
-
-            <div className="flex items-center gap-3 px-1 lg:hidden">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-indigo-400/30 bg-indigo-500/14 shadow-[0_0_0_1px_rgba(99,102,241,0.16)]">
-                <BarChart3 className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="font-mono text-xl font-black tracking-tight text-white">
-                  RAHI HQ
-                </h1>
-                <p className="font-mono text-[10px] font-black uppercase tracking-[0.24em] text-emerald-300 leading-none">
-                  Route Console
-                </p>
-              </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                RAHI Admin
+              </p>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-900">
+                Operations Suite
+              </h1>
             </div>
           </div>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            A simplified control surface aligned to the Karigar 360 customer experience.
+          </p>
+        </div>
 
-          <nav className="custom-scrollbar flex-1 space-y-1.5 overflow-y-auto px-3 py-4 lg:px-2">
-            {primaryItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  onNavigate(item.id);
-                  setIsOpen(false);
-                  setToolsOpen(false);
-                }}
-                className={cn(
-                  "group relative flex w-full items-center gap-3 rounded-xl px-4 py-3 transition-all duration-300 lg:justify-center lg:px-0",
-                  activeMission === item.id
-                    ? "border border-indigo-400/25 bg-indigo-500/12 text-white shadow-[0_18px_45px_-24px_rgba(79,70,229,0.6)]"
-                    : "border border-transparent hover:border-slate-800 hover:bg-slate-900/50 hover:text-slate-200",
-                )}
-                title={item.label}
-              >
-                {activeMission === item.id ? (
-                  <div className="absolute left-0 h-5 w-1 rounded-r-full bg-emerald-400 lg:left-auto lg:bottom-0 lg:h-1 lg:w-7 lg:rounded-t-full lg:rounded-r-none" />
-                ) : null}
-
-                <item.icon
-                  size={18}
-                  className={cn(
-                    "transition-transform duration-300 group-hover:scale-110",
-                    activeMission === item.id ? "text-emerald-300" : "text-slate-500",
-                  )}
-                />
-                <span className="font-mono text-[13px] font-black uppercase tracking-[0.14em] lg:hidden">
-                  {item.label}
-                </span>
-
-                <span className="pointer-events-none absolute left-[calc(100%+0.8rem)] top-1/2 hidden -translate-y-1/2 whitespace-nowrap rounded-full border border-slate-700 bg-slate-950/96 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-[0.18em] text-slate-100 opacity-0 shadow-[0_18px_40px_-24px_rgba(2,6,23,1)] transition-all duration-200 group-hover:opacity-100 lg:block">
-                  {item.label}
-                </span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="mt-auto border-t border-slate-800/80 p-4 lg:px-2 lg:py-3">
-            <div className="mb-3 hidden justify-center lg:flex">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-emerald-400/18 bg-emerald-400/10 text-emerald-300 shadow-[0_12px_30px_-20px_rgba(16,185,129,0.75)]">
-                <ShieldCheck size={16} />
+        <div className="mt-6 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-6">
+            <div>
+              <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                Navigation
+              </p>
+              <div className="mt-3 space-y-2">
+                {primaryItems.map((item) => (
+                  <NavButton
+                    key={item.id}
+                    active={activeMission === item.id}
+                    icon={item.icon}
+                    label={item.label}
+                    description={item.description}
+                    onClick={() => {
+                      onNavigate(item.id);
+                      setIsOpen(false);
+                    }}
+                  />
+                ))}
               </div>
             </div>
 
-            <div ref={toolsRef} className="relative">
-              <button
-                onClick={() => setToolsOpen((value) => !value)}
-                className={cn(
-                  "group relative mb-3 flex w-full items-center gap-3 rounded-xl px-4 py-3 font-mono text-sm font-black uppercase tracking-[0.14em] transition-all duration-300 lg:justify-center lg:px-0",
-                  activeMission === "observability" || activeMission === "settings"
-                    ? "border border-indigo-400/25 bg-indigo-500/10 text-white"
-                    : "text-slate-500 hover:bg-slate-900/60 hover:text-slate-200",
-                )}
-                title="System Tools"
-              >
-                <MoreVertical size={18} className="transition-transform group-hover:scale-110" />
-                <span className="lg:hidden">System Tools</span>
-                <span className="pointer-events-none absolute left-[calc(100%+0.8rem)] top-1/2 hidden -translate-y-1/2 whitespace-nowrap rounded-full border border-slate-700 bg-slate-950/96 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-[0.18em] text-slate-100 opacity-0 shadow-[0_18px_40px_-24px_rgba(2,6,23,1)] transition-all duration-200 group-hover:opacity-100 lg:block">
-                  More
-                </span>
-              </button>
-
-              {toolsOpen ? (
-                <div className="absolute bottom-[calc(100%+0.75rem)] left-0 right-0 rounded-[1.5rem] border border-slate-800/90 bg-slate-950/96 p-3 shadow-[0_28px_70px_-36px_rgba(2,6,23,1)] backdrop-blur-2xl lg:left-[calc(100%+0.9rem)] lg:right-auto lg:w-[18rem]">
-                  <div className="mb-3 px-2">
-                    <p className="font-mono text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">
-                      System Tools
-                    </p>
-                    <p className="mt-1 text-[11px] font-semibold leading-5 text-slate-500">
-                      Deep diagnostics, audit rails, and infrastructure controls.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    {toolItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          onToolSelect(item.id);
-                          setIsOpen(false);
-                          setToolsOpen(false);
-                        }}
-                        className="flex w-full items-start gap-3 rounded-2xl border border-transparent bg-slate-900/70 px-3 py-3 text-left transition hover:border-slate-700 hover:bg-slate-900"
-                      >
-                        <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800 bg-slate-950 text-emerald-300">
-                          <item.icon className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-mono text-[11px] font-black uppercase tracking-[0.16em] text-white">
-                            {item.label}
-                          </p>
-                          <p className="mt-1 text-[11px] font-semibold leading-5 text-slate-500">
-                            {item.note}
-                          </p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+            <div>
+              <p className="px-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                Platform
+              </p>
+              <div className="mt-3 space-y-2">
+                {secondaryItems.map((item) => (
+                  <NavButton
+                    key={item.id}
+                    active={isSecondaryActive && ((item.id === "settings" && activeMission === "settings") || (item.id === "system-health" && activeMission === "observability"))}
+                    icon={item.icon}
+                    label={item.label}
+                    description={item.description}
+                    onClick={() => {
+                      onToolSelect(item.id);
+                      setIsOpen(false);
+                    }}
+                  />
+                ))}
+              </div>
             </div>
-
-            <button
-              onClick={onLogout}
-              className="group relative flex w-full items-center gap-3 rounded-xl px-4 py-3 font-mono text-sm font-black uppercase tracking-[0.14em] text-slate-500 transition-all duration-300 hover:bg-red-400/5 hover:text-red-400 lg:justify-center lg:px-0"
-              title="Sign Out Session"
-            >
-              <LogOut size={18} className="transition-transform group-hover:-translate-x-1" />
-              <span className="lg:hidden">Sign Out Session</span>
-              <span className="pointer-events-none absolute left-[calc(100%+0.8rem)] top-1/2 hidden -translate-y-1/2 whitespace-nowrap rounded-full border border-slate-700 bg-slate-950/96 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-[0.18em] text-slate-100 opacity-0 shadow-[0_18px_40px_-24px_rgba(2,6,23,1)] transition-all duration-200 group-hover:opacity-100 lg:block">
-                Sign Out
-              </span>
-            </button>
           </div>
         </div>
-      </aside>
 
-      {isOpen ? (
-        <div
-          className="fixed inset-0 z-30 bg-slate-950/60 backdrop-blur-sm lg:hidden"
-          onClick={() => {
-            setIsOpen(false);
-            setToolsOpen(false);
-          }}
-        />
-      ) : null}
+        <button
+          type="button"
+          onClick={onLogout}
+          className="mt-4 inline-flex items-center gap-3 rounded-[1.15rem] border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
+      </aside>
     </>
   );
 };
+
+function NavButton({
+  active,
+  icon: Icon,
+  label,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof LayoutDashboard;
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-[1.15rem] border px-3.5 py-3 text-left transition",
+        active
+          ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+      )}
+    >
+      <div
+        className={cn(
+          "mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl",
+          active ? "bg-white/12 text-white" : "bg-slate-100 text-slate-700",
+        )}
+      >
+        <Icon className="h-4.5 w-4.5" />
+      </div>
+
+      <div className="min-w-0">
+        <p className="text-sm font-semibold tracking-tight">{label}</p>
+        <p className={cn("mt-1 text-xs leading-5", active ? "text-slate-300" : "text-slate-500")}>
+          {description}
+        </p>
+      </div>
+    </button>
+  );
+}

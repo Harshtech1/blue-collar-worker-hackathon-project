@@ -33,6 +33,14 @@ import ACServicePage from "./pages/ACServicePage";
 import LiveTrackingPage from "./pages/LiveTrackingPage";
 import PaymentPage from "./pages/PaymentPage";
 import AdminDashboard from "./pages/admin/AdminDashboard";
+import AdminOverviewRoute from "./pages/admin/AdminOverviewRoute";
+import AdminWarRoomRoute from "./pages/admin/AdminWarRoomRoute";
+import AdminWorkforceRoute from "./pages/admin/AdminWorkforceRoute";
+import AdminFinanceRoute from "./pages/admin/AdminFinanceRoute";
+import AdminObservabilityRoute from "./pages/admin/AdminObservabilityRoute";
+import AdminSettingsRoute from "./pages/admin/AdminSettingsRoute";
+import AdminHeatmapRoute from "./pages/admin/AdminHeatmapRoute";
+import { AdminLegacyRedirect } from "./pages/admin/AdminRoutePages";
 
 // Worker pages import
 import WorkerOnboardingPage from "./pages/worker/WorkerOnboardingPage";
@@ -219,7 +227,26 @@ const App = () => {
                     <Route path="/" element={<RoleBasedHome />} />
 
                     {/* Admin Portal - Hidden Route */}
-                    <Route path="/admin-portal-2026/*" element={<AdminDashboard />} />
+                    <Route path="/admin-portal-2026" element={<AdminDashboard />}>
+                      <Route index element={<Navigate to="overview" replace />} />
+                      <Route path="overview" element={<AdminOverviewRoute />} />
+                      <Route path="war-room" element={<Navigate to="/admin-portal-2026/war-room/agra-cantt" replace />} />
+                      <Route path="war-room/:zoneId" element={<AdminWarRoomRoute />} />
+                      <Route path="intelligence" element={<Navigate to="/admin-portal-2026/intelligence/agra-cantt" replace />} />
+                      <Route path="intelligence/:zoneId" element={<AdminWarRoomRoute />} />
+                      <Route path="heatmap" element={<AdminHeatmapRoute />} />
+                      <Route path="workforce" element={<AdminWorkforceRoute />} />
+                      <Route path="users" element={<AdminLegacyRedirect kind="workforce" />} />
+                      <Route path="workers" element={<AdminLegacyRedirect kind="workforce" />} />
+                      <Route path="bookings" element={<AdminLegacyRedirect kind="workforce" />} />
+                      <Route path="finance" element={<AdminFinanceRoute />} />
+                      <Route path="observability" element={<Navigate to="/admin-portal-2026/observability/system-health" replace />} />
+                      <Route path="observability/:panel" element={<AdminObservabilityRoute />} />
+                      <Route path="system" element={<AdminLegacyRedirect kind="system-health" />} />
+                      <Route path="bugs" element={<AdminLegacyRedirect kind="bug-monitor" />} />
+                      <Route path="audit" element={<AdminLegacyRedirect kind="audit-logs" />} />
+                      <Route path="settings" element={<AdminSettingsRoute />} />
+                    </Route>
 
                     <Route path="/login" element={<EnhancedLogin />} />
                     <Route path="/register" element={<Register />} />

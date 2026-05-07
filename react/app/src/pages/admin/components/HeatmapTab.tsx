@@ -204,7 +204,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
           ? "border-amber-400/40 bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950 text-white"
           : isPriceWar
             ? "border-amber-300/40 bg-gradient-to-r from-slate-950 via-indigo-950 to-amber-950 text-white"
-          : "border-indigo-200 bg-indigo-50 text-indigo-950",
+          : "border-indigo-400/18 bg-[linear-gradient(135deg,rgba(2,6,23,0.98),rgba(15,23,42,0.94)_55%,rgba(49,46,129,0.42))] text-slate-100 shadow-[0_24px_70px_-32px_rgba(2,6,23,1)]",
       )}
       style={isMonsoon || isPriceWar ? { animation: "rahi-alert-pulse 1.5s ease-in-out infinite" } : undefined}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -215,14 +215,14 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
                 ? "bg-amber-400/15 text-amber-300"
                 : isPriceWar
                   ? "bg-amber-400/15 text-amber-200"
-                  : "bg-indigo-100 text-indigo-700",
+                  : "bg-indigo-400/15 text-indigo-200",
             )}>
               {isMonsoon ? <CloudRain className="h-5 w-5" /> : isPriceWar ? <AlertTriangle className="h-5 w-5" /> : <Wrench className="h-5 w-5" />}
             </div>
             <div>
               <p className={cn(
                 "text-[11px] font-black uppercase tracking-[0.22em]",
-                isMonsoon ? "text-amber-200" : isPriceWar ? "text-amber-200" : "text-indigo-500",
+                isMonsoon ? "text-amber-200" : isPriceWar ? "text-amber-200" : "text-indigo-200",
               )}>
                 {isMonsoon
                   ? "[ALERT] ACTIVE MONSOON DEPLOYMENT PROTOCOL"
@@ -239,7 +239,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
               </h3>
               <p className={cn(
                 "mt-2 max-w-3xl text-sm font-semibold leading-6",
-                isMonsoon ? "text-slate-200" : isPriceWar ? "text-slate-200" : "text-indigo-800/80",
+                isMonsoon ? "text-slate-200" : isPriceWar ? "text-slate-200" : "text-slate-300",
               )}>
                 {isMonsoon
                   ? "Priority repair lanes are amplified, worker mobility is constrained, and the city should be read as an incident board rather than a passive heatmap."
@@ -266,7 +266,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
                       : "bg-indigo-600 text-white shadow-[0_18px_45px_-22px_rgba(79,70,229,0.65)]"
                     : isMonsoon || isPriceWar
                       ? "border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
-                      : "bg-white text-slate-600 hover:bg-slate-100",
+                      : "border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10",
                 )}
               >
                 {entry === "baseline" ? "Baseline" : entry === "monsoon" ? "Monsoon" : "Price War"}
@@ -281,7 +281,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
           "rounded-[1.8rem] border p-5 shadow-sm",
           isMonsoon || isPriceWar
             ? "border-slate-800 bg-slate-950 text-white"
-            : "border-slate-200 bg-white text-slate-950",
+            : "border-slate-800 bg-slate-950 text-white",
         )}>
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -333,7 +333,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
             "mt-4 rounded-[1.5rem] border px-4 py-4 text-sm font-semibold leading-6",
             isMonsoon || isPriceWar
               ? "border-amber-400/20 bg-amber-400/10 text-slate-100"
-              : "border-slate-200 bg-slate-50 text-slate-600",
+              : "border-indigo-400/18 bg-indigo-400/10 text-slate-100",
           )}>
             {isMonsoon
               ? "Command recommendation: shift salaried core into Plumbing, Roofing, and Electrical lanes first; hold non-urgent work until the repair queue cools."
@@ -365,7 +365,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
                   : "bg-indigo-600 text-white"
                 : scenario === "monsoon"
                   ? "bg-slate-900 text-slate-300 hover:bg-slate-800"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200",
+                  : "bg-slate-900 text-slate-300 hover:bg-slate-800",
             )}
           >
             {entry.charAt(0).toUpperCase() + entry.slice(1)}
@@ -376,7 +376,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
       {embeddedMap ? (
         <div className={cn(
           "relative h-[560px] overflow-hidden rounded-[2rem] border",
-          isMonsoon || isPriceWar ? "border-slate-800 bg-slate-950" : "border-slate-200 bg-white",
+          "border-slate-800 bg-slate-950",
         )}>
           <MapContainer
             center={center}
@@ -388,7 +388,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
             <TileLayer
               url={isMonsoon || isPriceWar
                 ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
+                : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"}
               attribution="&copy; CARTO"
             />
             <HeatmapViewport points={points} fallbackCenter={center} />
@@ -502,13 +502,13 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
       ) : (
         <div className={cn(
           "rounded-[2rem] border p-5 shadow-[0_30px_90px_-48px_rgba(2,6,23,1)] backdrop-blur-xl",
-          isMonsoon || isPriceWar ? "border-slate-800 bg-slate-950/78 text-white" : "border-indigo-200/80 bg-white/88 text-indigo-950",
+          isMonsoon || isPriceWar ? "border-slate-800 bg-slate-950/78 text-white" : "border-slate-800 bg-slate-950/78 text-white",
         )}>
           <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="max-w-2xl">
               <p className={cn(
                 "text-[11px] font-black uppercase tracking-[0.22em]",
-                isMonsoon ? "text-amber-300" : isPriceWar ? "text-amber-200" : "text-indigo-500",
+                isMonsoon ? "text-amber-300" : isPriceWar ? "text-amber-200" : "text-indigo-200",
               )}>
                 War Room Surface
               </p>
@@ -517,7 +517,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
               </h4>
               <p className={cn(
                 "mt-3 text-sm font-semibold leading-6",
-                isMonsoon || isPriceWar ? "text-slate-300" : "text-indigo-900/75",
+                isMonsoon || isPriceWar ? "text-slate-300" : "text-slate-300",
               )}>
                 Use the satellite command layer behind this module to steer the city directly. These controls now classify what you are seeing on the global map instead of embedding a second map inside the heat desk.
               </p>
@@ -542,17 +542,17 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
           <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
             <div className={cn(
               "rounded-[1.5rem] border p-4",
-              isMonsoon || isPriceWar ? "border-white/10 bg-white/5" : "border-indigo-100 bg-indigo-50/80",
+              isMonsoon || isPriceWar ? "border-white/10 bg-white/5" : "border-white/10 bg-white/5",
             )}>
               <p className={cn(
                 "text-[11px] font-black uppercase tracking-[0.2em]",
-                isMonsoon || isPriceWar ? "text-slate-400" : "text-indigo-500",
+                isMonsoon || isPriceWar ? "text-slate-400" : "text-indigo-200",
               )}>
                 Live Legend
               </p>
               <div className={cn(
                 "mt-3 space-y-2 text-sm font-semibold",
-                isMonsoon || isPriceWar ? "text-slate-100" : "text-slate-700",
+                isMonsoon || isPriceWar ? "text-slate-100" : "text-slate-100",
               )}>
                 <LegendRow color={isMonsoon ? "#f59e0b" : isPriceWar ? "#4338ca" : "#ef4444"} label="High pressure hotspot" />
                 <LegendRow color={isMonsoon ? "#818cf8" : "#6366f1"} label="Balanced demand zone" />
@@ -563,7 +563,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
 
             <div className={cn(
               "rounded-[1.5rem] border p-4 text-sm font-semibold leading-6",
-              isMonsoon || isPriceWar ? "border-white/10 bg-white/5 text-slate-100" : "border-slate-200 bg-slate-50 text-slate-600",
+              isMonsoon || isPriceWar ? "border-white/10 bg-white/5 text-slate-100" : "border-white/10 bg-white/5 text-slate-100",
             )}>
               {isMonsoon
                 ? "Monsoon mode is now read directly on the full-screen terrain. Watch the amber pressure lanes beneath this module and shift salaried core before repair density overwhelms response time."
@@ -616,7 +616,7 @@ function MetricCard({
 }) {
   const toneClasses: Record<typeof tone, string> = {
     amber: "border-amber-200 bg-amber-50 text-amber-950",
-    indigo: "border-indigo-200 bg-indigo-50 text-indigo-950",
+    indigo: "border-indigo-400/20 bg-indigo-400/10 text-indigo-100",
     rose: "border-rose-200 bg-rose-50 text-rose-950",
     orange: "border-orange-200 bg-orange-50 text-orange-950",
     emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",

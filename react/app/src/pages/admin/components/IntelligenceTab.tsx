@@ -2870,15 +2870,20 @@ export function IntelligenceTab({
                 zoom={commandMapZoom}
                 scrollWheelZoom
                 preferCanvas
-                className="h-full w-full"
+                className="rahi-command-map h-full w-full"
               >
                 <CommandMapView
                   center={commandMapCenter}
                   zoom={commandMapZoom}
                 />
                 <TileLayer
-                  url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                  attribution="&copy; CARTO"
+                  url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                  attribution="Tiles &copy; Esri"
+                />
+                <TileLayer
+                  url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
+                  attribution="Labels &copy; CARTO"
+                  opacity={0.92}
                 />
 
                 {!isPinnedCommandMode && commandMapZones.map((zone) => {
@@ -2899,11 +2904,11 @@ export function IntelligenceTab({
                       }}
                       eventHandlers={{ click: () => handleZoneSelection(zone.id) }}
                     >
-                      <LeafletTooltip sticky>
+                      <LeafletTooltip sticky className="rahi-map-tooltip">
                         <div className="space-y-1">
-                          <p className="text-sm font-black text-slate-950">{zone.label}</p>
-                          <p className="text-xs font-bold text-slate-500">{tone.label}</p>
-                          <p className="text-xs font-bold text-slate-700">Density {density.toFixed(2)}</p>
+                          <p className="text-sm font-black text-white">{zone.label}</p>
+                          <p className="text-xs font-bold text-slate-300">{tone.label}</p>
+                          <p className="text-xs font-bold text-slate-200" style={{ fontFamily: monoMetricFont }}>Density {density.toFixed(2)}</p>
                         </div>
                       </LeafletTooltip>
                     </Polygon>
@@ -2949,13 +2954,13 @@ export function IntelligenceTab({
                       weight: signal.isEmergency ? 2 : 1,
                     }}
                   >
-                    <LeafletTooltip>
+                    <LeafletTooltip className="rahi-map-tooltip">
                       <div className="space-y-1">
-                        <p className="text-sm font-black text-slate-950">{signal.label}</p>
-                        <p className="text-xs font-bold text-slate-500">{signal.serviceType}</p>
-                        <p className="text-xs font-bold text-slate-700">{formatCurrency(signal.estimatedValue)}</p>
+                        <p className="text-sm font-black text-white">{signal.label}</p>
+                        <p className="text-xs font-bold text-slate-300">{signal.serviceType}</p>
+                        <p className="text-xs font-bold text-slate-200" style={{ fontFamily: monoMetricFont }}>{formatCurrency(signal.estimatedValue)}</p>
                         {(signal as { city?: string }).city ? (
-                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-600">{(signal as { city?: string }).city}</p>
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-300">{(signal as { city?: string }).city}</p>
                         ) : null}
                       </div>
                     </LeafletTooltip>
@@ -3128,8 +3133,8 @@ export function IntelligenceTab({
                   <span className={cn(
                     "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]",
                     simulationRunning || strategyStatus === "thinking"
-                      ? "bg-indigo-100 text-indigo-700"
-                      : "bg-slate-100 text-slate-500",
+                      ? "border border-indigo-300/18 bg-indigo-300/10 text-indigo-100"
+                      : "border border-white/10 bg-white/[0.05] text-slate-300",
                   )}>
                     {simulationRunning ? "Streaming" : strategyStatus === "thinking" ? "Drafting" : "Standby"}
                   </span>
@@ -3344,7 +3349,7 @@ export function IntelligenceTab({
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Run allocation forecast</p>
-              <h3 className="mt-2 text-2xl font-black text-slate-950">Analyze a live command radius</h3>
+              <h3 className="mt-2 text-2xl font-black text-white">Analyze a live command radius</h3>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <MarketCommandSearch
@@ -3482,7 +3487,7 @@ export function IntelligenceTab({
             <MonitoringStat label="Emergency share" value={`${analysis.emergency_orders}`} hint="Urgent bookings in the queue" light />
           </div>
 
-          <div className="mt-6 rounded-[1.5rem] border border-slate-200 bg-slate-950 p-5 text-white">
+          <div className="mt-6 rounded-[1.5rem] border border-white/10 bg-slate-950/82 p-5 text-white shadow-[0_22px_55px_-34px_rgba(2,6,23,1)]">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Ops playbook</p>
@@ -3615,7 +3620,7 @@ export function IntelligenceTab({
             })}
           </div>
 
-          <div className="mt-5 rounded-[1.5rem] border border-slate-200 bg-slate-950 p-5 text-white">
+          <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-slate-950/82 p-5 text-white shadow-[0_22px_55px_-34px_rgba(2,6,23,1)]">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Selected week pulse</p>
@@ -3859,7 +3864,7 @@ export function IntelligenceTab({
             </div>
 
             {selectedWorker && (
-              <div className="mt-5 rounded-[1.5rem] border border-slate-200 bg-slate-950 p-5 text-white">
+              <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-slate-950/82 p-5 text-white shadow-[0_22px_55px_-34px_rgba(2,6,23,1)]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Selected worker</p>
@@ -4020,6 +4025,38 @@ function CommandCenterMotionStyles() {
         animation: rahi-terminal-caret 1s steps(1) infinite;
       }
 
+      .rahi-command-map {
+        background: #020617;
+      }
+
+      .rahi-command-map .leaflet-tile {
+        filter: saturate(0.72) contrast(1.08) brightness(0.82);
+      }
+
+      .rahi-command-map .leaflet-control-zoom a {
+        border-color: rgba(148, 163, 184, 0.2);
+        background: rgba(2, 6, 23, 0.88);
+        color: #e2e8f0;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+      }
+
+      .rahi-command-map .leaflet-control-zoom a:hover {
+        background: rgba(15, 23, 42, 0.96);
+      }
+
+      .rahi-map-tooltip {
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        border-radius: 16px;
+        background: rgba(2, 6, 23, 0.9);
+        color: #f8fafc;
+        box-shadow: 0 18px 48px -30px rgba(2, 6, 23, 1);
+        backdrop-filter: blur(16px);
+      }
+
+      .rahi-map-tooltip::before {
+        border-top-color: rgba(2, 6, 23, 0.9) !important;
+      }
+
       @media (prefers-reduced-motion: reduce) {
         .rahi-scanline,
         .rahi-command-pin,
@@ -4074,7 +4111,7 @@ function RibbonMetric({ label, value, hint }: { label: string; value: string; hi
   return (
     <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.06] px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
-      <p className="mt-2 text-lg font-black text-white">{value}</p>
+      <p className="mt-2 text-lg font-black text-white" style={{ fontFamily: monoMetricFont }}>{value}</p>
       <p className="mt-1 text-xs font-semibold text-slate-300">{hint}</p>
     </div>
   );
@@ -4097,7 +4134,7 @@ function MonitoringStat({
       light ? "border-white/10 bg-slate-950/72" : "border-white/10 bg-white/[0.04]",
     )}>
       <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", light ? "text-slate-500" : "text-slate-500")}>{label}</p>
-      <p className={cn("mt-2 text-sm font-black", light ? "text-white" : "text-white")}>{value}</p>
+      <p className={cn("mt-2 text-sm font-black", light ? "text-white" : "text-white")} style={{ fontFamily: monoMetricFont }}>{value}</p>
       <p className={cn("mt-2 text-xs font-semibold", light ? "text-slate-300" : "text-slate-300")}>{hint}</p>
     </div>
   );
@@ -4118,7 +4155,7 @@ function AllocationBar({ label, value, color }: { label: string; value: number; 
     <div>
       <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-200">
         <span>{label}</span>
-        <span>{value}%</span>
+        <span style={{ fontFamily: monoMetricFont }}>{value}%</span>
       </div>
       <div className="h-4 overflow-hidden rounded-full bg-white/10">
         <div className={cn("h-full rounded-full transition-all duration-700", color)} style={{ width: `${value}%` }} />
@@ -4131,7 +4168,7 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-slate-950/72 p-4 backdrop-blur-xl">
       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label}</p>
-      <p className="mt-2 text-base font-black text-white">{value}</p>
+      <p className="mt-2 text-base font-black text-white" style={{ fontFamily: monoMetricFont }}>{value}</p>
     </div>
   );
 }
@@ -4177,7 +4214,7 @@ function ScenarioMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-2 last:border-b-0 last:pb-0">
       <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{label}</span>
-      <span className="text-sm font-black text-current">{value}</span>
+      <span className="text-sm font-black text-current" style={{ fontFamily: monoMetricFont }}>{value}</span>
     </div>
   );
 }
@@ -4230,7 +4267,7 @@ function MetricButton({
       )}
     >
       <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", active ? "text-slate-400" : "text-slate-400")}>{label}</p>
-      <p className="mt-2 text-lg font-black">{value}</p>
+      <p className="mt-2 text-lg font-black" style={{ fontFamily: monoMetricFont }}>{value}</p>
     </button>
   );
 }
@@ -4252,7 +4289,7 @@ function RevenueStrip({
     <div>
       <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-200">
         <span>{label}</span>
-        <span>{formatCurrency(value)}</span>
+        <span style={{ fontFamily: monoMetricFont }}>{formatCurrency(value)}</span>
       </div>
       <div className="h-4 overflow-hidden rounded-full bg-white/10">
         <div className={cn("h-full rounded-full transition-all duration-700", tone)} style={{ width: `${ratio}%` }} />
