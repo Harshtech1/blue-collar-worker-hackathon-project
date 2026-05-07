@@ -720,7 +720,7 @@ function MissionViewport({
   });
 
   useEffect(() => {
-    map.setView(center, zoom, { animate: true, duration: 1.1 });
+    map.setView(center, zoom, { animate: true, duration: 2.5 });
     onViewportChange({ center, zoom });
   }, [center, map, onViewportChange, zoom]);
 

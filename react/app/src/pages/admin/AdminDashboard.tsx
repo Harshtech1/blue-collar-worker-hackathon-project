@@ -725,6 +725,10 @@ export default function AdminDashboard() {
           overflow: hidden;
         }
 
+        .mission-control-shell {
+          font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
         .mission-control-shell .mission-scrollbar::-webkit-scrollbar {
           width: 9px;
         }

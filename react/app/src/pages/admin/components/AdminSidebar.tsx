@@ -37,7 +37,7 @@ const primaryItems: Array<{
   },
   {
     id: "war-room",
-    label: "Location Center",
+    label: "Operations Center",
     description: "Map, market signals, and delivery coverage",
     icon: Map,
   },

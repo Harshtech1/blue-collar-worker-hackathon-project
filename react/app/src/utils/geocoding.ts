@@ -126,6 +126,78 @@ const fetchNominatim = async (url: string, signal?: AbortSignal) => {
   return response.json();
 };
 
+const DEMO_GEOCODE_CACHE: Array<{
+  key: string;
+  entry: NominatimEntry;
+}> = [
+  {
+    key: "agra",
+    entry: {
+      lat: "27.1767",
+      lon: "78.0081",
+      display_name: "Agra, UP, India",
+      address: {
+        city: "Agra",
+        state: "Uttar Pradesh",
+        country: "India",
+        "ISO3166-2-lvl4": "IN-UP",
+      },
+    },
+  },
+  {
+    key: "new delhi",
+    entry: {
+      lat: "28.6139",
+      lon: "77.2090",
+      display_name: "New Delhi, DL, India",
+      address: {
+        city: "New Delhi",
+        state: "Delhi",
+        country: "India",
+        "ISO3166-2-lvl4": "IN-DL",
+      },
+    },
+  },
+  {
+    key: "chandigarh",
+    entry: {
+      lat: "30.7333",
+      lon: "76.7794",
+      display_name: "Chandigarh, CH, India",
+      address: {
+        city: "Chandigarh",
+        state: "Chandigarh",
+        country: "India",
+        "ISO3166-2-lvl4": "IN-CH",
+      },
+    },
+  },
+  {
+    key: "chennai",
+    entry: {
+      lat: "13.0827",
+      lon: "80.2707",
+      display_name: "Chennai, TN, India",
+      address: {
+        city: "Chennai",
+        state: "Tamil Nadu",
+        country: "India",
+        "ISO3166-2-lvl4": "IN-TN",
+      },
+    },
+  },
+];
+
+const getCachedGeocodedMarkets = (query: string, radiusKm: number, limit: number) => {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return [];
+
+  return DEMO_GEOCODE_CACHE
+    .filter((entry) => normalizedQuery.includes(entry.key) || entry.key.includes(normalizedQuery))
+    .slice(0, limit)
+    .map((entry) => toGeocodedMarketResult(entry.entry, radiusKm));
+};
+
 export const searchGeocodedMarkets = async (
   query: string,
   options: {
@@ -141,6 +213,10 @@ export const searchGeocodedMarkets = async (
 
   const limit = Math.min(Math.max(options.limit ?? 5, 1), 8);
   const radiusKm = options.radiusKm ?? 12;
+  const cachedResults = getCachedGeocodedMarkets(trimmedQuery, radiusKm, limit);
+  if (cachedResults.length > 0) {
+    return cachedResults;
+  }
   const url = new URL("https://nominatim.openstreetmap.org/search");
   url.searchParams.set("format", "json");
   url.searchParams.set("q", trimmedQuery);

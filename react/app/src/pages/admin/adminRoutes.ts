@@ -34,7 +34,7 @@ export type AdminToolAction = AdminObservabilityPanel | "settings";
 
 export const ADMIN_MISSION_LABELS: Record<AdminMission, string> = {
   overview: "Overview",
-  "war-room": "Location Center",
+  "war-room": "Operations Center",
   workforce: "Workforce",
   finance: "Finance",
   observability: "System Health",

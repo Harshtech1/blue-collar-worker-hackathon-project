@@ -31,7 +31,7 @@ import {
   type AdminObservabilityPanel,
 } from "./adminRoutes";
 import { useAdminShellContext } from "./adminShellContext";
-import { GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
+import { buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
 
 type CommandOption = {
   id: string;
@@ -435,6 +435,38 @@ export function AdminWarRoomPage() {
   const watchStatus = healthSnapshot?.status === "ok" && llmMode === "ready"
     ? "Healthy"
     : "Watch";
+  const activeMarketGeo = useMemo(() => {
+    const isGlobalMarket = GLOBAL_SIMULATION_CITIES.some((city) => city.id === routeZoneId);
+    return buildSimulationGeoConfig({
+      cityId: isGlobalMarket ? routeZoneId || undefined : undefined,
+      radiusKm: isGlobalMarket ? 14 : 10,
+    });
+  }, [routeZoneId]);
+  const marketContextLabel = useMemo(() => {
+    switch (activeMarketGeo.cityTier) {
+      case "pilot":
+        return "Pilot Optimization Context";
+      case "tier_1":
+        return "Tier-1 Expansion Context";
+      case "tier_2":
+        return "Tier-2 Expansion Context";
+      case "tier_3":
+        return "Emerging Market Context";
+      default:
+        return "International Expansion Context";
+    }
+  }, [activeMarketGeo.cityTier]);
+  const effectiveLlmSummary = useMemo(() => {
+    if (llmSummary && llmSummary !== "Cloud Engine: Monitoring") {
+      return llmSummary;
+    }
+
+    if (activeMarketGeo.isExistingMarket) {
+      return `Pilot Optimization Context. ${activeMarketGeo.marketContext} Prioritize routing efficiency, worker density, and repeat-demand retention in the active pilot.`;
+    }
+
+    return `${marketContextLabel}. ${activeMarketGeo.marketContext} Focus launch readiness on workforce seeding, controlled marketing CAC, and synthetic demand validation before live order history appears.`;
+  }, [activeMarketGeo, llmSummary, marketContextLabel]);
 
   const modeledCommissionPerJob = Math.round(averageTicket * 0.18);
   const modeledMarketingCac = Math.round(Math.max(42, averageTicket * 0.06));
@@ -501,10 +533,10 @@ export function AdminWarRoomPage() {
                 Market Analytics
               </p>
               <h2 className="mt-2 text-[1.35rem] font-semibold tracking-tight text-slate-900">
-                Market analytics dock
+                Market Analytics
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-600">
-                Zone posture, AI routing, and selected worker context in one strict right-hand lane.
+                Zone posture, AI routing, and selected worker context in one clean decision surface.
               </p>
             </div>
             <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-700">
@@ -531,7 +563,7 @@ export function AdminWarRoomPage() {
             </SuitePanel>
 
             <SuitePanel
-              eyebrow="Expansion Playbook"
+              eyebrow={marketContextLabel}
               title="Market brief"
               description="Professional guidance should feel like a market memo, not a terminal dump."
               icon={LineChart}
@@ -542,7 +574,7 @@ export function AdminWarRoomPage() {
                 <SignalRow label="Cloud intelligence" value={llmMode === "ready" ? "Live cascade" : "Fallback mode"} tone={llmMode === "ready" ? "emerald" : "amber"} />
                 <SignalRow label="Operational health" value={watchStatus} tone={watchStatus === "Healthy" ? "sky" : "amber"} />
                 <p className="rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
-                  {llmSummary}
+                  {effectiveLlmSummary}
                 </p>
               </div>
             </SuitePanel>
@@ -597,10 +629,10 @@ export function AdminWarRoomPage() {
                 <SignalRow label="Pending payouts" value={`INR ${pendingPayouts.toLocaleString("en-IN")}`} tone="amber" />
                 <div className="rounded-[22px] border border-slate-200 bg-slate-50/85 px-4 py-4">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                    Expansion brief
+                    {marketContextLabel}
                   </p>
                   <p className="mt-3 text-sm leading-7 text-slate-700">
-                    {llmSummary}
+                    {effectiveLlmSummary}
                   </p>
                 </div>
               </div>
@@ -770,7 +802,7 @@ export function AdminWorkforcePage() {
 
   return (
     <ScrollPage>
-      <section className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
         <SuitePanel
           eyebrow="Workforce"
           title="Worker quality and capacity in one place."
@@ -799,7 +831,7 @@ export function AdminWorkforcePage() {
         </SuitePanel>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.12fr_0.88fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
         <DataTable
           title="WORKER FLEET"
           description="Trust, verification posture, and lane availability."
@@ -872,22 +904,22 @@ export function AdminFinancePage() {
 
   return (
     <ScrollPage>
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <SuitePanel
           eyebrow="Unit Economics"
           title="Net profit per job is visible above the fold."
           description="This card is the investor hook: it makes the business model legible without needing to decode the rest of the dashboard."
           icon={Wallet}
         >
-          <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
             <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-5">
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Formula</p>
               <p className="mt-3 text-2xl font-black text-slate-900">
-                Net Profit per Job = Commission - (Marketing + Incentives)
+                Net Profit per Job = Commission - (Marketing CAC + Incentives)
               </p>
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <MetricTile label="Commission" value={`INR ${commissionPerJob}`} tone="navy" />
-                <MetricTile label="Marketing" value={`INR ${marketingPerJob}`} tone="amber" />
+                <MetricTile label="Marketing CAC" value={`INR ${marketingPerJob}`} tone="amber" />
                 <MetricTile label="Incentives" value={`INR ${incentivesPerJob}`} tone="sky" />
               </div>
             </div>
@@ -921,14 +953,14 @@ export function AdminFinancePage() {
         </SuitePanel>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile label="Completed jobs" value={completedCount.toLocaleString("en-IN")} tone="navy" />
         <MetricTile label="Average ticket" value={`INR ${avgTicket.toLocaleString("en-IN")}`} tone="sky" />
         <MetricTile label="Pending payouts" value={`INR ${pendingPayouts.toLocaleString("en-IN")}`} tone="amber" />
         <MetricTile label="Net per job" value={`INR ${netProfitPerJob.toLocaleString("en-IN")}`} tone={netProfitPerJob >= 0 ? "emerald" : "amber"} />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[0.94fr_1.06fr]">
+      <section className="grid gap-6 xl:grid-cols-[0.94fr_1.06fr]">
         <SuitePanel
           eyebrow="Service Yield"
           title="Where revenue is concentrating"
@@ -1055,7 +1087,7 @@ export function AdminObservabilityPage() {
 
   return (
     <ScrollPage>
-      <section className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
+      <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
         <SuitePanel
           eyebrow="Observability"
           title="A lighter control room for system health."
@@ -1102,7 +1134,7 @@ export function AdminObservabilityPage() {
       </section>
 
       {currentObservabilityPanel === "system-health" ? (
-        <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <SuitePanel
             eyebrow="System Health"
             title="Core dependencies"
@@ -1132,7 +1164,7 @@ export function AdminObservabilityPage() {
       ) : null}
 
       {currentObservabilityPanel === "bug-monitor" ? (
-        <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <SuitePanel
             eyebrow="Bug Monitor"
             title="Prioritized issues"
@@ -1165,8 +1197,8 @@ export function AdminObservabilityPage() {
                         {issue.code.replaceAll("_", " ")}
                       </span>
                       {issue.severity === "critical" ? (
-                        <span className="rounded-full border border-rose-200 bg-rose-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-rose-700">
-                          Critical
+                        <span className="rounded-full border border-rose-200 bg-rose-100 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-rose-700">
+                          CRITICAL
                         </span>
                       ) : (
                         <span className={cn(
@@ -1211,7 +1243,7 @@ export function AdminObservabilityPage() {
       ) : null}
 
       {currentObservabilityPanel === "api-telemetry" ? (
-        <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <SuitePanel
             eyebrow="API Telemetry"
             title="Latency and load"
@@ -1242,7 +1274,7 @@ export function AdminObservabilityPage() {
       ) : null}
 
       {currentObservabilityPanel === "audit-logs" ? (
-        <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <SuitePanel
             eyebrow="Audit Logs"
             title="Verified operating trail"
@@ -1341,7 +1373,7 @@ export function AdminLegacyRedirect({
 function ScrollPage({ children }: { children: ReactNode }) {
   return (
     <div className="mission-scrollbar h-full overflow-y-auto pr-1">
-      <div className="space-y-6 p-6 pb-8">{children}</div>
+      <div className="space-y-6 p-8 pb-8">{children}</div>
     </div>
   );
 }
@@ -1486,7 +1518,7 @@ function ActionPill({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex min-h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:border-slate-300 hover:bg-slate-50"
+      className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
     >
       {label}
       <ArrowRight className="h-4 w-4" />
