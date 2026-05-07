@@ -13,6 +13,7 @@ const CHIP_TONES: Record<StrategyChip["id"], string> = {
   local_ops: "border-sky-200 bg-sky-50/70 text-sky-950",
   financial_stability: "border-amber-200 bg-amber-50/80 text-amber-950",
   expansion_posture: "border-emerald-200 bg-emerald-50/80 text-emerald-950",
+  expansion_budget: "border-slate-200 bg-slate-50 text-slate-950",
 };
 
 export function StrategyPulse({ summary, className }: StrategyPulseProps) {

@@ -29,6 +29,8 @@ import {
   getMarketDistrictsForCity,
   type MarketCity,
 } from "../marketRegistry";
+import type { AdminMapStyle } from "../adminShellContext";
+import type { AdminMarketSnapshot } from "../utils/adminMarketSnapshot";
 import type { AdminTab } from "./AdminSidebar";
 
 interface MissionControlWorker {
@@ -42,6 +44,12 @@ interface MissionControlWorker {
   logisticsScore?: number;
   acceptanceRate?: number;
   reliabilityScore?: number;
+  lat?: number;
+  lng?: number;
+  qualityScore?: number;
+  regionName?: string;
+  workerCount?: number;
+  activeJobs?: number;
 }
 
 interface MissionControlBooking {
@@ -57,12 +65,14 @@ interface MissionControlMapProps {
   routeZoneId?: string | null;
   selectedMarket?: MarketCity | null;
   selectedDistrictId?: string | null;
+  marketSnapshot?: AdminMarketSnapshot | null;
   workers: MissionControlWorker[];
   bookings: MissionControlBooking[];
   onZoneSelect?: (zoneId: string) => void;
   highlightWorkerId?: string | null;
-  mapStyleMode?: "road" | "terrain" | "high-contrast";
-  onMapStyleChange?: (mapStyle: "road" | "terrain" | "high-contrast") => void;
+  mapStyleMode?: AdminMapStyle;
+  onMapStyleChange?: (mapStyle: AdminMapStyle) => void;
+  pitchMode?: boolean;
   variant?: "full" | "lite";
   className?: string;
 }
@@ -79,6 +89,7 @@ interface ZoneAnchor {
   landmarkLabel?: string;
   bounds?: [[number, number], [number, number]];
   baseWorkers?: number;
+  activeJobs?: number;
 }
 
 interface ViewportTelemetry {
@@ -201,6 +212,22 @@ const buildCityAnchors = (city: Pick<GlobalSimulationCity, "id" | "label" | "lat
   }));
 };
 
+const buildSnapshotZoneAnchors = (snapshot: AdminMarketSnapshot): ZoneAnchor[] => (
+  snapshot.regions.map((region, index) => ({
+    id: region.id,
+    label: region.label,
+    city: snapshot.market.cityLabel,
+    center: [region.lat, region.lng] as [number, number],
+    intensity: Number((Math.max(0.8, (region.activeJobs / Math.max(1, region.workerCount)) + 0.65)).toFixed(2)),
+    scope: "city" as const,
+    zoomLevel: snapshot.market.regionId === region.id ? 12.6 : snapshot.market.zoom,
+    readinessScore: region.readiness,
+    landmarkLabel: `${snapshot.market.cityLabel} market zone`,
+    baseWorkers: region.workerCount,
+    activeJobs: region.activeJobs,
+  }))
+);
+
 const estimateObservationAltitude = (lat: number, zoom: number) => {
   const groundResolution = 156543.03392 * Math.cos(toRadians(lat)) / Math.pow(2, zoom);
   return Math.max(180, Math.round(groundResolution * 900));
@@ -296,9 +323,9 @@ export function MissionControlMap({
     [selectedDistrictId, usingGlobalCityScope, zoneAnchors],
   );
   const [mapViewMode, setMapViewMode] = useState<"road" | "satellite">(
-    mapStyleMode === "high-contrast" ? "satellite" : "road",
+    mapStyleMode === "road" ? "road" : "satellite",
   );
-  const [showSectorOverlays, setShowSectorOverlays] = useState(false);
+  const [showSectorOverlays, setShowSectorOverlays] = useState(true);
   const [showMapSettings, setShowMapSettings] = useState(false);
   const activeDistrict = useMemo(
     () => getMarketDistrictBySlug(selectedDistrictId, selectedMarket?.slug || activeCitySlug),
@@ -309,12 +336,6 @@ export function MissionControlMap({
     if (!mapStyleMode) return;
 
     if (mapStyleMode === "road") {
-      setMapViewMode("road");
-      setShowSectorOverlays(false);
-      return;
-    }
-
-    if (mapStyleMode === "terrain") {
       setMapViewMode("road");
       setShowSectorOverlays(true);
       return;
@@ -869,7 +890,7 @@ export function MissionControlMap({
                   type="button"
                   onClick={() => {
                     setMapViewMode("road");
-                    setShowSectorOverlays(false);
+                    setShowSectorOverlays(true);
                     onMapStyleChange?.("road");
                   }}
                   className={cn(
@@ -885,11 +906,7 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setShowSectorOverlays((current) => {
-                      const next = !current;
-                      onMapStyleChange?.(next ? "terrain" : mapViewMode === "satellite" ? "high-contrast" : "road");
-                      return next;
-                    });
+                    setShowSectorOverlays((current) => !current);
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",

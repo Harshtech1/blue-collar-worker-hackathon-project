@@ -14,7 +14,7 @@ type AssetYieldSnapshotInput = {
   monthlyJobsRunRate: number;
   monthlyNetProfit: number;
   annualizedNetProfit: number;
-  expansionCac: number;
+  regionalEntryBudget: number;
   roi12m: number;
 };
 
@@ -32,6 +32,19 @@ export interface InvestorBriefPdfInput {
 }
 
 const formatInr = (value: number) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+const formatCompactInr = (value: number) => {
+  const normalizedValue = Math.round(Number(value || 0));
+  if (normalizedValue >= 100000) {
+    const lakhValue = normalizedValue / 100000;
+    return `₹${Number.isInteger(lakhValue) ? lakhValue.toFixed(0) : lakhValue.toFixed(1)}L`;
+  }
+
+  if (normalizedValue >= 1000) {
+    return `₹${Math.round(normalizedValue / 1000)}K`;
+  }
+
+  return `₹${normalizedValue}`;
+};
 
 const drawCard = (
   pdf: any,
@@ -187,7 +200,7 @@ export const downloadInvestorBriefPdf = async ({
   drawMetricTile(pdf, margin + 98, cursorY + 24, 45, "Monthly Run Rate", `${assetYield.monthlyJobsRunRate} jobs`, [15, 23, 42]);
   drawMetricTile(pdf, margin + 147, cursorY + 24, 45, "Monthly Net", formatInr(assetYield.monthlyNetProfit), [5, 150, 105]);
   drawMetricTile(pdf, margin + 98, cursorY + 46, 45, "Annualized Profit", formatInr(assetYield.annualizedNetProfit), [2, 132, 199]);
-  drawMetricTile(pdf, margin + 147, cursorY + 46, 45, "Expansion CAC", formatInr(assetYield.expansionCac), [180, 83, 9]);
+  drawMetricTile(pdf, margin + 147, cursorY + 46, 45, "Entry Budget", formatInr(assetYield.regionalEntryBudget), [180, 83, 9]);
 
   cursorY += 68;
 
@@ -208,14 +221,14 @@ export const downloadInvestorBriefPdf = async ({
       detail: `Density ${summary.marketMetrics.density.toFixed(2)} | Yield ${formatInr(yieldSnapshot.netProfitPerJob)}`,
     },
     {
-      title: "Chandigarh",
-      stage: "Shadow Launch",
-      detail: "Projected CAC INR 150 | Payback 18 days | Freelancer-first supply.",
+      title: summary.marketMetrics.city,
+      stage: summary.unitEconomics.launchMode,
+      detail: `Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | CAC INR ${summary.unitEconomics.launchCacPerWorker} | Payback ${summary.unitEconomics.paybackDays} days`,
     },
     {
-      title: "New Delhi",
-      stage: "Tier-1 Reserve",
-      detail: "Open after trust coverage and margin discipline hold above target.",
+      title: summary.marketMetrics.recommendedExpansionCity,
+      stage: "Next launch lane",
+      detail: `State ${summary.marketMetrics.state} | Burn-to-scale ${summary.unitEconomics.burnToScaleRatio.toFixed(2)}x | Density gate protected.`,
     },
   ];
 
@@ -259,6 +272,11 @@ export const downloadInvestorBriefPdf = async ({
   pdf.text(
     `Generated ${generatedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`,
     margin + 4,
+    cursorY + 31,
+  );
+  pdf.text(
+    `${marketPathLabel} | Regional Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | ROI Target ${assetYield.roi12m.toFixed(0)}%`,
+    margin + 70,
     cursorY + 31,
   );
 

@@ -23,7 +23,8 @@ import {
 export type StrategyChipId =
   | "local_ops"
   | "financial_stability"
-  | "expansion_posture";
+  | "expansion_posture"
+  | "expansion_budget";
 
 export type StrategyChipTone = "navy" | "emerald" | "sky" | "amber";
 
@@ -54,6 +55,12 @@ export interface SystemInsightsSummary {
     yieldPerJob: number;
     cacProjected: number;
     paybackDays: number;
+    launchCacPerWorker: number;
+    marketCapacity: number;
+    setupOverhead: number;
+    regionalEntryBudget: number;
+    burnToScaleRatio: number;
+    launchMode: string;
   };
   systemHealth: {
     criticalBugs: number;
@@ -88,11 +95,32 @@ type MarketIdentity = {
   isExistingMarket: boolean;
 };
 
+type RegionalBudgetProfile = {
+  launchCacPerWorker: number;
+  marketCapacity: number;
+  setupOverhead: number;
+  launchMode: string;
+};
+
 const AGRA_CITY_ID = "agra";
 const AGRA_CITY_NAME = "agra";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const roundTo = (value: number, digits = 2) => Number(value.toFixed(digits));
+
+const formatCompactInr = (value: number) => {
+  const normalizedValue = Math.round(Number(value || 0));
+  if (normalizedValue >= 100000) {
+    const lakhValue = normalizedValue / 100000;
+    return `₹${Number.isInteger(lakhValue) ? lakhValue.toFixed(0) : lakhValue.toFixed(1)}L`;
+  }
+
+  if (normalizedValue >= 1000) {
+    return `₹${Math.round(normalizedValue / 1000)}K`;
+  }
+
+  return `₹${normalizedValue}`;
+};
 
 const sanitizeInsightText = (value: string) => (
   value
@@ -185,13 +213,35 @@ const deriveYieldPerJob = (
   return Math.max(220, Math.round((averageTicket * 0.24) - 110));
 };
 
+const getRegionalBudgetProfile = (
+  cityTier: MarketIdentity["cityTier"],
+  isExistingMarket: boolean,
+): RegionalBudgetProfile => {
+  if (cityTier === "tier_1" || cityTier === "international") {
+    return {
+      launchCacPerWorker: 150,
+      marketCapacity: 1500,
+      setupOverhead: 75000,
+      launchMode: "Tier-1 Shadow Launch",
+    };
+  }
+
+  return {
+    launchCacPerWorker: 120,
+    marketCapacity: isExistingMarket ? 500 : 500,
+    setupOverhead: 30000,
+    launchMode: isExistingMarket ? "Pilot Reinforcement" : "Shadow Launch",
+  };
+};
+
 const deriveProjectedCac = (
   isNonAgraMarket: boolean,
+  marketIdentity: MarketIdentity,
   investorSummary: AdminInvestorAnalyticsSummary | null,
   yieldPerJob: number,
 ) => {
   if (isNonAgraMarket) {
-    return 150;
+    return getRegionalBudgetProfile(marketIdentity.cityTier, marketIdentity.isExistingMarket).launchCacPerWorker;
   }
 
   const mappedCac = Number(investorSummary?.unitEconomics?.marketingCacPerJob || 0);
@@ -336,11 +386,17 @@ export const buildSystemInsightsSummary = ({
     districtSlug,
   });
   const isNonAgraMarket = marketIdentity.city.trim().toLowerCase() !== AGRA_CITY_NAME;
+  const budgetProfile = getRegionalBudgetProfile(marketIdentity.cityTier, marketIdentity.isExistingMarket);
   const availableWorkers = Math.max(1, Math.round(stats.totalWorkers * (Math.max(activeWorkerRate, 1) / 100)));
   const density = roundTo(clamp(stats.activeBookings / availableWorkers, 0.35, 2.8));
   const yieldPerJob = deriveYieldPerJob(investorSummary, averageTicket);
-  const cacProjected = deriveProjectedCac(isNonAgraMarket, investorSummary, yieldPerJob);
+  const cacProjected = deriveProjectedCac(isNonAgraMarket, marketIdentity, investorSummary, yieldPerJob);
   const paybackDays = derivePaybackDays(isNonAgraMarket, cacProjected, investorSummary, averageTicket);
+  const regionalEntryBudget = (budgetProfile.marketCapacity * budgetProfile.launchCacPerWorker) + budgetProfile.setupOverhead;
+  const burnToScaleRatio = roundTo(
+    regionalEntryBudget / Math.max(1, budgetProfile.marketCapacity * yieldPerJob),
+    2,
+  );
   const uptime = parsePercent(globalUptime) ?? (healthSnapshot?.status === "ok" ? 99.9 : 99.2);
   const criticalIssueCodes = deriveCriticalIssueCodes({
     stats,
@@ -377,6 +433,12 @@ export const buildSystemInsightsSummary = ({
       yieldPerJob,
       cacProjected,
       paybackDays,
+      launchCacPerWorker: budgetProfile.launchCacPerWorker,
+      marketCapacity: budgetProfile.marketCapacity,
+      setupOverhead: budgetProfile.setupOverhead,
+      regionalEntryBudget,
+      burnToScaleRatio,
+      launchMode: budgetProfile.launchMode,
     },
     systemHealth: {
       criticalBugs: criticalBugCount,
@@ -397,6 +459,11 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
   const yieldPerJob = Math.round(summary.unitEconomics.yieldPerJob || 0);
   const cacProjected = Math.round(summary.unitEconomics.cacProjected || 150);
   const paybackDays = Math.round(summary.unitEconomics.paybackDays || 18);
+  const regionalEntryBudget = Math.round(summary.unitEconomics.regionalEntryBudget || 0);
+  const marketCapacity = Math.round(summary.unitEconomics.marketCapacity || 0);
+  const launchCacPerWorker = Math.round(summary.unitEconomics.launchCacPerWorker || cacProjected);
+  const burnToScaleRatio = Number(summary.unitEconomics.burnToScaleRatio || 0);
+  const regionalBudgetLabel = formatCompactInr(regionalEntryBudget);
 
   return [
     {
@@ -428,8 +495,16 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
         ? `Prepare the expansion playbook for ${city}. Explain the Shadow Launch posture, projected CAC of INR 150, payback window of 18 days, freelancer-first supply coverage, trust rails, and the first 14-day operating plan.`
         : `Explain the expansion playbook for moving from ${city} into ${expansionCity}. What must stay true before the launch window opens?`,
       insight: isNonAgraMarket
-        ? "Shadow Launch (Freelancer-First) | Projected CAC: INR 150 | Payback Window: 18 Days"
+        ? `Shadow Launch (Freelancer-First) | Projected CAC: INR ${cacProjected} | Payback Window: ${paybackDays} Days`
         : `Agra pilot first: protect the core, keep payback inside ${paybackDays} days, then export the playbook to ${expansionCity}.`,
+    },
+    {
+      id: "expansion_budget",
+      title: "Expansion Budget",
+      tone: "navy",
+      actionLabel: "Explain Burn",
+      copilotQuery: `Explain the burn-to-scale ratio and regional entry budget for ${summary.marketMetrics.state}, focused on ${city}. Use the ${summary.unitEconomics.launchMode.toLowerCase()} posture, ${marketCapacity.toLocaleString("en-IN")} target workers, INR ${launchCacPerWorker} launch CAC per worker, INR ${regionalEntryBudget.toLocaleString("en-IN")} total entry budget, and show how fast this market can scale without breaking payback discipline.`,
+      insight: `${summary.marketMetrics.state}: ${regionalBudgetLabel} launch budget | ${marketCapacity.toLocaleString("en-IN")} workers | Burn-to-scale ${burnToScaleRatio.toFixed(2)}x`,
     },
   ];
 };

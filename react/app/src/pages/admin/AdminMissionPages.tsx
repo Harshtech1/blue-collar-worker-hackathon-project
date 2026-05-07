@@ -155,7 +155,7 @@ type ProjectedAssetYieldSnapshot = {
   monthlyJobsRunRate: number;
   monthlyNetProfit: number;
   annualizedNetProfit: number;
-  expansionCac: number;
+  regionalEntryBudget: number;
   roi12m: number;
 };
 
@@ -184,13 +184,13 @@ const getProjectedAssetYieldSnapshot = ({
   sevenDayBookings,
   completedCount,
   fallbackActiveBookings,
-  expansionCac,
+  regionalEntryBudget,
 }: {
   netProfitPerJob: number;
   sevenDayBookings: number;
   completedCount: number;
   fallbackActiveBookings: number;
-  expansionCac: number;
+  regionalEntryBudget: number;
 }): ProjectedAssetYieldSnapshot => {
   const monthlyJobsRunRate = getMonthlyJobsRunRate({
     sevenDayBookings,
@@ -199,14 +199,14 @@ const getProjectedAssetYieldSnapshot = ({
   });
   const monthlyNetProfit = Math.max(0, Math.round(netProfitPerJob * monthlyJobsRunRate));
   const annualizedNetProfit = monthlyNetProfit * 12;
-  const safeExpansionCac = Math.max(1, Math.round(expansionCac || 0));
-  const roi12m = Number((((annualizedNetProfit - safeExpansionCac) / safeExpansionCac) * 100).toFixed(1));
+  const safeRegionalEntryBudget = Math.max(1, Math.round(regionalEntryBudget || 0));
+  const roi12m = Number((((annualizedNetProfit - safeRegionalEntryBudget) / safeRegionalEntryBudget) * 100).toFixed(1));
 
   return {
     monthlyJobsRunRate,
     monthlyNetProfit,
     annualizedNetProfit,
-    expansionCac: safeExpansionCac,
+    regionalEntryBudget: safeRegionalEntryBudget,
     roi12m,
   };
 };
@@ -326,9 +326,9 @@ export function AdminOverviewPage() {
     sevenDayBookings,
     completedCount: yieldSnapshot.completedCount,
     fallbackActiveBookings: stats.activeBookings,
-    expansionCac: overviewSummary.unitEconomics.cacProjected,
+    regionalEntryBudget: overviewSummary.unitEconomics.regionalEntryBudget,
   }), [
-    overviewSummary.unitEconomics.cacProjected,
+    overviewSummary.unitEconomics.regionalEntryBudget,
     sevenDayBookings,
     stats.activeBookings,
     yieldSnapshot.completedCount,
@@ -339,9 +339,9 @@ export function AdminOverviewPage() {
     sevenDayBookings,
     completedCount: yieldSnapshot.completedCount,
     fallbackActiveBookings: stats.activeBookings,
-    expansionCac: executiveBriefSummary.unitEconomics.cacProjected,
+    regionalEntryBudget: executiveBriefSummary.unitEconomics.regionalEntryBudget,
   }), [
-    executiveBriefSummary.unitEconomics.cacProjected,
+    executiveBriefSummary.unitEconomics.regionalEntryBudget,
     sevenDayBookings,
     stats.activeBookings,
     yieldSnapshot.completedCount,
@@ -1430,10 +1430,10 @@ export function AdminFinancePage() {
     sevenDayBookings,
     completedCount,
     fallbackActiveBookings: stats.activeBookings,
-    expansionCac: financeSummary.unitEconomics.cacProjected,
+    regionalEntryBudget: financeSummary.unitEconomics.regionalEntryBudget,
   }), [
     completedCount,
-    financeSummary.unitEconomics.cacProjected,
+    financeSummary.unitEconomics.regionalEntryBudget,
     netProfitPerJob,
     sevenDayBookings,
     stats.activeBookings,
@@ -2438,12 +2438,12 @@ function ExecutiveInvestorBrief({
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <BriefMetric label="Monthly net profit" value={formatInr(assetYield.monthlyNetProfit)} tone="emerald" />
-                <BriefMetric label="Expansion CAC" value={formatInr(assetYield.expansionCac)} tone="amber" />
+              <BriefMetric label="Regional Entry Budget" value={formatInr(assetYield.regionalEntryBudget)} tone="amber" />
                 <BriefMetric label="Monthly run-rate" value={`${assetYield.monthlyJobsRunRate} jobs`} tone="navy" />
                 <BriefMetric label="Annualized profit" value={formatInr(assetYield.annualizedNetProfit)} tone="sky" />
               </div>
               <p className="mt-4 text-sm leading-7 text-slate-700">
-                ROI_12m = ((Monthly Net Profit x 12) - Expansion CAC) / Expansion CAC. Current modeled output lands at <span className="font-black text-[#0F172A]">{assetYield.roi12m.toFixed(0)}%</span>.
+              ROI_12m = ((Monthly Net Profit x 12) - Regional Entry Budget) / Regional Entry Budget. Current modeled output lands at <span className="font-black text-[#0F172A]">{assetYield.roi12m.toFixed(0)}%</span>.
               </p>
             </div>
 
@@ -2568,7 +2568,7 @@ function ProjectedAssetYieldHero({
             {assetYield.roi12m.toFixed(0)}% projected ROI with disciplined CAC recovery.
           </h2>
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-            Pitch Mode converts current job flow into an investor-safe annualized view. The model uses live platform yield, current flow, and expansion CAC to keep the narrative grounded in unit economics instead of vanity growth.
+            Pitch Mode converts current job flow into an investor-safe annualized view. The model uses live platform yield, current flow, and regional entry budget to keep the narrative grounded in unit economics instead of vanity growth.
           </p>
         </div>
 
@@ -2585,13 +2585,13 @@ function ProjectedAssetYieldHero({
 
       <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricTile label="Monthly net profit" value={formatInr(assetYield.monthlyNetProfit)} tone="emerald" />
-        <MetricTile label="Expansion CAC" value={formatInr(assetYield.expansionCac)} tone="amber" />
+        <MetricTile label="Regional entry budget" value={formatInr(assetYield.regionalEntryBudget)} tone="amber" />
         <MetricTile label="Monthly run rate" value={`${assetYield.monthlyJobsRunRate} jobs`} tone="navy" />
         <MetricTile label="Yield / job" value={formatInr(yieldPerJob)} tone="sky" />
       </div>
 
       <p className="mt-4 text-sm leading-7 text-slate-600">
-        ROI_12m = ((Monthly Net Profit x 12) - Expansion CAC) / Expansion CAC
+        ROI_12m = ((Monthly Net Profit x 12) - Regional Entry Budget) / Regional Entry Budget
       </p>
     </section>
   );
