@@ -20,6 +20,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import analyticsRoutes from "./routes/analytics.routes.js";
 import { getInvestorAnalytics } from "./controllers/admin.analytics.js";
 import { analyzeStrategyBrief } from "./controllers/analytics.controller.js";
+import { getStrategyProviderHealth } from "./services/llmService.js";
 import { protect, authorize } from "./middleware/auth.js";
 import {
   isConfiguredAdminEmail,
@@ -86,7 +87,8 @@ connectDB()
       res.json({ message: "RAHI Backend API is running successfully." });
     });
 
-    app.get("/api/health", (_req, res) => {
+    app.get("/api/health", async (_req, res) => {
+      const llm = await getStrategyProviderHealth();
       res.json({
         status: "ok",
         timestamp: new Date(),
@@ -102,6 +104,7 @@ connectDB()
           commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
           branch: process.env.RENDER_GIT_BRANCH || process.env.GIT_BRANCH || null,
         },
+        llm,
       });
     });
 

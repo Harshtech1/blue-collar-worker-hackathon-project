@@ -51,6 +51,7 @@ import { cn } from "@/lib/utils";
 import {
   SimulationEngine,
   type SimulationCompletionPayload,
+  type SimulationGeoSelectionPayload,
   type SimulationPhase,
   type SimulationTelemetryPayload,
 } from "./SimulationEngine";
@@ -59,7 +60,13 @@ import {
   type StrategyTerminalBrief as StrategyBrief,
   type StrategyTerminalStatus,
 } from "./StrategyTerminal";
-import { generateSimulationBatch, sectorSeeds } from "@/utils/simulationData";
+import {
+  DEFAULT_SIMULATION_CITY_ID,
+  generateSimulationBatch,
+  getGlobalSimulationCity,
+  sectorSeeds,
+  type SimulationGeoConfig,
+} from "@/utils/simulationData";
 
 interface DensityAnalysis {
   area: string;
@@ -156,6 +163,22 @@ interface CommandMapZone {
   polygon: [number, number][];
 }
 
+interface ExpansionSignalSnapshot {
+  routeId: string;
+  zoneLabel: string;
+  city: string;
+  center: [number, number];
+  radiusKm: number;
+  densityScore: number;
+  predictedDemand: number;
+  currentWorkers: number;
+  emergencyOrders: number;
+  priceMultiplier: number;
+  acquisitionCost: number;
+  auditCoverage: number;
+  marginLift: number;
+}
+
 interface ScenarioSnapshot {
   salariedCore: number;
   freelancerPool: number;
@@ -208,6 +231,13 @@ interface LogicLogEntry {
   source: "simulation" | "strategy" | "system" | "ops";
 }
 
+interface MarketLeapState {
+  geoConfig: SimulationGeoConfig;
+  selectedAddress: string;
+  source: SimulationGeoSelectionPayload["source"];
+  scenario: SimulationCompletionPayload["scenario"];
+}
+
 interface CompetitorPulse {
   id: string;
   competitor: string;
@@ -215,6 +245,22 @@ interface CompetitorPulse {
   zoneLabel: string;
   discountPercent: number;
   response: string;
+}
+
+interface LlmProviderHealth {
+  provider: string;
+  model: string;
+  configured: boolean;
+  status: string;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+}
+
+interface LlmHealthSummary {
+  mode: "ready" | "fallback";
+  summary: string;
+  primaryProvider: string | null;
+  providers: LlmProviderHealth[];
 }
 
 const sectorSignals: SectorSignal[] = [
@@ -568,6 +614,57 @@ const formatAuditTimestamp = (value = new Date()) => (
 
 const clampNumber = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
 
+const calculateDistanceKm = (
+  left: { lat: number; lng: number },
+  right: { lat: number; lng: number },
+) => {
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(right.lat - left.lat);
+  const dLng = toRadians(right.lng - left.lng);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRadians(left.lat)) * Math.cos(toRadians(right.lat)) * Math.sin(dLng / 2) ** 2;
+
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const buildExpansionSignalSnapshot = (geoConfig: SimulationGeoConfig): ExpansionSignalSnapshot => {
+  const densityScore = Number(clampNumber(
+    Number((geoConfig.demandScale * 1.16) + (geoConfig.emergencyScale * 2.25) + ((14 - geoConfig.radiusKm) * 0.035)),
+    0.92,
+    2.84,
+  ).toFixed(2));
+  const predictedDemand = Math.max(72, Math.round(geoConfig.demandScale * geoConfig.marketingScale * 118));
+  const currentWorkers = Math.max(24, Math.round(geoConfig.workerScale * 78));
+  const emergencyOrders = Math.max(3, Math.round(predictedDemand * geoConfig.emergencyScale * 0.38));
+  const priceMultiplier = getPriceMultiplier(densityScore);
+  const acquisitionCost = Math.round(geoConfig.marketingScale * 5400);
+  const auditCoverage = Math.round(clampNumber(
+    82 + ((geoConfig.historicalTraffic - 1) * 24) + ((geoConfig.workerScale - 1) * 16),
+    78,
+    95,
+  ));
+  const projectedRevenue = predictedDemand * Math.round(820 * priceMultiplier);
+  const operatingCost = (currentWorkers * 420) + Math.round(acquisitionCost * 0.65);
+  const marginLift = Math.round((projectedRevenue * 0.28) - operatingCost);
+
+  return {
+    routeId: `${geoConfig.cityId}-launch-ring`,
+    zoneLabel: `${geoConfig.cityLabel} Launch Corridor`,
+    city: geoConfig.cityLabel,
+    center: [geoConfig.center.lat, geoConfig.center.lng],
+    radiusKm: geoConfig.radiusKm,
+    densityScore,
+    predictedDemand,
+    currentWorkers,
+    emergencyOrders,
+    priceMultiplier,
+    acquisitionCost,
+    auditCoverage,
+    marginLift,
+  };
+};
+
 const getDensityTone = (density: number) => {
   if (density >= 2.1) return { fill: "#ef4444", stroke: "#b91c1c", label: "Critical density" };
   if (density >= 1.6) return { fill: "#f97316", stroke: "#c2410c", label: "High density" };
@@ -629,6 +726,8 @@ const buildStrategyFallback = ({
   acquisitionCost,
   churnRate,
   marginLift,
+  radiusKm = 4,
+  purpose = "zone_brief",
   scenario = "baseline",
   competitorSignal,
 }: {
@@ -644,6 +743,8 @@ const buildStrategyFallback = ({
   acquisitionCost: number;
   churnRate: number;
   marginLift: number;
+  radiusKm?: number;
+  purpose?: "zone_brief" | "expansion_brief";
   scenario?: SimulationCompletionPayload["scenario"];
   competitorSignal?: string | null;
 }): StrategyBrief => {
@@ -653,6 +754,22 @@ const buildStrategyFallback = ({
   const competitorProcedure = competitorSignal
     ? `Keep pricing disciplined in ${zoneLabel} and counter the live discount with Verified Pro proof plus loyalty retention messaging.`
     : null;
+
+  if (purpose === "expansion_brief") {
+    return {
+      signal: `New geography detected: ${city} is ready for a burn-first market-entry read, and ${zoneLabel} is the active launch corridor at D=${densityScore.toFixed(2)}.`,
+      reasoning: `Expansion mode protects runway before it chases share. ${city} is being scored against the Density Rule first, so acquisition cost at ${formatCurrency(acquisitionCost)} and margin lift of ${formatCurrency(Math.max(0, marginLift))} must stay disciplined before fixed labor widens.${competitorReasoning}`,
+      procedures: [
+        `Open ${zoneLabel} inside the current ${radiusKm} km radius with a ${densityScore >= 2.3 ? "shadow-launch salaried-core pilot" : densityScore < 1.0 ? "verified-freelancer reserve" : "hybrid shadow launch mix"} instead of a city-wide rollout.`,
+        `Protect burn by capping launch CAC near ${formatCurrency(acquisitionCost)} and widening salaried coverage only if margin lift stays above ${formatCurrency(Math.max(0, marginLift))}.`,
+        competitorProcedure || `Keep a growth reserve for ${city}: expand only after density holds above ${densityScore >= 2.3 ? "2.30" : densityScore < 1.0 ? "1.10" : "1.80"} and audit-backed proof coverage stays above 85%.`,
+      ].filter((procedure): procedure is string => Boolean(procedure)),
+      provider: "rule_engine",
+      model: "density-rule-fallback",
+      saved: false,
+      fallback: true,
+    };
+  }
 
   if (scenario === "supply_crunch") {
     return {
@@ -794,28 +911,37 @@ const findReferencedZoneId = (text: string) => {
   return referencedSector?.id || null;
 };
 
+const getExpansionMarketLabel = (cityLabel: string) => (
+  /delhi/i.test(cityLabel) ? "DELHI NCR" : cityLabel.toUpperCase()
+);
+
 const buildStrategyTerminalScript = ({
   status,
-  activeSector,
+  activeRouteId,
+  activeLabel,
   timeLensLabel,
   densityScore,
   strategyBrief,
   logicSignals,
   competitorPulseMessage,
+  pendingSignal,
 }: {
   status: StrategyTerminalStatus;
-  activeSector: SectorSignal;
+  activeRouteId: string;
+  activeLabel: string;
   timeLensLabel: string;
   densityScore: number;
   strategyBrief: StrategyBrief | null;
   logicSignals: string[];
   competitorPulseMessage?: string | null;
+  pendingSignal?: string | null;
 }) => {
   if (status === "thinking") {
     return [
-      `$ rahi://strategy/${activeSector.id}`,
-      `> Booting command lane for ${activeSector.label}`,
+      `$ rahi://strategy/${activeRouteId}`,
+      `> Booting command lane for ${activeLabel}`,
       `> Syncing ${timeLensLabel} density window at D=${densityScore.toFixed(2)}`,
+      ...(pendingSignal ? [`> ${pendingSignal}`] : []),
       ...(competitorPulseMessage ? [`> [INTEL] ${competitorPulseMessage}`] : []),
       ...logicSignals.slice(0, 3).map((signal) => `> ${signal}`),
       "> Drafting CEO briefing...",
@@ -831,7 +957,7 @@ const buildStrategyTerminalScript = ({
   }
 
   return [
-    `$ rahi://strategy/${activeSector.id}`,
+    `$ rahi://strategy/${activeRouteId}`,
     `> SIGNAL: ${strategyBrief.signal}`,
     `> WHY: ${strategyBrief.reasoning}`,
     ...(competitorPulseMessage ? [`> INTEL: ${competitorPulseMessage}`] : []),
@@ -1122,6 +1248,10 @@ export function IntelligenceTab({
   const [strategyBrief, setStrategyBrief] = useState<StrategyBrief | null>(null);
   const [strategyStatus, setStrategyStatus] = useState<StrategyTerminalStatus>("idle");
   const [strategyMessage, setStrategyMessage] = useState("Run the simulation or request a deep dive to generate the COO briefing.");
+  const [strategyPendingSignal, setStrategyPendingSignal] = useState<string | null>(null);
+  const [llmHealth, setLlmHealth] = useState<LlmHealthSummary | null>(null);
+  const [marketLeapState, setMarketLeapState] = useState<MarketLeapState | null>(null);
+  const [selectedCoordinates, setSelectedCoordinates] = useState<{ lat: number; lng: number } | null>(null);
   const [logicLog, setLogicLog] = useState<LogicLogEntry[]>([
     {
       id: "logic-boot",
@@ -1143,6 +1273,7 @@ export function IntelligenceTab({
   const logScrollerRef = useRef<HTMLDivElement | null>(null);
   const lastTelemetryMessageRef = useRef<string | null>(null);
   const lastCompetitorPulseRef = useRef<string | null>(null);
+  const lastMarketLeapRef = useRef<{ cityId: string; lat: number; lng: number } | null>(null);
 
   const loadInvestorAnalytics = useCallback(async () => {
     try {
@@ -1161,6 +1292,24 @@ export function IntelligenceTab({
       setInvestorAnalytics(demoInvestorAnalytics);
     } finally {
       setLastSyncedAt(new Date());
+    }
+  }, []);
+
+  const loadCloudEngineHealth = useCallback(async () => {
+    try {
+      const response = await fetch(`${API}/health`, { cache: "no-store" });
+      const payload = await response.json();
+
+      if (response.ok && payload?.llm) {
+        setLlmHealth(payload.llm as LlmHealthSummary);
+      }
+    } catch {
+      setLlmHealth((current) => current ?? {
+        mode: "fallback",
+        summary: "Cloud Engine: Fallback Mode",
+        primaryProvider: null,
+        providers: [],
+      });
     }
   }, []);
 
@@ -1210,7 +1359,21 @@ export function IntelligenceTab({
   }, [loadInvestorAnalytics]);
 
   useEffect(() => {
+    void loadCloudEngineHealth();
+
+    const intervalId = window.setInterval(() => {
+      void loadCloudEngineHealth();
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [loadCloudEngineHealth]);
+
+  useEffect(() => {
     const normalizedZoneId = findSector(routeZoneId).id;
+    setMarketLeapState(null);
+    setSelectedCoordinates(null);
+    setStrategyPendingSignal(null);
+    lastMarketLeapRef.current = null;
     setAreaId(normalizedZoneId);
     setSelectedSectorId(normalizedZoneId);
     void runAnalysis({ silent: true, nextAreaId: normalizedZoneId });
@@ -1262,6 +1425,21 @@ export function IntelligenceTab({
     `Competitor '${competitorPulse.competitor}' just launched a ${competitorPulse.discountPercent}% discount in ${competitorPulse.zoneLabel}. ${competitorPulse.response}`
   ), [competitorPulse]);
 
+  const marketLeapSnapshot = useMemo(
+    () => (marketLeapState ? buildExpansionSignalSnapshot(marketLeapState.geoConfig) : null),
+    [marketLeapState],
+  );
+  const isGlobalLeap = Boolean(
+    marketLeapState
+    && (
+      marketLeapState.geoConfig.cityId !== DEFAULT_SIMULATION_CITY_ID
+      || calculateDistanceKm(
+        marketLeapState.geoConfig.center,
+        { lat: AGRA_MAP_CENTER[0], lng: AGRA_MAP_CENTER[1] },
+      ) > 55
+    ),
+  );
+
   const zoneDensityMap = useMemo(() => {
     const entries = sectorSignals
       .filter((sector) => sector.id !== "all")
@@ -1278,6 +1456,27 @@ export function IntelligenceTab({
       .filter((point) => selectedSectorId === "all" || point.zoneId === activeSector.id)
       .slice(0, selectedSectorId === "all" ? 72 : 24)
   ), [activeSector.id, selectedSectorId]);
+  const globalPreviewSignals = useMemo(() => {
+    if (!isGlobalLeap || !marketLeapState) {
+      return [] as Array<SimulationPreviewPoint & { city: string }>;
+    }
+
+    return generateSimulationBatch({
+      batchIndex: 0,
+      batchSize: 60,
+      geoConfig: marketLeapState.geoConfig,
+      scenario: "baseline",
+    }).map((point, index) => ({
+      id: `global-preview-${index}`,
+      zoneId: marketLeapState.geoConfig.cityId,
+      label: point.areaSector,
+      city: marketLeapState.geoConfig.cityLabel,
+      position: [point.lat, point.lng] as [number, number],
+      serviceType: point.serviceType,
+      estimatedValue: point.estimatedValue,
+      isEmergency: point.isEmergency,
+    }));
+  }, [isGlobalLeap, marketLeapState]);
 
   const demandSeries = useMemo(() => (
     buildDemandSeries(investorAnalytics, timeLens, activeSector)
@@ -1441,32 +1640,26 @@ export function IntelligenceTab({
     priceMultiplier,
     projectedMarginLift,
   ]);
+  const displayInterventionState = useMemo<InterventionState>(() => {
+    if (!isGlobalLeap || !marketLeapSnapshot) {
+      return interventionState;
+    }
+
+    return {
+      badge: "Market entry armed",
+      headline: `${marketLeapSnapshot.city} is now the active expansion corridor; keep the ribbon green while the CEO agent drafts the launch playbook.`,
+      summary: `The command surface has left Agra operating mode and switched into a burn-first expansion read. ${marketLeapSnapshot.zoneLabel} is being evaluated inside a ${marketLeapSnapshot.radiusKm} km launch ring so runway discipline lands before aggressive hiring.`,
+      tone: "emerald",
+      primaryAction: { key: "freeze_core", label: "Protect Burn First" },
+      secondaryAction: { key: "adjust_payout", label: "Stage Growth Reserve" },
+    };
+  }, [interventionState, isGlobalLeap, marketLeapSnapshot]);
   const isSupplyCrunchAlert = latestSimulation?.scenario === "supply_crunch" && (latestSimulation.highestSupplyGap ?? 0) >= 0.4;
 
   const auditPulseSignals = useMemo(
     () => visiblePreviewSignals.filter((_, index) => index % 7 === 0).slice(0, 8),
     [visiblePreviewSignals],
   );
-
-  const terminalScript = useMemo(() => (
-    buildStrategyTerminalScript({
-      status: strategyStatus,
-      activeSector,
-      timeLensLabel: timeLensMeta[timeLens].label,
-      densityScore: analysis.density_score,
-      strategyBrief,
-      logicSignals: simulationLogicSignals,
-      competitorPulseMessage,
-    })
-  ), [
-    activeSector,
-    analysis.density_score,
-    competitorPulseMessage,
-    simulationLogicSignals,
-    strategyBrief,
-    strategyStatus,
-    timeLens,
-  ]);
 
   const highlightedZoneId = useMemo(() => {
     const referencePool = [
@@ -1509,6 +1702,46 @@ export function IntelligenceTab({
     return "steady" as const;
   }, [activeSector.id, analysis.density_score, highlightedZoneId, latestSimulation?.highestSupplyGap, latestSimulation?.hottestSector, latestSimulation?.scenario, simulationRunning, strategyStatus]);
 
+  const displayRouteId = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.routeId : highlightedZoneId;
+  const displayRouteLabel = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.zoneLabel : highlightedMapZone.label;
+  const displayRouteCity = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.city : highlightedMapZone.city;
+  const displayDensityScore = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.densityScore : analysis.density_score;
+  const displayPredictedDemand = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.predictedDemand : analysis.predicted_demand;
+  const displayDemandGap = isGlobalLeap && marketLeapSnapshot
+    ? marketLeapSnapshot.predictedDemand - Math.round(marketLeapSnapshot.predictedDemand * 0.74)
+    : liveDemandGap;
+  const displayPriceMultiplier = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.priceMultiplier : priceMultiplier;
+  const displayAuditCoverage = isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.auditCoverage : auditSignals.beforeAfterCoverage;
+  const commandMapCenter = isGlobalLeap && marketLeapSnapshot
+    ? marketLeapSnapshot.center
+    : selectedSectorId === "all"
+      ? AGRA_MAP_CENTER
+      : activeMapZone.center;
+  const commandMapZoom = isGlobalLeap ? 10 : selectedSectorId === "all" ? 11 : 12;
+  const terminalScript = useMemo(() => (
+    buildStrategyTerminalScript({
+      status: strategyStatus,
+      activeRouteId: displayRouteId,
+      activeLabel: displayRouteLabel,
+      timeLensLabel: timeLensMeta[timeLens].label,
+      densityScore: displayDensityScore,
+      strategyBrief,
+      logicSignals: simulationLogicSignals,
+      competitorPulseMessage,
+      pendingSignal: strategyPendingSignal,
+    })
+  ), [
+    competitorPulseMessage,
+    displayDensityScore,
+    displayRouteId,
+    displayRouteLabel,
+    simulationLogicSignals,
+    strategyPendingSignal,
+    strategyBrief,
+    strategyStatus,
+    timeLens,
+  ]);
+
   const canExecuteAiStrategy = Boolean(strategyBrief && latestSimulation);
 
   useEffect(() => {
@@ -1530,71 +1763,194 @@ export function IntelligenceTab({
     lastCompetitorPulseRef.current = competitorKey;
   }, [activeSector.id, appendLogicEntry, competitorPulse.id, competitorPulseMessage]);
 
+  const handleSimulationGeoConfigChange = useCallback((payload: SimulationGeoSelectionPayload) => {
+    setSelectedCoordinates(payload.geoConfig.center);
+
+    const distanceFromAgra = calculateDistanceKm(
+      payload.geoConfig.center,
+      { lat: AGRA_MAP_CENTER[0], lng: AGRA_MAP_CENTER[1] },
+    );
+    const returnedToAgra = payload.geoConfig.cityId === DEFAULT_SIMULATION_CITY_ID && distanceFromAgra <= 55;
+
+    if (returnedToAgra) {
+      setMarketLeapState(null);
+      setStrategyPendingSignal(null);
+      lastMarketLeapRef.current = null;
+      return;
+    }
+
+    if (payload.source === "city_select" || payload.source === "map_pin") {
+      const resolvedCity = getGlobalSimulationCity(payload.geoConfig.cityId)?.label || payload.geoConfig.cityLabel;
+      setStrategyPendingSignal(
+        `[DETECTED] ENTERING NEW MARKET: ${getExpansionMarketLabel(resolvedCity)}. CALIBRATING DENSITY PARAMETERS...`,
+      );
+    }
+
+    setMarketLeapState({
+      geoConfig: payload.geoConfig,
+      selectedAddress: payload.selectedAddress,
+      source: payload.source,
+      scenario: payload.scenario,
+    });
+  }, []);
+
   const requestStrategyBrief = useCallback(async (
     options?: {
       simulation?: SimulationCompletionPayload | null;
       deepDive?: boolean;
       silent?: boolean;
+      purpose?: "zone_brief" | "expansion_brief";
+      geoConfig?: SimulationGeoConfig | null;
     },
   ) => {
     const simulation = options?.simulation ?? latestSimulation;
     const deepDive = Boolean(options?.deepDive);
+    const purpose = options?.purpose ?? "zone_brief";
+    const targetGeoConfig = options?.geoConfig ?? marketLeapState?.geoConfig ?? null;
     const token = localStorage.getItem("adminToken");
     const timeLensLabel = timeLensMeta[timeLens].label;
-    const logicSignals = buildSimulationLogicSignals(simulation, activeSector.label);
+    const expansionSnapshot = purpose === "expansion_brief" && targetGeoConfig
+      ? buildExpansionSignalSnapshot(targetGeoConfig)
+      : null;
+    const targetRouteId = expansionSnapshot ? expansionSnapshot.routeId : activeSector.id;
+    const targetZoneLabel = expansionSnapshot ? expansionSnapshot.zoneLabel : activeSector.label;
+    const targetCity = expansionSnapshot ? expansionSnapshot.city : activeSector.city;
+    const targetDensityScore = expansionSnapshot ? expansionSnapshot.densityScore : analysis.density_score;
+    const targetPredictedDemand = expansionSnapshot ? expansionSnapshot.predictedDemand : analysis.predicted_demand;
+    const targetCurrentOrders = expansionSnapshot
+      ? Math.max(0, expansionSnapshot.predictedDemand - Math.round(expansionSnapshot.predictedDemand * 0.26))
+      : analysis.current_orders;
+    const targetCurrentWorkers = expansionSnapshot ? expansionSnapshot.currentWorkers : analysis.current_workers;
+    const targetEmergencyOrders = expansionSnapshot ? expansionSnapshot.emergencyOrders : analysis.emergency_orders;
+    const targetPriceMultiplier = expansionSnapshot ? expansionSnapshot.priceMultiplier : priceMultiplier;
+    const targetRadiusKm = expansionSnapshot ? expansionSnapshot.radiusKm : simulation?.zone.radiusKm ?? 4;
+    const targetAcquisitionCost = expansionSnapshot ? expansionSnapshot.acquisitionCost : activeSector.spend;
+    const isDelhiExpansion = Boolean(expansionSnapshot && /delhi/i.test(targetCity));
+    const competitorSignalForRequest = expansionSnapshot
+      ? `[INTEL] ${isDelhiExpansion ? "Urban Company" : "Local incumbent clusters"} are applying ${isDelhiExpansion ? 18 : 10}% trust and discount pressure in ${isDelhiExpansion ? "Delhi NCR" : targetZoneLabel}. ${isDelhiExpansion
+        ? "Lead with Cloudinary-secured proof-of-work, Verified Pro audits, and a shadow launch before broad salary commitments."
+        : "Lead with Verified Pro trust, secure-media proof, and disciplined pricing before broad launch discounting."}`
+      : competitorPulseMessage;
+    const competitorContextForRequest = competitorSignalForRequest
+      ? expansionSnapshot
+        ? {
+          competitor: isDelhiExpansion ? "Urban Company" : "Local incumbent clusters",
+          zoneLabel: isDelhiExpansion ? "Delhi NCR" : targetZoneLabel,
+          discountPercent: isDelhiExpansion ? 18 : 10,
+          response: isDelhiExpansion
+            ? "Use a shadow-launch trust posture first: Cloudinary proof-of-work, Verified Pro audits, and selective freelancer coverage before scaling salaried core."
+            : "Use Verified Pro proof and selective freelancer-first coverage before widening fixed labor.",
+        }
+        : {
+          competitor: competitorPulse.competitor,
+          zoneLabel: competitorPulse.zoneLabel,
+          discountPercent: competitorPulse.discountPercent,
+          response: competitorPulse.response,
+        }
+      : null;
+    const targetMarginLift = expansionSnapshot
+      ? expansionSnapshot.marginLift
+      : (simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit));
+    const targetAuditSignals = expansionSnapshot
+      ? {
+        photoVerificationSuccessRate: expansionSnapshot.auditCoverage,
+        beforeAfterCoverage: expansionSnapshot.auditCoverage,
+        cloudinaryVerifiedUploads: Math.min(99, expansionSnapshot.auditCoverage + 3),
+      }
+      : auditSignals;
+    const logicSignals = buildSimulationLogicSignals(simulation, targetZoneLabel);
+    const pendingSignal = expansionSnapshot
+      ? `[DETECTED] ENTERING NEW MARKET: ${getExpansionMarketLabel(targetCity)}. CALIBRATING DENSITY PARAMETERS...`
+      : null;
     const combinedLogicSignals = [
-      `[INTEL] ${competitorPulseMessage}`,
+      ...(pendingSignal ? [pendingSignal] : []),
+      ...(competitorSignalForRequest ? [competitorSignalForRequest] : []),
+      ...(purpose === "expansion_brief"
+        ? [
+          `[MARKET_ENTRY] ${targetCity} launch corridor locked at ${targetRadiusKm} km with burn-first scaling bias.`,
+          `[SIGNAL] NEW GEOGRAPHY DETECTED: COORDINATES [${targetGeoConfig?.center.lat.toFixed(3)}, ${targetGeoConfig?.center.lng.toFixed(3)}]. ANALYZING ${targetCity.toUpperCase()} MARKET ENTRY...`,
+        ]
+        : []),
       ...logicSignals,
-    ];
-
-    const payload = {
-      routePath: `/admin-portal-2026/intelligence/${activeSector.id}`,
-      zoneId: activeSector.id,
-      zoneLabel: activeSector.label,
-      city: activeSector.city,
-      scenarioType: simulation?.scenario ?? "baseline",
-      scenario: simulation?.scenario === "monsoon" ? "monsoon" : "baseline",
-      weatherSignal: simulation?.scenario === "monsoon"
-        ? "Active monsoon deployment protocol. Repair demand is elevated, worker mobility is constrained, and burn pressure is above baseline."
-        : simulation?.scenario === "supply_crunch"
-          ? "Active supply crunch protocol. Worker availability is halved and the command lane is preserving essential service."
-            : "Normal weather operating window.",
-      radiusKm: simulation?.zone.radiusKm ?? 4,
-      timeLens: timeLensLabel,
-      densityScore: analysis.density_score,
-      predictedDemand: analysis.predicted_demand,
-      currentOrders: analysis.current_orders,
-      currentWorkers: analysis.current_workers,
-      emergencyOrders: analysis.emergency_orders,
-      allocationStrategy: analysis.allocation_strategy,
-      priceMultiplier,
-      pricingSignal,
-      serviceWarning: analysis.service_warning || null,
-      competitorPressure: true,
-      competitorSignals: [competitorPulseMessage],
-      competitorContext: {
-        competitor: competitorPulse.competitor,
-        zoneLabel: competitorPulse.zoneLabel,
-        discountPercent: competitorPulse.discountPercent,
-        response: competitorPulse.response,
-      },
-      auditData: auditSignals,
-      logicSignals: combinedLogicSignals,
-      financials: {
-        acquisitionCost: activeSector.spend,
-        churnRate: investorAnalytics.summary.churnRate,
-        projectedRevenue: manualScenario.projectedProfit + activeSector.spend + (manualScenario.totalWorkers * 430),
-        projectedProfit: manualScenario.projectedProfit,
-        platformCommission: investorAnalytics.summary.platformCommission,
-        marginLift: (simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit)),
-      },
-      forecast: demandSeries.map((point) => ({
+    ].filter((signal): signal is string => Boolean(signal));
+    const forecastPayload = expansionSnapshot
+      ? [
+        { label: "Launch 0h", actual: Math.round(targetPredictedDemand * 0.56), predicted: Math.round(targetPredictedDemand * 0.72), gap: Math.round(targetPredictedDemand * 0.16) },
+        { label: "Week 1", actual: Math.round(targetPredictedDemand * 0.68), predicted: Math.round(targetPredictedDemand * 0.86), gap: Math.round(targetPredictedDemand * 0.18) },
+        { label: "Week 2", actual: Math.round(targetPredictedDemand * 0.74), predicted: Math.round(targetPredictedDemand * 0.94), gap: Math.round(targetPredictedDemand * 0.2) },
+        { label: "Week 4", actual: Math.round(targetPredictedDemand * 0.82), predicted: targetPredictedDemand, gap: Math.round(targetPredictedDemand * 0.18) },
+      ]
+      : demandSeries.map((point) => ({
         label: point.label,
         actual: point.actual,
         predicted: point.predicted,
         gap: point.gap,
-      })),
-      simulationSummary: simulation
+      }));
+    const attachSimulationSummary = expansionSnapshot
+      ? (simulation && simulation.zone.city.toLowerCase() === targetCity.toLowerCase())
+      : Boolean(simulation);
+
+    const payload = {
+      purpose,
+      routePath: `/admin-portal-2026/intelligence/${targetRouteId}`,
+      zoneId: targetRouteId,
+      zoneLabel: targetZoneLabel,
+      city: targetCity,
+      scenarioType: purpose === "expansion_brief" ? "baseline" : (simulation?.scenario ?? "baseline"),
+      scenario: purpose === "expansion_brief"
+        ? "baseline"
+        : simulation?.scenario === "monsoon"
+          ? "monsoon"
+          : simulation?.scenario === "supply_crunch"
+            ? "supply_crunch"
+            : simulation?.scenario === "price_war"
+              ? "price_war"
+              : "baseline",
+      weatherSignal: purpose === "expansion_brief"
+        ? "New city market-entry mode. No crisis override is active until the admin triggers a stress scenario manually."
+        : simulation?.scenario === "monsoon"
+        ? "Active monsoon deployment protocol. Repair demand is elevated, worker mobility is constrained, and burn pressure is above baseline."
+        : simulation?.scenario === "supply_crunch"
+          ? "Active supply crunch protocol. Worker availability is halved and the command lane is preserving essential service."
+          : simulation?.scenario === "price_war"
+            ? "Active market competition stress. CAC is elevated and the command lane is defending margin ahead of discount matching."
+            : "Normal weather operating window.",
+      radiusKm: targetRadiusKm,
+      timeLens: timeLensLabel,
+      densityScore: targetDensityScore,
+      predictedDemand: targetPredictedDemand,
+      currentOrders: targetCurrentOrders,
+      currentWorkers: targetCurrentWorkers,
+      emergencyOrders: targetEmergencyOrders,
+      allocationStrategy: expansionSnapshot
+        ? targetDensityScore >= 2.3
+          ? "salaried_core"
+          : targetDensityScore < 1.0
+            ? "freelancer_pool"
+            : "hybrid"
+        : analysis.allocation_strategy,
+      priceMultiplier: targetPriceMultiplier,
+      pricingSignal: expansionSnapshot
+        ? `launch lane at ${targetPriceMultiplier.toFixed(2)}x readiness`
+        : pricingSignal,
+      serviceWarning: expansionSnapshot ? null : analysis.service_warning || null,
+      competitorPressure: Boolean(competitorContextForRequest),
+      competitorSignals: competitorSignalForRequest ? [competitorSignalForRequest] : [],
+      competitorContext: competitorContextForRequest,
+      auditData: targetAuditSignals,
+      logicSignals: combinedLogicSignals,
+      financials: {
+        acquisitionCost: targetAcquisitionCost,
+        churnRate: investorAnalytics.summary.churnRate,
+        projectedRevenue: expansionSnapshot
+          ? Math.round(targetPredictedDemand * 820 * targetPriceMultiplier)
+          : manualScenario.projectedProfit + activeSector.spend + (manualScenario.totalWorkers * 430),
+        projectedProfit: expansionSnapshot ? targetMarginLift : manualScenario.projectedProfit,
+        platformCommission: investorAnalytics.summary.platformCommission,
+        marginLift: targetMarginLift,
+      },
+      forecast: forecastPayload,
+      simulationSummary: attachSimulationSummary && simulation
         ? {
           totalPoints: simulation.totalPoints,
           totalProjectedOrders: simulation.totalProjectedOrders,
@@ -1618,30 +1974,39 @@ export function IntelligenceTab({
         }
         : undefined,
       deepDive,
-      providerPreference: deepDive || simulation?.scenario === "supply_crunch" ? "gemini" : "groq",
+      providerPreference: purpose === "expansion_brief" || deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "gemini" : "groq",
     };
 
+    setStrategyPendingSignal(pendingSignal);
     setStrategyStatus("thinking");
     setStrategyMessage(
-      deepDive
-        ? `Deep strategy scan running for ${activeSector.label}. Gemini is drafting the CEO briefing.`
-        : simulation?.scenario === "supply_crunch"
-          ? `Amber-alert strategy scan running for ${activeSector.label}. Gemini is drafting the preservation plan.`
-          : `Fast zone analysis running for ${activeSector.label}. Groq is reading the density stack.`,
+      purpose === "expansion_brief" && pendingSignal
+        ? pendingSignal
+        : deepDive
+          ? `Deep strategy scan running for ${targetZoneLabel}. Gemini is drafting the CEO briefing.`
+          : simulation?.scenario === "supply_crunch"
+            ? `Amber-alert strategy scan running for ${targetZoneLabel}. Gemini is drafting the preservation plan.`
+            : simulation?.scenario === "price_war"
+              ? `Trust-defense scan running for ${targetZoneLabel}. Gemini is drafting the competitor-response playbook.`
+            : `Fast zone analysis running for ${targetZoneLabel}. ${purpose === "expansion_brief" ? "Gemini" : "Groq"} is reading the density stack.`,
     );
     appendLogicEntry(
-      deepDive
-        ? `Churn risk detected in ${activeSector.label}. Querying Gemini for an investor-grade retention and staffing strategy.`
-        : simulation?.scenario === "supply_crunch"
-          ? `Supply crunch detected in ${activeSector.label}. Querying Gemini for a service-preservation intervention plan.`
-          : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift while competitor pressure stays live.`,
+      purpose === "expansion_brief" && targetGeoConfig
+        ? `Global leap armed for ${targetCity} at ${targetGeoConfig.center.lat.toFixed(4)}, ${targetGeoConfig.center.lng.toFixed(4)}. Querying the CEO agent for a burn-first expansion playbook.`
+        : deepDive
+          ? `Churn risk detected in ${targetZoneLabel}. Querying Gemini for an investor-grade retention and staffing strategy.`
+          : simulation?.scenario === "supply_crunch"
+            ? `Supply crunch detected in ${targetZoneLabel}. Querying Gemini for a service-preservation intervention plan.`
+            : simulation?.scenario === "price_war"
+              ? `Competitor pressure detected in ${targetZoneLabel}. Querying Gemini for a trust-over-price defense plan.`
+            : `Scanning ${targetZoneLabel} for demand-supply delta before the next ${timeLensLabel} workforce shift while competitor pressure stays live.`,
       {
-        tone: deepDive || simulation?.scenario === "supply_crunch" ? "warning" : "info",
+        tone: purpose === "expansion_brief" || deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "warning" : "info",
         source: "strategy",
-        tag: deepDive || simulation?.scenario === "supply_crunch" ? "LLM_GEMINI" : "LLM_GROQ",
+        tag: purpose === "expansion_brief" ? "GLOBAL_LEAP" : deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "LLM_GEMINI" : "LLM_GROQ",
       },
     );
-    logicSignals.slice(0, 2).forEach((signal) => {
+    logicSignals.slice(0, purpose === "expansion_brief" ? 1 : 2).forEach((signal) => {
       appendLogicEntry(signal, { tone: "info", source: "simulation", tag: "RF_MODEL" });
     });
 
@@ -1665,6 +2030,7 @@ export function IntelligenceTab({
       }
 
       setStrategyBrief(result);
+      setStrategyPendingSignal(null);
       setStrategyStatus("ready");
       setStrategyMessage(
         result.fallback
@@ -1686,41 +2052,56 @@ export function IntelligenceTab({
       }
 
       if (!options?.silent) {
-        toast.success(deepDive ? "Deep strategy briefing is ready." : "Strategy briefing updated.");
+        toast.success(
+          purpose === "expansion_brief"
+            ? `${targetCity} expansion playbook is ready.`
+            : deepDive
+              ? "Deep strategy briefing is ready."
+              : "Strategy briefing updated.",
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Strategy briefing failed";
       const fallbackBrief = buildStrategyFallback({
-        zoneLabel: activeSector.label,
-        city: activeSector.city,
-        densityScore: analysis.density_score,
-        predictedDemand: analysis.predicted_demand,
-        currentWorkers: analysis.current_workers,
-        emergencyOrders: analysis.emergency_orders,
-        priceMultiplier,
+        zoneLabel: targetZoneLabel,
+        city: targetCity,
+        densityScore: targetDensityScore,
+        predictedDemand: targetPredictedDemand,
+        currentWorkers: targetCurrentWorkers,
+        emergencyOrders: targetEmergencyOrders,
+        priceMultiplier: targetPriceMultiplier,
         timeLens,
-        hottestSector: simulation?.hottestSector || activeSector.label,
-        acquisitionCost: activeSector.spend,
+        hottestSector: simulation?.hottestSector || targetZoneLabel,
+        acquisitionCost: targetAcquisitionCost,
         churnRate: investorAnalytics.summary.churnRate,
-        marginLift: simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit),
-        scenario: simulation?.scenario ?? "baseline",
-        competitorSignal: competitorPulseMessage,
+        marginLift: targetMarginLift,
+        radiusKm: targetRadiusKm,
+        purpose,
+        scenario: purpose === "expansion_brief" ? "baseline" : (simulation?.scenario ?? "baseline"),
+        competitorSignal: competitorSignalForRequest,
       });
 
       setStrategyBrief(fallbackBrief);
+      setStrategyPendingSignal(null);
       setStrategyStatus("error");
       setStrategyMessage(`Live strategy provider was unavailable. Showing fallback COO guidance. ${message}`);
       appendLogicEntry(
-        `Live strategy provider unavailable. Falling back to the local density rule engine for ${activeSector.label}.`,
+        `Live strategy provider unavailable. Falling back to the local density rule engine for ${targetZoneLabel}.`,
         { tone: "critical", source: "strategy", tag: "SYSTEM" },
       );
-      appendLogicEntry(
-        `[STRATEGY] Defending margin via Quality-Audit differentiation in ${competitorPulse.zoneLabel}; emphasize Verified Pro proof-of-work, secure-media audit coverage, and loyalty retention instead of matching blanket competitor discounts.`,
-        { tone: "warning", source: "strategy", tag: "STRATEGY" },
-      );
+      if (competitorSignalForRequest) {
+        appendLogicEntry(
+          `[STRATEGY] Defending margin via Quality-Audit differentiation in ${competitorPulse.zoneLabel}; emphasize Verified Pro proof-of-work, secure-media audit coverage, and loyalty retention instead of matching blanket competitor discounts.`,
+          { tone: "warning", source: "strategy", tag: "STRATEGY" },
+        );
+      }
 
       if (!options?.silent) {
-        toast.error("Live strategy provider unavailable. Showing fallback briefing.");
+        toast.error(
+          purpose === "expansion_brief"
+            ? `Live strategy provider unavailable. Showing fallback ${targetCity} expansion playbook.`
+            : "Live strategy provider unavailable. Showing fallback briefing.",
+        );
       }
     }
   }, [
@@ -1742,6 +2123,7 @@ export function IntelligenceTab({
     investorAnalytics.summary.churnRate,
     investorAnalytics.summary.platformCommission,
     latestSimulation,
+    marketLeapState,
     manualScenario.projectedProfit,
     manualScenario.totalWorkers,
     competitorPulse.competitor,
@@ -1754,6 +2136,42 @@ export function IntelligenceTab({
     pricingSignal,
     timeLens,
   ]);
+
+  useEffect(() => {
+    if (!marketLeapState || !marketLeapSnapshot || !selectedCoordinates || !isGlobalLeap) {
+      return;
+    }
+
+    const previousLeap = lastMarketLeapRef.current;
+    const movedFarEnough = !previousLeap
+      || previousLeap.cityId !== marketLeapState.geoConfig.cityId
+      || calculateDistanceKm(
+        { lat: previousLeap.lat, lng: previousLeap.lng },
+        selectedCoordinates,
+      ) > 120;
+
+    if (!movedFarEnough) {
+      return;
+    }
+
+    lastMarketLeapRef.current = {
+      cityId: marketLeapState.geoConfig.cityId,
+      lat: selectedCoordinates.lat,
+      lng: selectedCoordinates.lng,
+    };
+
+    appendLogicEntry(
+      `[GLOBAL_LEAP] ${marketLeapState.geoConfig.cityLabel} command pin armed at ${selectedCoordinates.lat.toFixed(4)}, ${selectedCoordinates.lng.toFixed(4)}. Running zero-click expansion brief.`,
+      { tone: "warning", source: "system", tag: "STRICT_AUDIT" },
+    );
+    setActiveMode("monitor");
+    void requestStrategyBrief({
+      deepDive: false,
+      geoConfig: marketLeapState.geoConfig,
+      purpose: "expansion_brief",
+      silent: true,
+    });
+  }, [appendLogicEntry, isGlobalLeap, marketLeapSnapshot, marketLeapState, requestStrategyBrief, selectedCoordinates]);
 
   const handleSimulationComplete = useCallback((summary: SimulationCompletionPayload) => {
     setLatestSimulation(summary);
@@ -1814,9 +2232,11 @@ export function IntelligenceTab({
     void requestStrategyBrief({
       simulation: latestSimulation,
       deepDive: false,
+      geoConfig: marketLeapState?.geoConfig,
+      purpose: isGlobalLeap && marketLeapState ? "expansion_brief" : "zone_brief",
       silent: true,
     });
-  }, [activeSector.id, latestSimulation, requestStrategyBrief, timeLens]);
+  }, [activeSector.id, isGlobalLeap, latestSimulation, marketLeapState, requestStrategyBrief, timeLens]);
 
   const zoneChecklist = useMemo(() => {
     const items = [
@@ -1855,6 +2275,10 @@ export function IntelligenceTab({
   }, [selectedSeriesPoint]);
 
   const handleZoneSelection = (zoneId: string) => {
+    setMarketLeapState(null);
+    setSelectedCoordinates(null);
+    setStrategyPendingSignal(null);
+    lastMarketLeapRef.current = null;
     setAreaId(zoneId);
     setSelectedSectorId(zoneId);
     onZoneChange?.(zoneId);
@@ -2021,6 +2445,11 @@ export function IntelligenceTab({
       <CommandCenterMotionStyles />
       <section className="relative overflow-hidden rounded-[2rem] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.16),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.18),_transparent_28%),linear-gradient(135deg,_#07111f_0%,_#0f172a_48%,_#10243d_100%)] p-6 text-white shadow-2xl shadow-slate-950/10 md:p-8">
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+        {llmHealth?.mode === "fallback" && (
+          <div className="pointer-events-none absolute right-6 top-6 z-20 rounded-full border border-amber-300/35 bg-amber-400/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-amber-100 shadow-[0_18px_45px_-24px_rgba(251,191,36,0.45)] backdrop-blur">
+            {llmHealth.summary}
+          </div>
+        )}
 
         <div className="relative space-y-8">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -2159,10 +2588,10 @@ export function IntelligenceTab({
       <section
         className={cn(
           "overflow-hidden rounded-[1.8rem] border p-6 shadow-sm",
-          interventionState.tone === "amber" && "border-amber-200 bg-[linear-gradient(135deg,_#fff7ed_0%,_#ffffff_42%,_#fffbeb_100%)]",
-          interventionState.tone === "rose" && "border-rose-200 bg-[linear-gradient(135deg,_#fff1f2_0%,_#ffffff_42%,_#fff7ed_100%)]",
-          interventionState.tone === "sky" && "border-sky-200 bg-[linear-gradient(135deg,_#f0f9ff_0%,_#ffffff_42%,_#eff6ff_100%)]",
-          interventionState.tone === "emerald" && "border-emerald-200 bg-[linear-gradient(135deg,_#ecfdf5_0%,_#ffffff_42%,_#f0fdf4_100%)]",
+          displayInterventionState.tone === "amber" && "border-amber-200 bg-[linear-gradient(135deg,_#fff7ed_0%,_#ffffff_42%,_#fffbeb_100%)]",
+          displayInterventionState.tone === "rose" && "border-rose-200 bg-[linear-gradient(135deg,_#fff1f2_0%,_#ffffff_42%,_#fff7ed_100%)]",
+          displayInterventionState.tone === "sky" && "border-sky-200 bg-[linear-gradient(135deg,_#f0f9ff_0%,_#ffffff_42%,_#eff6ff_100%)]",
+          displayInterventionState.tone === "emerald" && "border-emerald-200 bg-[linear-gradient(135deg,_#ecfdf5_0%,_#ffffff_42%,_#f0fdf4_100%)]",
         )}
       >
         <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
@@ -2171,22 +2600,22 @@ export function IntelligenceTab({
               <span
                 className={cn(
                   "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em]",
-                  interventionState.tone === "amber" && "border-amber-200 bg-amber-100 text-amber-900",
-                  interventionState.tone === "rose" && "border-rose-200 bg-rose-100 text-rose-900",
-                  interventionState.tone === "sky" && "border-sky-200 bg-sky-100 text-sky-900",
-                  interventionState.tone === "emerald" && "border-emerald-200 bg-emerald-100 text-emerald-900",
+                  displayInterventionState.tone === "amber" && "border-amber-200 bg-amber-100 text-amber-900",
+                  displayInterventionState.tone === "rose" && "border-rose-200 bg-rose-100 text-rose-900",
+                  displayInterventionState.tone === "sky" && "border-sky-200 bg-sky-100 text-sky-900",
+                  displayInterventionState.tone === "emerald" && "border-emerald-200 bg-emerald-100 text-emerald-900",
                 )}
               >
                 <span
                   className={cn(
                     "h-2.5 w-2.5 rounded-full",
-                    interventionState.tone === "amber" && "bg-amber-500",
-                    interventionState.tone === "rose" && "bg-rose-500",
-                    interventionState.tone === "sky" && "bg-sky-500",
-                    interventionState.tone === "emerald" && "bg-emerald-500",
+                    displayInterventionState.tone === "amber" && "bg-amber-500",
+                    displayInterventionState.tone === "rose" && "bg-rose-500",
+                    displayInterventionState.tone === "sky" && "bg-sky-500",
+                    displayInterventionState.tone === "emerald" && "bg-emerald-500",
                   )}
                 />
-                {interventionState.badge}
+                {displayInterventionState.badge}
               </span>
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
                 Decision-first analytics
@@ -2194,13 +2623,13 @@ export function IntelligenceTab({
             </div>
 
             <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">
-              Immediate operating recommendation for {activeSector.label}
+              Immediate operating recommendation for {displayRouteLabel}
             </p>
             <h3 className="mt-3 max-w-4xl text-3xl font-black leading-tight text-slate-950 md:text-4xl">
-              {interventionState.headline}
+              {displayInterventionState.headline}
             </h3>
             <p className="mt-4 max-w-3xl text-sm font-semibold leading-7 text-slate-600 md:text-base">
-              {interventionState.summary}
+              {displayInterventionState.summary}
             </p>
 
             <div className="mt-5 flex flex-wrap gap-2">
@@ -2217,20 +2646,39 @@ export function IntelligenceTab({
               ))}
             </div>
 
-            <div className="mt-5 max-w-3xl rounded-[1.4rem] border border-amber-200 bg-white/90 p-4 shadow-sm shadow-amber-100/60">
+            <div className={cn(
+              "mt-5 max-w-3xl rounded-[1.4rem] border bg-white/90 p-4 shadow-sm",
+              isGlobalLeap
+                ? "border-emerald-200 shadow-emerald-100/60"
+                : "border-amber-200 shadow-amber-100/60",
+            )}>
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
-                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-700">Competitor Pulse</p>
+                  <p className={cn(
+                    "text-[10px] font-black uppercase tracking-[0.22em]",
+                    isGlobalLeap ? "text-emerald-700" : "text-amber-700",
+                  )}>
+                    {isGlobalLeap ? "Market Entry Signal" : "Competitor Pulse"}
+                  </p>
                   <h4 className="mt-2 text-base font-black text-slate-950 md:text-lg">
-                    {competitorPulse.competitor} launched {competitorPulse.discountPercent}% discount in {competitorPulse.zoneLabel}
+                    {isGlobalLeap && marketLeapSnapshot
+                      ? `${marketLeapSnapshot.city} launch ring is active at ${marketLeapSnapshot.radiusKm} km around the command pin.`
+                      : `${competitorPulse.competitor} launched ${competitorPulse.discountPercent}% discount in ${competitorPulse.zoneLabel}`}
                   </h4>
                   <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
-                    {competitorPulse.response}
+                    {isGlobalLeap && marketLeapState
+                      ? `${marketLeapState.selectedAddress}. Burn protection is the lead move; competitor positioning stays in reserve until the launch corridor proves contribution discipline.`
+                      : competitorPulse.response}
                   </p>
                 </div>
-                <div className="inline-flex items-center gap-2 self-start rounded-full border border-indigo-200 bg-indigo-50 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-700">
-                  <ShieldCheck className="h-4 w-4" />
-                  Verified Pro Counter
+                <div className={cn(
+                  "inline-flex items-center gap-2 self-start rounded-full border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em]",
+                  isGlobalLeap
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-indigo-200 bg-indigo-50 text-indigo-700",
+                )}>
+                  {isGlobalLeap ? <MapPin className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                  {isGlobalLeap ? "Global Leap Ready" : "Verified Pro Counter"}
                 </div>
               </div>
             </div>
@@ -2238,26 +2686,26 @@ export function IntelligenceTab({
 
           <div className="w-full max-w-xl">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <RibbonMetric label="Density" value={analysis.density_score.toFixed(2)} hint="Live pressure" />
-              <RibbonMetric label="Gap" value={`${liveDemandGap > 0 ? "+" : ""}${liveDemandGap}`} hint="Jobs vs. current flow" />
-              <RibbonMetric label="Audit" value={`${auditSignals.beforeAfterCoverage.toFixed(0)}%`} hint="Proof coverage" />
-              <RibbonMetric label="Lift" value={formatCurrency(projectedMarginLift)} hint="Projected margin delta" />
+              <RibbonMetric label="Density" value={displayDensityScore.toFixed(2)} hint="Live pressure" />
+              <RibbonMetric label="Gap" value={`${displayDemandGap > 0 ? "+" : ""}${displayDemandGap}`} hint="Jobs vs. current flow" />
+              <RibbonMetric label="Audit" value={`${displayAuditCoverage.toFixed(0)}%`} hint="Proof coverage" />
+              <RibbonMetric label="Lift" value={formatCurrency(isGlobalLeap && marketLeapSnapshot ? marketLeapSnapshot.marginLift : projectedMarginLift)} hint="Projected margin delta" />
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => handleInterventionAction(interventionState.primaryAction.key)}
+                onClick={() => handleInterventionAction(displayInterventionState.primaryAction.key)}
                 className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:-translate-y-0.5 hover:bg-slate-800"
               >
-                {interventionState.primaryAction.label}
+                {displayInterventionState.primaryAction.label}
               </button>
               <button
                 type="button"
-                onClick={() => handleInterventionAction(interventionState.secondaryAction.key)}
+                onClick={() => handleInterventionAction(displayInterventionState.secondaryAction.key)}
                 className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black uppercase tracking-[0.18em] text-slate-700 transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950"
               >
-                {interventionState.secondaryAction.label}
+                {displayInterventionState.secondaryAction.label}
               </button>
               <button
                 type="button"
@@ -2277,14 +2725,20 @@ export function IntelligenceTab({
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Geospatial command map</p>
-                <h3 className="mt-2 text-2xl font-black text-slate-950">Sector shape map with route-aware density context</h3>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">
+                  {isGlobalLeap
+                    ? "Launch corridor map with zero-click market-entry intelligence"
+                    : "Sector shape map with route-aware density context"}
+                </h3>
                 <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
-                  Click any Agra zone to switch the route, fetch zone-specific density, and open the exact control surface for that geography.
+                  {isGlobalLeap && marketLeapState
+                    ? `The command surface has left Agra operating mode. ${marketLeapState.selectedAddress} is now the live launch pin, and the strategy lane is drafting a burn-first market-entry playbook automatically.`
+                    : "Click any Agra zone to switch the route, fetch zone-specific density, and open the exact control surface for that geography."}
                 </p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Dynamic route</p>
-                <p className="mt-2 text-sm font-black text-slate-950">/admin-portal-2026/intelligence/{activeSector.id}</p>
+                <p className="mt-2 text-sm font-black text-slate-950">/admin-portal-2026/intelligence/{displayRouteId}</p>
               </div>
             </div>
           </div>
@@ -2292,22 +2746,22 @@ export function IntelligenceTab({
           <div className="grid min-h-[34rem] xl:grid-cols-[minmax(0,1fr)_21rem]">
             <div className="relative min-h-[34rem] border-b border-slate-200 xl:border-b-0 xl:border-r">
               <MapContainer
-                center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
-                zoom={selectedSectorId === "all" ? 11 : 12}
+                center={commandMapCenter}
+                zoom={commandMapZoom}
                 scrollWheelZoom
                 preferCanvas
                 className="h-full w-full"
               >
                 <CommandMapView
-                  center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
-                  zoom={selectedSectorId === "all" ? 11 : 12}
+                  center={commandMapCenter}
+                  zoom={commandMapZoom}
                 />
                 <TileLayer
                   url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
                   attribution="&copy; CARTO"
                 />
 
-                {commandMapZones.map((zone) => {
+                {!isGlobalLeap && commandMapZones.map((zone) => {
                   const density = zoneDensityMap[zone.id] ?? 0;
                   const tone = getDensityTone(density);
                   const active = zone.id === activeSector.id;
@@ -2336,15 +2790,42 @@ export function IntelligenceTab({
                   );
                 })}
 
-                {visiblePreviewSignals.map((signal) => (
+                {isGlobalLeap && marketLeapSnapshot && (
+                  <>
+                    <Circle
+                      center={marketLeapSnapshot.center}
+                      radius={marketLeapSnapshot.radiusKm * 1000}
+                      pathOptions={{
+                        color: "#22c55e",
+                        fillColor: "#22c55e",
+                        fillOpacity: 0.08,
+                        opacity: 0.78,
+                        weight: 2,
+                      }}
+                    />
+                    <Circle
+                      center={marketLeapSnapshot.center}
+                      radius={Math.max(700, marketLeapSnapshot.radiusKm * 420)}
+                      pathOptions={{
+                        color: "#6366f1",
+                        fillColor: "#6366f1",
+                        fillOpacity: 0.04,
+                        opacity: 0.42,
+                        weight: 1,
+                      }}
+                    />
+                  </>
+                )}
+
+                {(isGlobalLeap ? globalPreviewSignals : visiblePreviewSignals).map((signal) => (
                   <CircleMarker
                     key={signal.id}
                     center={signal.position}
-                    radius={signal.isEmergency ? 7 : 4}
+                    radius={isGlobalLeap ? (signal.isEmergency ? 8 : 5) : (signal.isEmergency ? 7 : 4)}
                     pathOptions={{
                       color: signal.isEmergency ? "#b91c1c" : "#4338ca",
                       fillColor: signal.isEmergency ? "#f97316" : "#6366f1",
-                      fillOpacity: signal.isEmergency ? 0.88 : 0.62,
+                      fillOpacity: signal.isEmergency ? 0.88 : isGlobalLeap ? 0.72 : 0.62,
                       weight: signal.isEmergency ? 2 : 1,
                     }}
                   >
@@ -2353,12 +2834,15 @@ export function IntelligenceTab({
                         <p className="text-sm font-black text-slate-950">{signal.label}</p>
                         <p className="text-xs font-bold text-slate-500">{signal.serviceType}</p>
                         <p className="text-xs font-bold text-slate-700">{formatCurrency(signal.estimatedValue)}</p>
+                        {(signal as { city?: string }).city ? (
+                          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-600">{(signal as { city?: string }).city}</p>
+                        ) : null}
                       </div>
                     </LeafletTooltip>
                   </CircleMarker>
                 ))}
 
-                {auditPulseSignals.map((signal) => (
+                {!isGlobalLeap && auditPulseSignals.map((signal) => (
                   <Circle
                     key={`audit-pulse-${signal.id}`}
                     center={signal.position}
@@ -2373,7 +2857,23 @@ export function IntelligenceTab({
                   />
                 ))}
 
-                {highlightedMapZone && (
+                {isGlobalLeap && marketLeapSnapshot ? (
+                  <CircleMarker
+                    center={marketLeapSnapshot.center}
+                    radius={18}
+                    pathOptions={{
+                      className: "rahi-map-focus-ring",
+                      color: "#22c55e",
+                      weight: 2,
+                      fillColor: "#22c55e",
+                      fillOpacity: 0.16,
+                    }}
+                  >
+                    <LeafletTooltip direction="top" offset={[0, -10]}>
+                      Expansion focus - {marketLeapSnapshot.zoneLabel}
+                    </LeafletTooltip>
+                  </CircleMarker>
+                ) : highlightedMapZone && (
                   <CircleMarker
                     center={highlightedMapZone.center}
                     radius={18}
@@ -2400,7 +2900,7 @@ export function IntelligenceTab({
                     { label: "High density", color: "bg-orange-500" },
                     { label: "Balanced density", color: "bg-indigo-500" },
                     { label: "Freelancer-led", color: "bg-sky-500" },
-                    { label: "Verified audits", color: "bg-emerald-500" },
+                    { label: isGlobalLeap ? "Launch ring + proofs" : "Verified audits", color: "bg-emerald-500" },
                   ].map((item) => (
                     <div key={item.label} className="flex items-center gap-2">
                       <span className={cn("h-2.5 w-2.5 rounded-full", item.color)} />
@@ -2411,15 +2911,17 @@ export function IntelligenceTab({
               </div>
 
               <div className="pointer-events-none absolute bottom-4 left-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Synthetic load sample</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                  {isGlobalLeap ? "Launch signal sample" : "Synthetic load sample"}
+                </p>
                 <p className="mt-2 text-sm font-black text-slate-950">
-                  {visiblePreviewSignals.length} preview points from the 400k simulation engine
+                  {(isGlobalLeap ? globalPreviewSignals.length : visiblePreviewSignals.length)} preview points from the 400k simulation engine
                 </p>
               </div>
 
               <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-indigo-200 bg-white/95 px-4 py-3 shadow-sm">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-500">Terminal focus</p>
-                <p className="mt-2 text-sm font-black text-slate-950">{highlightedMapZone.label}</p>
+                <p className="mt-2 text-sm font-black text-slate-950">{displayRouteLabel}</p>
               </div>
 
               {(simulationRunning || strategyStatus === "thinking") && (
@@ -2450,9 +2952,13 @@ export function IntelligenceTab({
                   )}>
                     <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", isSupplyCrunchAlert ? "text-amber-200" : "text-indigo-200")}>AI overlay</p>
                     <p className="mt-2 text-sm font-black">
-                      {simulationRunning
-                        ? "Random Forest is scanning the heatmap in live batches."
-                        : "Strategy engine is tracing the current zone before briefing the CEO."}
+                      {isGlobalLeap
+                        ? simulationRunning
+                          ? "Random Forest is simulating the new-city launch ring in live batches."
+                          : "Strategy engine is drafting the expansion brief before the operator touches a control."
+                        : simulationRunning
+                          ? "Random Forest is scanning the heatmap in live batches."
+                          : "Strategy engine is tracing the current zone before briefing the CEO."}
                     </p>
                   </div>
                 </>
@@ -2522,14 +3028,14 @@ export function IntelligenceTab({
 
         <div className="space-y-6">
           <StrategyTerminal
-            activeZoneId={highlightedMapZone.id}
-            activeZoneLabel={highlightedMapZone.label}
-            activeCity={highlightedMapZone.city}
-            predictedDemand={analysis.predicted_demand}
-            liveDensityScore={analysis.density_score}
-            liveDemandGap={liveDemandGap}
-            auditCoverage={auditSignals.beforeAfterCoverage}
-            payoutMultiplier={priceMultiplier}
+            activeZoneId={displayRouteId}
+            activeZoneLabel={displayRouteLabel}
+            activeCity={displayRouteCity}
+            predictedDemand={displayPredictedDemand}
+            liveDensityScore={displayDensityScore}
+            liveDemandGap={displayDemandGap}
+            auditCoverage={displayAuditCoverage}
+            payoutMultiplier={displayPriceMultiplier}
             timeLensLabel={timeLensMeta[timeLens].label}
             simulationAttached={Boolean(latestSimulation)}
             simulationPoints={latestSimulation?.totalPoints}
@@ -2540,13 +3046,13 @@ export function IntelligenceTab({
             providerLabel={strategyBrief ? String(strategyBrief.provider || "rule_engine").toUpperCase() : "WAITING"}
             tacticalState={tacticalState}
             lastExecutedLabel={lastExecutedStrategy ? `${lastExecutedStrategy.zoneLabel} at ${lastExecutedStrategy.appliedAt}` : null}
-            primaryInterventionLabel={interventionState.primaryAction.label}
-            secondaryInterventionLabel={interventionState.secondaryAction.label}
-            onRunBriefing={() => void requestStrategyBrief({ deepDive: false })}
-            onRequestDeepDive={() => void requestStrategyBrief({ deepDive: true })}
+            primaryInterventionLabel={displayInterventionState.primaryAction.label}
+            secondaryInterventionLabel={displayInterventionState.secondaryAction.label}
+            onRunBriefing={() => void requestStrategyBrief({ deepDive: false, purpose: isGlobalLeap ? "expansion_brief" : "zone_brief" })}
+            onRequestDeepDive={() => void requestStrategyBrief({ deepDive: true, purpose: isGlobalLeap ? "expansion_brief" : "zone_brief" })}
             onOpenSimulationLab={jumpToSimulationLab}
-            onPrimaryIntervention={() => handleInterventionAction(interventionState.primaryAction.key)}
-            onSecondaryIntervention={() => handleInterventionAction(interventionState.secondaryAction.key)}
+            onPrimaryIntervention={() => handleInterventionAction(displayInterventionState.primaryAction.key)}
+            onSecondaryIntervention={() => handleInterventionAction(displayInterventionState.secondaryAction.key)}
             onExecuteStrategy={handleExecuteAiStrategy}
             canExecuteStrategy={canExecuteAiStrategy}
           />
@@ -3223,6 +3729,7 @@ export function IntelligenceTab({
         <SimulationEngine
           onSimulationComplete={handleSimulationComplete}
           onTelemetryChange={handleSimulationTelemetry}
+          onGeoConfigChange={handleSimulationGeoConfigChange}
         />
       </section>
     </div>
@@ -3547,7 +4054,19 @@ function CommandMapView({ center, zoom }: { center: [number, number]; zoom: numb
   const map = useMap();
 
   useEffect(() => {
-    map.setView(center, zoom, { animate: true });
+    const prefersReducedMotion = typeof window !== "undefined"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (prefersReducedMotion) {
+      map.setView(center, zoom, { animate: false });
+      return;
+    }
+
+    map.flyTo(center, zoom, {
+      animate: true,
+      duration: 1.45,
+      easeLinearity: 0.28,
+    });
   }, [center, map, zoom]);
 
   return null;

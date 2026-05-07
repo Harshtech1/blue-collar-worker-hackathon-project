@@ -246,9 +246,18 @@ export interface SimulationTelemetryPayload {
   statusFeed: string[];
 }
 
+export interface SimulationGeoSelectionPayload {
+  geoConfig: SimulationGeoConfig;
+  selectedAddress: string;
+  scenario: SimulationScenario;
+  source: "bootstrap" | "city_select" | "map_pin" | "recenter";
+  cityChanged: boolean;
+}
+
 interface SimulationEngineProps {
   onSimulationComplete?: (payload: SimulationCompletionPayload) => void;
   onTelemetryChange?: (payload: SimulationTelemetryPayload) => void;
+  onGeoConfigChange?: (payload: SimulationGeoSelectionPayload) => void;
 }
 
 const DEFAULT_RADIUS_KM = 12;
@@ -586,12 +595,38 @@ const getRadiusBounds = (center: { lat: number; lng: number }, radiusKm: number)
   ] as [[number, number], [number, number]];
 };
 
+const toRadians = (value: number) => (value * Math.PI) / 180;
+
+const calculateGeoDistanceKm = (
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+) => {
+  const earthRadiusKm = 6371;
+  const deltaLat = toRadians(destination.lat - origin.lat);
+  const deltaLng = toRadians(destination.lng - origin.lng);
+  const lat1 = toRadians(origin.lat);
+  const lat2 = toRadians(destination.lat);
+
+  const a = (Math.sin(deltaLat / 2) ** 2)
+    + (Math.cos(lat1) * Math.cos(lat2) * (Math.sin(deltaLng / 2) ** 2));
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+};
+
+const getExpansionMarketLabel = (cityLabel: string) => (
+  cityLabel.toLowerCase().includes("delhi") ? "DELHI NCR" : cityLabel.toUpperCase()
+);
+
 const initialGeoConfig = buildSimulationGeoConfig({
   cityId: DEFAULT_SIMULATION_CITY_ID,
   radiusKm: DEFAULT_RADIUS_KM,
 });
 
-export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: SimulationEngineProps) {
+export function SimulationEngine({
+  onSimulationComplete,
+  onTelemetryChange,
+  onGeoConfigChange,
+}: SimulationEngineProps) {
   const [phase, setPhase] = useState<SimulationPhase>("idle");
   const [isRunning, setIsRunning] = useState(false);
   const [processedPoints, setProcessedPoints] = useState(0);
@@ -617,7 +652,15 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   const [strategyResponse, setStrategyResponse] = useState<StrategyAgentResponse | null>(null);
   const [investorSummary, setInvestorSummary] = useState<StrategyAgentResponse | null>(null);
   const [ceoQuestion, setCeoQuestion] = useState("Why are we losing money in the weakest zone?");
+  const [pendingExpansionAutoLaunch, setPendingExpansionAutoLaunch] = useState<null | {
+    key: string;
+    marketLabel: string;
+    distanceKm: number;
+  }>(null);
   const lastReportedRunRef = useRef<string | null>(null);
+  const lastGeoChangeSourceRef = useRef<SimulationGeoSelectionPayload["source"]>("bootstrap");
+  const previousGeoConfigRef = useRef<SimulationGeoConfig>(initialGeoConfig);
+  const lastAutoExpansionKeyRef = useRef<string | null>(null);
 
   const draftGeoConfig = useMemo(() => (
     buildSimulationGeoConfig({
@@ -636,6 +679,39 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SIMULATION_SCENARIO_STORAGE_KEY, selectedScenario);
   }, [selectedScenario]);
+
+  useEffect(() => {
+    const previous = previousGeoConfigRef.current;
+    const cityChanged = previous.cityId !== draftGeoConfig.cityId;
+    const geoChanged = getGeoConfigKey(previous) !== getGeoConfigKey(draftGeoConfig);
+    const movedDistanceKm = calculateGeoDistanceKm(previous.center, draftGeoConfig.center);
+
+    if (!geoChanged && !cityChanged) {
+      return;
+    }
+
+    if (
+      (cityChanged || movedDistanceKm > 50)
+      && lastGeoChangeSourceRef.current !== "bootstrap"
+      && (lastGeoChangeSourceRef.current === "city_select" || lastGeoChangeSourceRef.current === "map_pin")
+    ) {
+      setPendingExpansionAutoLaunch({
+        key: getGeoConfigKey(draftGeoConfig),
+        marketLabel: getExpansionMarketLabel(draftGeoConfig.cityLabel),
+        distanceKm: movedDistanceKm,
+      });
+    }
+
+    onGeoConfigChange?.({
+      geoConfig: draftGeoConfig,
+      selectedAddress,
+      scenario: selectedScenario,
+      source: lastGeoChangeSourceRef.current,
+      cityChanged,
+    });
+
+    previousGeoConfigRef.current = draftGeoConfig;
+  }, [draftGeoConfig, onGeoConfigChange, selectedAddress, selectedScenario]);
 
   const previewSignals = useMemo<PreviewPoint[]>(() => (
     generateSimulationBatch({
@@ -922,6 +998,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     const city = GLOBAL_SIMULATION_CITIES.find((entry) => entry.id === cityId);
     if (!city) return;
 
+    lastGeoChangeSourceRef.current = "city_select";
     setSelectedCityId(city.id);
     setAnalysisCenter({ lat: city.lat, lng: city.lng });
     setSelectedAddress(`${city.label}, ${city.country}`);
@@ -934,6 +1011,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   }, []);
 
   const handleMapCenterSelect = useCallback((location: SelectedLocation) => {
+    lastGeoChangeSourceRef.current = "map_pin";
     setAnalysisCenter({
       lat: Number(location.lat.toFixed(6)),
       lng: Number(location.lng.toFixed(6)),
@@ -942,6 +1020,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   }, []);
 
   const handleRecenterToCity = useCallback(() => {
+    lastGeoChangeSourceRef.current = "recenter";
     setAnalysisCenter({ lat: selectedCity.lat, lng: selectedCity.lng });
     setSelectedAddress(`${selectedCity.label}, ${selectedCity.country}`);
   }, [selectedCity]);
@@ -999,6 +1078,17 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       : zoneEconomics.reduce((sum, zone) => sum + zone.churnRisk, 0) / zoneEconomics.length;
     const priceMultiplier = Number(Math.min(1.5, Math.max(0.85, 1 + (0.25 * (((hottestSector?.densityScore ?? 1.2) - 1.2))))).toFixed(2));
     const marginLift = Number((totalTraditionalCost - totalOptimizedCost).toFixed(2));
+    const isDelhiExpansion = draftGeoConfig.cityLabel.toLowerCase().includes("delhi");
+    const competitorPressure = selectedScenario === "price_war" || isDelhiExpansion;
+    const competitorName = isDelhiExpansion ? "Urban Company" : "UrbanX";
+    const competitorZoneLabel = isDelhiExpansion ? "Delhi NCR" : `${draftGeoConfig.cityLabel} command zone`;
+    const competitorDiscountPercent = selectedScenario === "price_war" ? 20 : 14;
+    const competitorResponse = isDelhiExpansion
+      ? "Lead with Cloudinary-secured proof-of-work and Verified Pro trust before matching any broad market discount."
+      : "Protect margin with Verified Pro proof, loyalty retention, and selective pricing instead of blanket discounts.";
+    const competitorSignal = competitorPressure
+      ? `[INTEL] ${competitorName} is applying ${competitorDiscountPercent}% discount pressure in ${competitorZoneLabel}. ${competitorResponse}`
+      : null;
 
     return {
       analysisMode,
@@ -1019,12 +1109,23 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       allocationStrategy: inferredAllocationStrategy,
       priceMultiplier,
       pricingSignal: financialOverview.totalDailyBurn > 0 ? "protect margin with targeted pricing" : "pricing stable",
-      logicSignals: getScenarioLogicSignals({
+      competitorPressure,
+      competitorSignals: competitorSignal ? [competitorSignal] : [],
+      competitorContext: competitorPressure ? {
+        competitor: competitorName,
+        zoneLabel: competitorZoneLabel,
+        discountPercent: competitorDiscountPercent,
+        response: competitorResponse,
+      } : null,
+      logicSignals: [
+        ...(competitorSignal ? [competitorSignal] : []),
+        ...getScenarioLogicSignals({
         scenario: selectedScenario,
         hottestSector: completionPayload.criticalGapSector || hottestSector?.areaSector,
         totalDailyBurn: financialOverview.totalDailyBurn,
         marginLift,
       }),
+      ],
       financials: {
         acquisitionCost: Number(financialOverview.averageCac.toFixed(2)),
         churnRate: Number(churnRate.toFixed(3)),
@@ -1071,7 +1172,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         cloudinaryVerifiedUploads: 0,
       },
       deepDive: Boolean(userQuestion),
-      providerPreference: userQuestion || selectedScenario !== "baseline" ? "gemini" : "groq",
+      providerPreference: userQuestion || selectedScenario !== "baseline" || isDelhiExpansion ? "gemini" : "groq",
     };
   }, [
     averageSalariedRatio,
@@ -1289,6 +1390,27 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     }
   }, [appendFeed, draftGeoConfig, isRunning, selectedScenario]);
 
+  useEffect(() => {
+    if (!pendingExpansionAutoLaunch || isRunning) {
+      return;
+    }
+
+    if (lastAutoExpansionKeyRef.current === pendingExpansionAutoLaunch.key) {
+      return;
+    }
+
+    lastAutoExpansionKeyRef.current = pendingExpansionAutoLaunch.key;
+    appendFeed(
+      `[DETECTED] ENTERING NEW MARKET: ${pendingExpansionAutoLaunch.marketLabel}. CALIBRATING DENSITY PARAMETERS...`,
+    );
+    toast.success(
+      `New market detected: ${pendingExpansionAutoLaunch.marketLabel}. Auto-launching expansion analysis.`,
+      { description: `${Math.round(pendingExpansionAutoLaunch.distanceKm)} km from the previous center.` },
+    );
+    setPendingExpansionAutoLaunch(null);
+    void launchSimulation();
+  }, [appendFeed, isRunning, launchSimulation, pendingExpansionAutoLaunch]);
+
   const phaseCopy = useMemo(
     () => getScenarioPhaseCopy(selectedScenario),
     [selectedScenario],
@@ -1327,8 +1449,8 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         </div>
 
         <div className="flex flex-col items-stretch gap-3 sm:flex-row xl:flex-col">
-          <div className="grid grid-cols-3 gap-2 rounded-[1.4rem] border border-slate-200 bg-white p-2">
-            {(["baseline", "monsoon", "supply_crunch"] as const).map((scenario) => (
+          <div className="grid grid-cols-2 gap-2 rounded-[1.4rem] border border-slate-200 bg-white p-2 sm:grid-cols-4">
+            {(["baseline", "monsoon", "supply_crunch", "price_war"] as const).map((scenario) => (
               <button
                 key={scenario}
                 type="button"
@@ -1436,6 +1558,8 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                 ? "border-amber-200 bg-[linear-gradient(135deg,_rgba(251,191,36,0.14),_rgba(249,115,22,0.08))]"
                 : selectedScenario === "supply_crunch"
                   ? "border-rose-300 bg-[linear-gradient(135deg,_rgba(251,113,133,0.14),_rgba(190,24,93,0.08))]"
+                  : selectedScenario === "price_war"
+                    ? "border-amber-300 bg-[linear-gradient(135deg,_rgba(253,230,138,0.22),_rgba(245,158,11,0.12))]"
                 : "border-emerald-200 bg-emerald-50",
             )}>
               <div className="flex items-start justify-between gap-3">
@@ -1447,6 +1571,8 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                       ? "Repair traffic is doubled, field supply is reduced by 40%, and burn pressure is increased so the platform can rehearse a storm response."
                       : selectedScenario === "supply_crunch"
                         ? "Active worker availability is cut by 50%, high-priority demand is doubled, and the engine is forced into amber-alert preservation mode."
+                        : selectedScenario === "price_war"
+                          ? "CAC pressure rises, churn assumptions are elevated, and the engine must defend trust-over-price positioning in the new city."
                       : "The engine runs with standard mobility, service demand, and acquisition assumptions for a clean profitability baseline."}
                   </p>
                 </div>
@@ -1456,12 +1582,16 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                     ? "bg-amber-200 text-amber-950"
                     : selectedScenario === "supply_crunch"
                       ? "bg-rose-200 text-rose-950"
+                      : selectedScenario === "price_war"
+                        ? "bg-amber-200 text-amber-950"
                     : "bg-emerald-200 text-emerald-900",
                 )}>
                   {selectedScenario === "monsoon"
                     ? "Mobility: -40%"
                     : selectedScenario === "supply_crunch"
                       ? "Supply: -50%"
+                      : selectedScenario === "price_war"
+                        ? "CAC: +20%"
                       : "Supply normal"}
                 </div>
               </div>

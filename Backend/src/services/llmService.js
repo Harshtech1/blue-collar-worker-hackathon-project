@@ -37,7 +37,7 @@ Return valid JSON with:
 Respond only with JSON.`;
 
 const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
-const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_STRATEGY_MAX_TOKENS = 500;
 
 class ProviderRequestError extends Error {
@@ -157,8 +157,8 @@ const StrategyResponseSchema = z.object({
   signal: z.string().min(1),
   reasoning: z.string().min(1),
   procedures: z.array(z.string().min(1)).min(1),
-  counterPositioningMove: z.string().min(1).optional(),
-  auditLog: z.string().min(1).optional(),
+  counterPositioningMove: z.any().optional(),
+  auditLog: z.any().optional(),
 });
 
 const strategyJsonSchema = {
@@ -177,6 +177,12 @@ const strategyJsonSchema = {
   },
   required: ["signal", "reasoning", "procedures"],
   additionalProperties: false,
+};
+
+const strategyGeminiSchema = {
+  type: "object",
+  properties: strategyJsonSchema.properties,
+  required: strategyJsonSchema.required,
 };
 
 const formatCurrency = (value) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
@@ -376,7 +382,11 @@ const probeGeminiHealth = async () => {
   }
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}?key=${geminiApiKey}`);
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}`, {
+      headers: {
+        "x-goog-api-key": geminiApiKey,
+      },
+    });
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
@@ -522,6 +532,64 @@ const buildPrompt = (payload) => {
   ].join("\n");
 };
 
+const coerceStructuredResponse = (text) => {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  let signal = "";
+  let reasoning = "";
+  const procedures = [];
+
+  for (const line of lines) {
+    if (!signal && /^signal\s*[:\-]/i.test(line)) {
+      signal = line.replace(/^signal\s*[:\-]\s*/i, "").trim();
+      continue;
+    }
+
+    if (!reasoning && /^(reason|reasoning|why)\s*[:\-]/i.test(line)) {
+      reasoning = line.replace(/^(reason|reasoning|why)\s*[:\-]\s*/i, "").trim();
+      continue;
+    }
+
+    if (/^(procedure|procedures|cmd|command|step)\s*[\d#:.\-]*/i.test(line)) {
+      procedures.push(line.replace(/^(procedure|procedures|cmd|command|step)\s*[\d#:.\-]*\s*/i, "").trim());
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(line) || /^\d+[\).\-\s]/.test(line)) {
+      procedures.push(line.replace(/^[-*]\s+/, "").replace(/^\d+[\).\-\s]+/, "").trim());
+    }
+  }
+
+  const fallbackLines = lines.filter((line) => !/^(signal|reason|reasoning|why|procedure|procedures|cmd|command|step)\s*[:\-]/i.test(line));
+  if (!signal) {
+    signal = fallbackLines[0] || "";
+  }
+  if (!reasoning) {
+    reasoning = fallbackLines[1] || "";
+  }
+  if (procedures.length === 0) {
+    procedures.push(...fallbackLines.slice(2, 5));
+  }
+
+  const cleanProcedures = procedures.map((item) => item.trim()).filter(Boolean);
+  if (!signal || !reasoning || cleanProcedures.length === 0) {
+    return null;
+  }
+
+  return {
+    signal,
+    reasoning,
+    procedures: cleanProcedures.slice(0, 3),
+  };
+};
+
 const extractJson = (text) => {
   const trimmed = String(text || "").trim();
   if (!trimmed) throw new Error("LLM returned an empty response");
@@ -531,19 +599,48 @@ const extractJson = (text) => {
   } catch {
     const match = trimmed.match(/\{[\s\S]*\}/);
     if (!match) {
+      const coerced = coerceStructuredResponse(trimmed);
+      if (coerced) {
+        return coerced;
+      }
       throw new Error("LLM response did not contain JSON");
     }
     return JSON.parse(match[0]);
   }
 };
 
+const normalizeOptionalText = (value) => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((item) => normalizeOptionalText(item))
+      .filter(Boolean)
+      .join(" ");
+    return joined || undefined;
+  }
+
+  if (value && typeof value === "object") {
+    const message = normalizeOptionalText(value.message ?? value.text ?? value.summary ?? value.note);
+    if (message) {
+      return message;
+    }
+    return undefined;
+  }
+
+  return undefined;
+};
+
 const finalizeStrategy = (raw, payload) => {
   const parsed = StrategyResponseSchema.parse(raw);
   const competitorPressure = hasCompetitorPressure(payload);
-  const counterPositioningMove = parsed.counterPositioningMove?.trim()
+  const counterPositioningMove = normalizeOptionalText(parsed.counterPositioningMove)
     || (competitorPressure ? buildTrustDefenseMove(payload) : undefined);
   const procedures = normalizeProcedures(parsed.procedures, payload);
-  const auditLog = parsed.auditLog?.trim()
+  const auditLog = normalizeOptionalText(parsed.auditLog)
     || (counterPositioningMove ? buildCompetitorAuditLog(payload, counterPositioningMove) : undefined);
 
   return {
@@ -650,11 +747,12 @@ const callGeminiStrategy = async (payload) => {
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-goog-api-key": geminiApiKey,
         },
         body: JSON.stringify({
           systemInstruction: {
@@ -671,7 +769,7 @@ const callGeminiStrategy = async (payload) => {
             topP: 0.8,
             maxOutputTokens: getStrategyMaxTokens(),
             responseMimeType: "application/json",
-            responseJsonSchema: strategyJsonSchema,
+            responseSchema: strategyGeminiSchema,
           },
         }),
       },
@@ -936,7 +1034,11 @@ export const buildFallbackStrategy = (input) => {
 
 export const analyzeStrategyWithLLM = async (input) => {
   const payload = StrategyPayloadSchema.parse(input);
-  const providers = [callGroqStrategy, callGeminiStrategy];
+  const providers = payload.providerPreference === "gemini"
+    ? [callGeminiStrategy, callGroqStrategy]
+    : payload.providerPreference === "groq"
+      ? [callGroqStrategy, callGeminiStrategy]
+      : [callGroqStrategy, callGeminiStrategy];
 
   for (const provider of providers) {
     try {
