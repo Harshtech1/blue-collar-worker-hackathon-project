@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity,
   AlertCircle,
@@ -10,18 +10,26 @@ import {
   DollarSign,
   Globe2,
   LineChart,
+  Loader2,
   MapPin,
+  MessageSquare,
   Radar,
   Search,
+  SendHorizontal,
   ShieldCheck,
   Sparkles,
   Users,
   Wallet,
   Waypoints,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { API } from "@/lib/constants";
 import { DataTable } from "./components/DataTable";
 import { MissionControlMap } from "./components/MissionControlMap";
+import { StrategyChips } from "./components/StrategyChips";
+import { StrategyPulse } from "./components/StrategyPulse";
 import {
   buildMissionPath,
   buildObservabilityPath,
@@ -31,6 +39,8 @@ import {
   type AdminObservabilityPanel,
 } from "./adminRoutes";
 import { useAdminShellContext } from "./adminShellContext";
+import { ADMIN_ISSUE_SEVERITY_WEIGHT, ADMIN_OBSERVABILITY_ISSUES, type ObservabilityIssue } from "./adminSignals";
+import { buildSystemInsightsSummary } from "@/pages/admin/utils/systemInsights";
 import { buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
 
 type CommandOption = {
@@ -42,108 +52,16 @@ type CommandOption = {
 
 type Tone = "navy" | "emerald" | "sky" | "amber";
 
-type ObservabilityIssueCode =
-  | "PAYMENT_FAILURE"
-  | "BOOKING_ERROR"
-  | "OTP_TIMEOUT"
-  | "PROOF_VERIFICATION_REJECTED"
-  | "ASSIGNMENT_TIMEOUT"
-  | "LLM_FALLBACK"
-  | "UPLOAD_LATENCY";
-
-type ObservabilityIssue = {
-  id: string;
-  code: ObservabilityIssueCode;
-  domain: string;
-  severity: "critical" | "watch" | "stable";
-  message: string;
-  tone: Tone;
-  impact: string;
-  recommendedAction: string;
+type AdminCopilotReply = {
+  reply: string;
+  navigationTarget?: string | null;
+  navigationReason?: string | null;
+  auditHighlights?: string[];
+  confidence?: "high" | "medium" | "low";
+  provider?: string;
+  model?: string;
+  fallback?: boolean;
 };
-
-const severityWeight: Record<ObservabilityIssueCode, number> = {
-  PAYMENT_FAILURE: 100,
-  BOOKING_ERROR: 95,
-  OTP_TIMEOUT: 90,
-  PROOF_VERIFICATION_REJECTED: 85,
-  ASSIGNMENT_TIMEOUT: 80,
-  LLM_FALLBACK: 35,
-  UPLOAD_LATENCY: 25,
-};
-
-const issueSeeds: ObservabilityIssue[] = [
-  {
-    id: "issue-payment-failure",
-    code: "PAYMENT_FAILURE",
-    domain: "Payments",
-    severity: "critical",
-    message: "Settlement callback mismatch detected in Chandigarh. Two paid jobs are awaiting ledger reconciliation.",
-    tone: "amber",
-    impact: "Revenue is at risk until callbacks are reconciled.",
-    recommendedAction: "Freeze duplicate retries, verify the callback signature, and re-run settlement sync for the affected jobs.",
-  },
-  {
-    id: "issue-booking-error",
-    code: "BOOKING_ERROR",
-    domain: "Bookings",
-    severity: "critical",
-    message: "Three high-value bookings failed to confirm after customer payment authorization in the last 30 minutes.",
-    tone: "amber",
-    impact: "Paid demand can leak before it reaches worker assignment.",
-    recommendedAction: "Replay booking confirmation from the payment success event and verify the booking-write queue.",
-  },
-  {
-    id: "issue-otp-timeout",
-    code: "OTP_TIMEOUT",
-    domain: "Verification",
-    severity: "critical",
-    message: "Start-job OTP delivery crossed the timeout threshold for seven field visits during the evening surge.",
-    tone: "amber",
-    impact: "Workers can stall on-site and completion trust drops immediately.",
-    recommendedAction: "Switch to the backup SMS rail and extend the active OTP window for the current surge cycle.",
-  },
-  {
-    id: "issue-proof-rejected",
-    code: "PROOF_VERIFICATION_REJECTED",
-    domain: "Trust",
-    severity: "critical",
-    message: "Proof-of-work verification rejected media on two completed jobs because the upload token expired mid-submit.",
-    tone: "amber",
-    impact: "Proof coverage weakens and payout approval can be delayed.",
-    recommendedAction: "Refresh signed upload tokens for active sessions and retry verification from the stored proof queue.",
-  },
-  {
-    id: "issue-assignment-timeout",
-    code: "ASSIGNMENT_TIMEOUT",
-    domain: "Dispatch",
-    severity: "critical",
-    message: "Worker assignment timed out in one high-demand pocket after the matching queue exceeded its SLA.",
-    tone: "amber",
-    impact: "Customers wait longer and marketplace trust degrades in the highest-value zone.",
-    recommendedAction: "Open overflow capacity in the affected zone and force-rerun matching with the standby worker pool.",
-  },
-  {
-    id: "issue-llm-fallback",
-    code: "LLM_FALLBACK",
-    domain: "AI",
-    severity: "watch",
-    message: "Provider fallback engaged for one strategy request during the last sampling window.",
-    tone: "amber" as const,
-    impact: "Executive guidance remains available, but deep reasoning quality can step down.",
-    recommendedAction: "Review provider health and keep local guidance active until quota stabilizes.",
-  },
-  {
-    id: "issue-upload-latency",
-    code: "UPLOAD_LATENCY",
-    domain: "Verification",
-    severity: "stable",
-    message: "Signed worker documents are available and protected by time-limited URLs.",
-    tone: "emerald" as const,
-    impact: "Trust coverage is stable and no escalation is required.",
-    recommendedAction: "Monitor only.",
-  },
-];
 
 const getYieldSnapshot = ({
   totalRevenue,
@@ -180,7 +98,24 @@ const getYieldSnapshot = ({
 };
 
 export function AdminOverviewPage() {
-  const { stats, chartData, activities, onNavigateTab } = useAdminShellContext();
+  const {
+    stats,
+    chartData,
+    activities,
+    workersList,
+    bookingsList,
+    pitchMode,
+    routeZoneId,
+    zoneLabel,
+    globalUptime,
+    healthSnapshot,
+    llmMode,
+    activeWorkerRate,
+    averageTicket,
+    investorSummary,
+    onNavigateTab,
+    onSelectWarRoomZone,
+  } = useAdminShellContext();
 
   const weeklyDelta = chartData.length > 1
     ? Number(chartData[chartData.length - 1]?.bookings || 0) - Number(chartData[0]?.bookings || 0)
@@ -193,9 +128,32 @@ export function AdminOverviewPage() {
   const throughputPeak = chartData.reduce((highest, entry) => (
     Number(entry.bookings || 0) > highest ? Number(entry.bookings || 0) : highest
   ), 0);
+  const overviewSummary = useMemo(() => buildSystemInsightsSummary({
+    routeZoneId,
+    zoneLabel,
+    stats,
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    llmMode,
+    healthSnapshot,
+    investorSummary,
+  }), [
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    healthSnapshot,
+    investorSummary,
+    llmMode,
+    routeZoneId,
+    stats,
+    zoneLabel,
+  ]);
 
   return (
     <ScrollPage>
+      <StrategyChips summary={overviewSummary} />
+
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.28fr)_minmax(20rem,0.72fr)]">
         <SuitePanel
           eyebrow="Morning Brief"
@@ -281,6 +239,69 @@ export function AdminOverviewPage() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(18rem,0.92fr)]">
+        <section className="xl:col-span-2 rounded-[12px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+                Live City Pulse [{zoneLabel}]
+              </p>
+              <h2 className="mt-2 text-[1.35rem] font-black text-slate-900">
+                Geospatial truth stays visible at the overview layer.
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                Start the story with a live city surface, not an abstract dashboard. This preview keeps market density, worker spread, and readable geography in view before the investor drills into the full Operations Center.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onSelectWarRoomZone(routeZoneId || DEFAULT_WAR_ROOM_ZONE)}
+              className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+            >
+              Open Full Theater
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+            <div className="relative w-full h-full min-h-[450px] overflow-hidden rounded-xl border border-slate-200">
+              <MissionControlMap
+                activeTab="overview"
+                routeZoneId={routeZoneId || DEFAULT_WAR_ROOM_ZONE}
+                workers={workersList}
+                bookings={bookingsList}
+                variant="lite"
+                className="h-full min-h-[450px]"
+              />
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-[22px] border border-slate-200 bg-slate-50/85 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Tactical Preview
+                </p>
+                <p className="mt-2 text-sm leading-7 text-slate-700">
+                  Satellite Hybrid keeps Agra landmarks like Sikandra and Fatehabad Road readable while the overview stays inside the clean Karigar shell.
+                </p>
+              </div>
+
+              <MetricTile label="Active area" value={zoneLabel} tone="navy" />
+              <MetricTile label="Live jobs" value={stats.activeBookings.toLocaleString("en-IN")} tone="sky" />
+              <MetricTile label="Worker fleet" value={stats.totalWorkers.toLocaleString("en-IN")} tone="emerald" />
+              <MetricTile label="Revenue lane" value={`INR ${stats.totalRevenue.toLocaleString("en-IN")}`} tone="amber" />
+
+              <div className="rounded-[22px] border border-slate-200 bg-white p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Demo beat
+                </p>
+                <p className="mt-2 text-sm leading-7 text-slate-600">
+                  Start here, anchor the investor on city density, then open the full theater for command jumps into Chandigarh, New Delhi, or Chennai.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <SuitePanel
           eyebrow="Market Analytics"
           title="Seven-day throughput"
@@ -354,55 +375,86 @@ export function AdminOverviewPage() {
         </SuitePanel>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <SuitePanel
-          eyebrow="Operational Log"
-          title="Live platform movement"
-          description="Activity stays concise here so the surface feels alive without collapsing into a noisy console."
-          icon={Activity}
-        >
-          <div className="space-y-3">
-            {activities.slice(0, 5).map((entry, index) => (
-              <FeedItem
-                key={`${entry.msg}-${entry.time}-${index}`}
-                tag={entry.role || "Ops"}
-                tone={entry.type === "booking" ? "sky" : "emerald"}
-                message={entry.msg}
-                note={entry.time}
-              />
-            ))}
-          </div>
-        </SuitePanel>
+      {pitchMode ? (
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,0.94fr)_minmax(0,1.06fr)]">
+          <SuitePanel
+            eyebrow="Pitch Summary"
+            title="Boardroom view"
+            description="Presentation mode hides operator noise and keeps the investor conversation on growth, trust, and disciplined expansion."
+            icon={Sparkles}
+          >
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <MetricTile label="Growth lane" value={weeklyDelta >= 0 ? `+${weeklyDelta} jobs` : `${weeklyDelta} jobs`} tone={weeklyDelta >= 0 ? "emerald" : "amber"} />
+              <MetricTile label="Revenue pace" value={`INR ${stats.totalRevenue.toLocaleString("en-IN")}`} tone="navy" />
+              <MetricTile label="Trust moat" value="Proof + signed docs" tone="sky" />
+              <MetricTile label="Next reveal" value="Operations Center" tone="amber" />
+            </div>
+          </SuitePanel>
 
-        <SuitePanel
-          eyebrow="Platform Confidence"
-          title="Trust, risk, and route readiness"
-          description="A final reading for the morning brief: quality, risk, and system posture stay visible in the same brand language as the customer-facing product."
-          icon={AlertCircle}
-        >
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {issueSeeds.map((issue) => (
-              <div
-                key={issue.domain}
-                className="rounded-[22px] border border-slate-200 bg-slate-50/85 p-4"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-900">{issue.domain}</p>
-                  <span className={cn(
-                    "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
-                    issue.tone === "amber" && "border-amber-200 bg-white text-amber-700",
-                    issue.tone === "emerald" && "border-emerald-200 bg-white text-emerald-700",
-                    issue.tone === "sky" && "border-sky-200 bg-white text-sky-700",
-                  )}>
-                    {issue.severity}
-                  </span>
+          <SuitePanel
+            eyebrow="Presentation Narrative"
+            title="What to say next"
+            description="This strip is tuned for the investor sequence: city demand, operating reliability, and monetization discipline."
+            icon={AlertCircle}
+          >
+            <div className="space-y-3">
+              <FeedItem tag="Growth" tone="emerald" message="Demand remains readable and expansion-ready without forcing the admin surface into a technical console." note="Boardroom safe" />
+              <FeedItem tag="Profit" tone="amber" message={`Revenue is holding at INR ${stats.totalRevenue.toLocaleString("en-IN")} while margin context stays adjacent to active jobs and payouts.`} note="Unit economics" />
+              <FeedItem tag="Trust" tone="sky" message="Verification and proof-of-work remain product strengths, but low-level event streams are intentionally muted during presentation mode." note="Investor clarity" />
+            </div>
+          </SuitePanel>
+        </section>
+      ) : (
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+          <SuitePanel
+            eyebrow="Operational Log"
+            title="Live platform movement"
+            description="Activity stays concise here so the surface feels alive without collapsing into a noisy console."
+            icon={Activity}
+          >
+            <div className="space-y-3">
+              {activities.slice(0, 5).map((entry, index) => (
+                <FeedItem
+                  key={`${entry.msg}-${entry.time}-${index}`}
+                  tag={entry.role || "Ops"}
+                  tone={entry.type === "booking" ? "sky" : "emerald"}
+                  message={entry.msg}
+                  note={entry.time}
+                />
+              ))}
+            </div>
+          </SuitePanel>
+
+          <SuitePanel
+            eyebrow="Platform Confidence"
+            title="Trust, risk, and route readiness"
+            description="A final reading for the morning brief: quality, risk, and system posture stay visible in the same brand language as the customer-facing product."
+            icon={AlertCircle}
+          >
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {ADMIN_OBSERVABILITY_ISSUES.map((issue) => (
+                <div
+                  key={issue.domain}
+                  className="rounded-[22px] border border-slate-200 bg-slate-50/85 p-4"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">{issue.domain}</p>
+                    <span className={cn(
+                      "rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
+                      issue.tone === "amber" && "border-amber-200 bg-white text-amber-700",
+                      issue.tone === "emerald" && "border-emerald-200 bg-white text-emerald-700",
+                      issue.tone === "sky" && "border-sky-200 bg-white text-sky-700",
+                    )}>
+                      {issue.severity}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm leading-7 text-slate-600">{issue.message}</p>
                 </div>
-                <p className="mt-3 text-sm leading-7 text-slate-600">{issue.message}</p>
-              </div>
-            ))}
-          </div>
-        </SuitePanel>
-      </section>
+              ))}
+            </div>
+          </SuitePanel>
+        </section>
+      )}
     </ScrollPage>
   );
 }
@@ -425,6 +477,8 @@ export function AdminWarRoomPage() {
     sevenDayBookings,
     sevenDayRevenue,
     investorSummary,
+    globalUptime,
+    pitchMode,
     onSelectWarRoomZone,
   } = useAdminShellContext();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -510,81 +564,107 @@ export function AdminWarRoomPage() {
     fallbackAverageTicket: averageTicket,
     investorSummary,
   });
+  const warRoomSummary = useMemo(() => buildSystemInsightsSummary({
+    routeZoneId,
+    zoneLabel,
+    stats,
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    llmMode,
+    healthSnapshot,
+    investorSummary,
+  }), [
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    healthSnapshot,
+    investorSummary,
+    llmMode,
+    routeZoneId,
+    stats,
+    zoneLabel,
+  ]);
 
   return (
-    <div className="grid h-full gap-6 p-6 xl:grid-cols-[minmax(0,1.24fr)_minmax(22rem,0.76fr)] xl:grid-rows-[auto_minmax(0,1fr)_minmax(15rem,0.58fr)]">
-      <div className="xl:col-span-2">
-        <CommandBar
-          activeZoneLabel={zoneLabel}
-          highlightedWorkerLabel={highlightedWorker?.name || null}
-          options={commandOptions}
-          onSelectMarket={onSelectWarRoomZone}
-          onSelectWorker={handleWorkerSelect}
-        />
-      </div>
-
-      <section className="min-h-0 overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_20px_48px_-34px_rgba(15,23,42,0.18)]">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Operations Center
-            </p>
-            <h2 className="mt-2 text-[1.45rem] font-semibold tracking-tight text-slate-900">
-              {zoneLabel} live command map
-            </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-              Keep the map as the operational foundation, but frame it in a cleaner enterprise container so the geography, workers, and market signals stay legible in daylight.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
-              Satellite Hybrid
-            </div>
-            <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
-              Fleet readiness {activeWorkerRate}%
-            </div>
-            <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-semibold text-sky-700">
-              Latency {channelLatencyMs}ms
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 h-[calc(100%-7.5rem)] min-h-[32rem]">
-          <MissionControlMap
-            activeTab="overview"
-            routeZoneId={routeZoneId}
-            workers={workersList}
-            bookings={bookingsList}
-            onZoneSelect={onSelectWarRoomZone}
-            highlightWorkerId={highlightedWorkerId}
-            className="h-full"
+    <div className="mission-scrollbar h-full overflow-y-auto pr-1">
+      <div className="grid min-h-full gap-6 p-6 xl:h-full xl:grid-cols-[minmax(0,1.24fr)_minmax(22rem,0.76fr)] xl:grid-rows-[auto_minmax(0,1fr)_minmax(15rem,0.58fr)]">
+        <div className="xl:col-span-2">
+          <CommandBar
+            activeZoneLabel={zoneLabel}
+            highlightedWorkerLabel={highlightedWorker?.name || null}
+            options={commandOptions}
+            onSelectMarket={onSelectWarRoomZone}
+            onSelectWorker={handleWorkerSelect}
           />
-        </div>
-      </section>
 
-      <aside className="min-h-0 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_20px_48px_-34px_rgba(15,23,42,0.18)]">
-        <div className="border-b border-slate-200 px-5 py-5">
-          <div className="flex items-start justify-between gap-4">
+          <div className="mt-4">
+            <StrategyChips summary={warRoomSummary} />
+          </div>
+        </div>
+
+        <section className="flex min-h-[43rem] flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_20px_48px_-34px_rgba(15,23,42,0.18)] xl:min-h-0">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Market Analytics
+                Operations Center
               </p>
-              <h2 className="mt-2 text-[1.35rem] font-semibold tracking-tight text-slate-900">
-                Market Analytics
+              <h2 className="mt-2 text-[1.45rem] font-semibold tracking-tight text-slate-900">
+                {zoneLabel} live command map
               </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
-                Zone posture, AI routing, and selected worker context in one clean decision surface.
+              <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
+                Keep the map as the operational foundation, but frame it in a cleaner enterprise container so the geography, workers, and market signals stay legible in daylight.
               </p>
             </div>
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-700">
-              {zoneLabel}
+
+            <div className="flex flex-wrap gap-2">
+              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
+                Satellite Hybrid
+              </div>
+              <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                Fleet readiness {activeWorkerRate}%
+              </div>
+              <div className="rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-semibold text-sky-700">
+                Latency {channelLatencyMs}ms
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="mission-scrollbar h-[calc(100%-7.5rem)] overflow-y-auto p-5">
-          <div className="space-y-5">
+          <div className="mt-5 h-[32rem] min-h-[32rem] xl:h-[calc(100%-7.5rem)]">
+            <MissionControlMap
+              activeTab="overview"
+              routeZoneId={routeZoneId}
+              workers={workersList}
+              bookings={bookingsList}
+              onZoneSelect={onSelectWarRoomZone}
+              highlightWorkerId={highlightedWorkerId}
+              className="h-full"
+            />
+          </div>
+        </section>
+
+        <aside className="min-h-0 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_20px_48px_-34px_rgba(15,23,42,0.18)]">
+          <div className="border-b border-slate-200 px-5 py-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Market Analytics
+                </p>
+                <h2 className="mt-2 text-[1.35rem] font-semibold tracking-tight text-slate-900">
+                  Market Analytics
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Zone posture, AI routing, and selected worker context in one clean decision surface.
+                </p>
+              </div>
+              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-700">
+                {zoneLabel}
+              </div>
+            </div>
+          </div>
+
+          <div className="mission-scrollbar h-auto overflow-y-visible p-5 xl:h-[calc(100%-7.5rem)] xl:overflow-y-auto">
+            <div className="space-y-5">
             <SuitePanel
               eyebrow="Zone Snapshot"
               title="Operational posture"
@@ -617,28 +697,44 @@ export function AdminWarRoomPage() {
               </div>
             </SuitePanel>
 
-            <SuitePanel
-              eyebrow="Search Focus"
-              title="Selected entity"
-              description="Command palette selections stay visible so the map and the sidebar tell the same story."
-              icon={Users}
-              surface="flat"
-            >
-              {highlightedWorker ? (
+            {!pitchMode ? (
+              <SuitePanel
+                eyebrow="Search Focus"
+                title="Selected entity"
+                description="Command palette selections stay visible so the map and the sidebar tell the same story."
+                icon={Users}
+                surface="flat"
+              >
+                {highlightedWorker ? (
+                  <div className="space-y-3">
+                    <SignalRow label="Worker" value={highlightedWorker.name || "Unnamed"} tone="emerald" />
+                    <SignalRow label="Role" value={String(highlightedWorker.profession || highlightedWorker.service || "Field ops")} tone="sky" />
+                    <SignalRow label="Trace" value={String(highlightedWorker._id || highlightedWorker.id || "No ID")} tone="navy" />
+                  </div>
+                ) : (
+                  <p className="text-sm leading-6 text-slate-600">
+                    Use <span className="font-bold text-slate-900">Ctrl/Cmd + K</span> to jump to Chandigarh, Chennai, Kolkata, New Delhi, or a specific worker record.
+                  </p>
+                )}
+              </SuitePanel>
+            ) : (
+              <SuitePanel
+                eyebrow="Expansion Read"
+                title="Presentation cues"
+                description="Pitch Mode keeps the route centered on geography, unit economics, and the next market jump."
+                icon={Globe2}
+                surface="flat"
+              >
                 <div className="space-y-3">
-                  <SignalRow label="Worker" value={highlightedWorker.name || "Unnamed"} tone="emerald" />
-                  <SignalRow label="Role" value={String(highlightedWorker.profession || highlightedWorker.service || "Field ops")} tone="sky" />
-                  <SignalRow label="Trace" value={String(highlightedWorker._id || highlightedWorker.id || "No ID")} tone="navy" />
+                  <SignalRow label="Primary reveal" value={zoneLabel} tone="navy" />
+                  <SignalRow label="Next leap" value="New Delhi or Chandigarh" tone="sky" />
+                  <SignalRow label="Narrative" value="Density -> Yield -> Expansion" tone="emerald" />
                 </div>
-              ) : (
-                <p className="text-sm leading-6 text-slate-600">
-                  Use <span className="font-bold text-slate-900">Ctrl/Cmd + K</span> to jump to Chandigarh, Chennai, Kolkata, New Delhi, or a specific worker record.
-                </p>
-              )}
-            </SuitePanel>
+              </SuitePanel>
+            )}
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
 
       <section className="xl:col-span-2 min-h-0 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_20px_48px_-34px_rgba(15,23,42,0.18)]">
         <div className="grid h-full gap-0 xl:grid-cols-[minmax(0,1.18fr)_minmax(22rem,0.82fr)]">
@@ -646,13 +742,13 @@ export function AdminWarRoomPage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                  Actionable Insights
+                  Operational Recommendations
                 </p>
                 <h3 className="mt-2 text-[1.35rem] font-semibold tracking-tight text-slate-900">
-                  Expansion playbook lane
+                  AI copilot recommendation lane
                 </h3>
                 <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-                  This bottom lane is the executive action strip: strategy, AI posture, and modeled financial discipline sit here without interrupting the map.
+                  This bottom lane keeps strategy, financial posture, and the verified audit trail in one calm recommendation strip beneath the map.
                 </p>
               </div>
               <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-700">
@@ -705,50 +801,73 @@ export function AdminWarRoomPage() {
             </div>
           </div>
 
-          <div className="grid min-h-0 gap-0 md:grid-cols-2 xl:grid-cols-1">
-            <div className="min-h-0 border-b border-slate-200 p-5 xl:min-h-[13rem]">
+          {pitchMode ? (
+            <div className="p-5">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Verified Audit Trail
+                Pitch Summary
               </p>
               <h3 className="mt-2 text-[1.1rem] font-semibold tracking-tight text-slate-900">
-                Live operating events
+                Executive expansion read
               </h3>
-              <div className="mission-scrollbar mt-4 h-[calc(100%-4.2rem)] overflow-y-auto">
-                <div className="space-y-3 pr-1">
-                  {activities.slice(0, 6).map((entry, index) => (
-                    <FeedItem
-                      key={`${entry.msg}-${entry.time}-${index}`}
-                      tag={entry.role || "Ops"}
-                      tone={entry.type === "booking" ? "sky" : "emerald"}
-                      message={entry.msg}
-                      note={entry.time}
-                    />
-                  ))}
-                </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <MetricTile label="7D revenue" value={`INR ${sevenDayRevenue.toLocaleString("en-IN")}`} tone="navy" />
+                <MetricTile label="Platform yield" value={`INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")}`} tone={yieldSnapshot.netProfitPerJob >= 0 ? "emerald" : "amber"} />
+                <MetricTile label="Active fleet" value={`${activeWorkerRate}%`} tone="emerald" />
+                <MetricTile label="Cloud status" value={llmMode === "ready" ? "Ready" : "Fallback"} tone={llmMode === "ready" ? "sky" : "amber"} />
+              </div>
+              <div className="mt-4 space-y-3">
+                <FeedItem tag="Narrative" tone="navy" message={`${zoneLabel} is ready for the map -> yield -> expansion story without exposing the low-level audit stream.`} />
+                <FeedItem tag="Economics" tone="amber" message={`Current platform yield is INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")} per job with pending payouts at INR ${pendingPayouts.toLocaleString("en-IN")}.`} />
+                <FeedItem tag="Expansion" tone="emerald" message="Use the command search to jump into Chandigarh or New Delhi once the Agra baseline is established." />
               </div>
             </div>
+          ) : (
+            <div className="grid min-h-0 gap-0 md:grid-cols-2 xl:grid-cols-1">
+              <div className="min-h-0 border-b border-slate-200 p-5 xl:min-h-[13rem]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Verified Audit Trail
+                </p>
+                <h3 className="mt-2 text-[1.1rem] font-semibold tracking-tight text-slate-900">
+                  Live operating events
+                </h3>
+                <div className="mission-scrollbar mt-4 h-[calc(100%-4.2rem)] overflow-y-auto">
+                  <div className="space-y-3 pr-1">
+                    {activities.slice(0, 6).map((entry, index) => (
+                      <FeedItem
+                        key={`${entry.msg}-${entry.time}-${index}`}
+                        tag={entry.role || "Ops"}
+                        tone={entry.type === "booking" ? "sky" : "emerald"}
+                        message={entry.msg}
+                        note={entry.time}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
 
-            <div className="min-h-0 p-5 xl:min-h-[13rem]">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Executive Metrics
-              </p>
-              <h3 className="mt-2 text-[1.1rem] font-semibold tracking-tight text-slate-900">
-                Business and delivery health
-              </h3>
-              <div className="mission-scrollbar mt-4 h-[calc(100%-4.2rem)] overflow-y-auto">
-                <div className="grid gap-3 pr-1 sm:grid-cols-2">
-                  <MetricTile label="Latency" value={`${channelLatencyMs} ms`} tone="sky" />
-                  <MetricTile label="Active fleet" value={`${activeWorkerRate}%`} tone="emerald" />
-                  <MetricTile label="7D revenue" value={`INR ${sevenDayRevenue.toLocaleString("en-IN")}`} tone="navy" />
-                  <MetricTile label="7D flow" value={`${sevenDayBookings.toLocaleString("en-IN")} jobs`} tone="sky" />
-                  <MetricTile label="Secure uploads" value={healthSnapshot?.media?.secureUploadsReady ? "Ready" : "Fallback"} tone={healthSnapshot?.media?.secureUploadsReady ? "emerald" : "amber"} />
-                  <MetricTile label="Cloud mode" value={llmMode === "ready" ? "Live" : "Fallback"} tone={llmMode === "ready" ? "emerald" : "amber"} />
+              <div className="min-h-0 p-5 xl:min-h-[13rem]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Executive Metrics
+                </p>
+                <h3 className="mt-2 text-[1.1rem] font-semibold tracking-tight text-slate-900">
+                  Business and delivery health
+                </h3>
+                <div className="mission-scrollbar mt-4 h-[calc(100%-4.2rem)] overflow-y-auto">
+                  <div className="grid gap-3 pr-1 sm:grid-cols-2">
+                    <MetricTile label="Latency" value={`${channelLatencyMs} ms`} tone="sky" />
+                    <MetricTile label="Active fleet" value={`${activeWorkerRate}%`} tone="emerald" />
+                    <MetricTile label="7D revenue" value={`INR ${sevenDayRevenue.toLocaleString("en-IN")}`} tone="navy" />
+                    <MetricTile label="7D flow" value={`${sevenDayBookings.toLocaleString("en-IN")} jobs`} tone="sky" />
+                    <MetricTile label="Secure uploads" value={healthSnapshot?.media?.secureUploadsReady ? "Ready" : "Fallback"} tone={healthSnapshot?.media?.secureUploadsReady ? "emerald" : "amber"} />
+                    <MetricTile label="Cloud mode" value={llmMode === "ready" ? "Live" : "Fallback"} tone={llmMode === "ready" ? "emerald" : "amber"} />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
+      </div>
     </div>
   );
 }
@@ -908,7 +1027,7 @@ export function AdminWorkforcePage() {
 }
 
 export function AdminFinancePage() {
-  const { stats, bookingsList, investorSummary } = useAdminShellContext();
+  const { stats, bookingsList, investorSummary, pitchMode } = useAdminShellContext();
 
   const completed = bookingsList.filter((booking) => booking.status === "completed" && booking.total_price);
   const matchedOrInProgress = bookingsList.filter((booking) => booking.status === "in_progress" || booking.status === "matched");
@@ -1061,28 +1180,43 @@ export function AdminFinancePage() {
         </SuitePanel>
       </section>
 
-      <DataTable
-        title="FINANCIAL LEDGER"
-        description="Completed transactions with commission visibility."
-        columns={[
-          { key: "id", label: "Txn ID", render: (value) => <span className="font-semibold text-slate-900">#{value}</span> },
-          { key: "service", label: "Service", render: (value) => <span className="text-slate-700">{value}</span> },
-          { key: "amount", label: "Amount", render: (value) => <span className="font-semibold text-slate-900">INR {Number(value).toLocaleString("en-IN")}</span> },
-          { key: "commission", label: "Commission", render: (value) => <span className="font-semibold text-emerald-700">INR {Number(value).toLocaleString("en-IN")}</span> },
-          {
-            key: "status",
-            label: "Status",
-            render: (value) => (
-              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-                {value}
-              </span>
-            ),
-          },
-        ]}
-        data={transactionData.length > 0 ? transactionData : [{ id: "TXN-0001", service: "No settled jobs yet", amount: 0, commission: 0, status: "waiting" }]}
-        viewportClassName="max-h-[28rem] overflow-auto"
-        hideFooter
-      />
+      {pitchMode ? (
+        <SuitePanel
+          eyebrow="Pitch Narrative"
+          title="Presentation mode is hiding the raw ledger."
+          description="The finance route is now focused on yield, service concentration, and the margin story. Re-enable full operations mode to inspect transaction-level evidence."
+          icon={Wallet}
+        >
+          <div className="space-y-3">
+            <FeedItem tag="Yield" tone={netProfitPerJob >= 0 ? "emerald" : "amber"} message={`Platform yield is currently INR ${netProfitPerJob.toLocaleString("en-IN")} per completed job.`} />
+            <FeedItem tag="Commission" tone="navy" message={`Total platform commission is INR ${totalCommission.toLocaleString("en-IN")} with an average ticket of INR ${avgTicket.toLocaleString("en-IN")}.`} />
+            <FeedItem tag="Cash" tone="amber" message={`Pending payouts remain visible at INR ${pendingPayouts.toLocaleString("en-IN")} so the investor story stays grounded in real operating cash movement.`} />
+          </div>
+        </SuitePanel>
+      ) : (
+        <DataTable
+          title="FINANCIAL LEDGER"
+          description="Completed transactions with commission visibility."
+          columns={[
+            { key: "id", label: "Txn ID", render: (value) => <span className="font-semibold text-slate-900">#{value}</span> },
+            { key: "service", label: "Service", render: (value) => <span className="text-slate-700">{value}</span> },
+            { key: "amount", label: "Amount", render: (value) => <span className="font-semibold text-slate-900">INR {Number(value).toLocaleString("en-IN")}</span> },
+            { key: "commission", label: "Commission", render: (value) => <span className="font-semibold text-emerald-700">INR {Number(value).toLocaleString("en-IN")}</span> },
+            {
+              key: "status",
+              label: "Status",
+              render: (value) => (
+                <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
+                  {value}
+                </span>
+              ),
+            },
+          ]}
+          data={transactionData.length > 0 ? transactionData : [{ id: "TXN-0001", service: "No settled jobs yet", amount: 0, commission: 0, status: "waiting" }]}
+          viewportClassName="max-h-[28rem] overflow-auto"
+          hideFooter
+        />
+      )}
     </ScrollPage>
   );
 }
@@ -1097,18 +1231,21 @@ export function AdminObservabilityPage() {
     healthSnapshot,
     channelLatencyMs,
     activeWorkerRate,
+    routeZoneId,
     zoneLabel,
     activities,
     llmMode,
     llmSummary,
     pendingPayouts,
+    averageTicket,
     sevenDayBookings,
     sevenDayRevenue,
+    pitchMode,
     onSelectTool,
   } = useAdminShellContext();
 
   const prioritizedIssues = useMemo(() => (
-    [...issueSeeds].sort((left, right) => severityWeight[right.code] - severityWeight[left.code])
+    [...ADMIN_OBSERVABILITY_ISSUES].sort((left, right) => ADMIN_ISSUE_SEVERITY_WEIGHT[right.code] - ADMIN_ISSUE_SEVERITY_WEIGHT[left.code])
   ), []);
 
   const primaryIssue = prioritizedIssues[0];
@@ -1138,7 +1275,8 @@ export function AdminObservabilityPage() {
   ];
 
   return (
-    <ScrollPage>
+    <>
+      <ScrollPage>
       <section className="grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
         <SuitePanel
           eyebrow="Observability"
@@ -1185,7 +1323,41 @@ export function AdminObservabilityPage() {
         </SuitePanel>
       </section>
 
-      {currentObservabilityPanel === "system-health" ? (
+      {pitchMode ? (
+        <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+          <SuitePanel
+            eyebrow="Pitch Safe Observability"
+            title="Only high-impact assurance signals stay visible."
+            description="Presentation mode keeps the conversation on resilience, trust, and financial protection instead of low-level operator telemetry."
+            icon={AlertCircle}
+          >
+            <div className="space-y-3">
+              <SignalRow label="Critical incidents" value={String(criticalIssueCount)} tone={criticalIssueCount > 0 ? "amber" : "emerald"} />
+              <SignalRow label="Top escalation" value={primaryIssue?.code.replaceAll("_", " ") || "No active incidents"} tone={primaryIssue?.severity === "critical" ? "amber" : "emerald"} />
+              <SignalRow label="Primary exposure" value={primaryIssue?.impact || "Trust and revenue are stable"} tone={primaryIssue?.severity === "critical" ? "amber" : "emerald"} />
+              <SignalRow label="Recommended action" value={primaryIssue?.recommendedAction || "Monitor only"} tone="navy" />
+            </div>
+          </SuitePanel>
+
+          <SuitePanel
+            eyebrow="Platform Assurance"
+            title="Readiness without the console noise"
+            description="This lane keeps only the proof points an investor cares about: uptime, secure media, intelligence readiness, and cash protection."
+            icon={ShieldCheck}
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricTile label="Secure uploads" value={healthSnapshot?.media?.secureUploadsReady ? "Ready" : "Fallback"} tone={healthSnapshot?.media?.secureUploadsReady ? "emerald" : "amber"} />
+              <MetricTile label="Cloud mode" value={llmMode === "ready" ? "Live" : "Fallback"} tone={llmMode === "ready" ? "sky" : "amber"} />
+              <MetricTile label="Latency" value={`${channelLatencyMs} ms`} tone="navy" />
+              <MetricTile label="Pending payouts" value={`INR ${pendingPayouts.toLocaleString("en-IN")}`} tone="amber" />
+            </div>
+            <div className="mt-4 space-y-3">
+              <FeedItem tag="Audit" tone="emerald" message="Low-level logs and API telemetry are muted in Pitch Mode. Switch back to operations mode for full incident forensics." />
+              <FeedItem tag="Revenue" tone="amber" message={`The route is still grounded in live exposure: ${sevenDayBookings.toLocaleString("en-IN")} jobs moved INR ${sevenDayRevenue.toLocaleString("en-IN")} over the last seven days.`} />
+            </div>
+          </SuitePanel>
+        </section>
+      ) : currentObservabilityPanel === "system-health" ? (
         <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
           <SuitePanel
             eyebrow="System Health"
@@ -1264,7 +1436,7 @@ export function AdminObservabilityPage() {
                       )}
                     </div>
                     <span className="text-xs font-medium text-slate-500">
-                      Weight {severityWeight[issue.code]}
+                      Weight {ADMIN_ISSUE_SEVERITY_WEIGHT[issue.code]}
                     </span>
                   </div>
                   <p className="mt-3 text-sm font-semibold leading-6 text-slate-900">
@@ -1361,7 +1533,27 @@ export function AdminObservabilityPage() {
           </SuitePanel>
         </section>
       ) : null}
-    </ScrollPage>
+      </ScrollPage>
+
+      {!pitchMode ? (
+        <ObservabilityCopilotBubble
+          currentPanel={currentObservabilityPanel}
+          routeZoneId={routeZoneId}
+          zoneLabel={zoneLabel}
+          llmMode={llmMode}
+          llmSummary={llmSummary}
+          healthSnapshot={healthSnapshot}
+          latencyMs={channelLatencyMs}
+          activeWorkerRate={activeWorkerRate}
+          averageTicket={averageTicket}
+          pendingPayouts={pendingPayouts}
+          sevenDayBookings={sevenDayBookings}
+          sevenDayRevenue={sevenDayRevenue}
+          issues={prioritizedIssues}
+          activities={activities}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -1420,6 +1612,240 @@ export function AdminLegacyRedirect({
   }
 
   return <Navigate to={buildObservabilityPath(kind)} replace />;
+}
+
+function ObservabilityCopilotBubble({
+  currentPanel,
+  routeZoneId,
+  zoneLabel,
+  llmMode,
+  llmSummary,
+  healthSnapshot,
+  latencyMs,
+  activeWorkerRate,
+  averageTicket,
+  pendingPayouts,
+  sevenDayBookings,
+  sevenDayRevenue,
+  issues,
+  activities,
+}: {
+  currentPanel: AdminObservabilityPanel;
+  routeZoneId: string;
+  zoneLabel: string;
+  llmMode: "ready" | "fallback";
+  llmSummary: string;
+  healthSnapshot: ReturnType<typeof useAdminShellContext>["healthSnapshot"];
+  latencyMs: number;
+  activeWorkerRate: number;
+  averageTicket: number;
+  pendingPayouts: number;
+  sevenDayBookings: number;
+  sevenDayRevenue: number;
+  issues: ObservabilityIssue[];
+  activities: Array<{ type?: string; msg: string; time: string; role?: string }>;
+}) {
+  const navigate = useNavigate();
+  const [isOpen, setIsOpen] = useState(false);
+  const [question, setQuestion] = useState("What are the most urgent system failures right now?");
+  const [isLoading, setIsLoading] = useState(false);
+  const [response, setResponse] = useState<AdminCopilotReply | null>(null);
+  const [hasPrimed, setHasPrimed] = useState(false);
+
+  const criticalIssues = useMemo(
+    () => issues.filter((issue) => issue.severity === "critical").slice(0, 3),
+    [issues],
+  );
+
+  const askCopilot = async (message: string) => {
+    const trimmed = message.trim();
+    if (!trimmed || isLoading) return;
+
+    const token = localStorage.getItem("adminToken");
+    if (!token) {
+      toast.error("Admin authentication is required before using the copilot.");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const fetchResponse = await fetch(`${API}/admin/copilot`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          message: trimmed,
+          currentRoute: `/admin-portal-2026/observability/${currentPanel}`,
+          providerPreference: "groq",
+          systemContext: {
+            currentMission: "observability",
+            currentObservabilityPanel: currentPanel,
+            currentZoneId: routeZoneId || DEFAULT_WAR_ROOM_ZONE,
+            zoneLabel,
+            globalUptime: healthSnapshot?.status === "ok" ? "99.90%" : "Watch",
+            latencyMs,
+            llmMode,
+            llmSummary,
+            activeWorkerRate,
+            activeBugs: issues.filter((issue) => issue.severity === "critical").length,
+            pendingPayouts,
+            averageTicket,
+            sevenDayBookings,
+            sevenDayRevenue,
+            healthSnapshot,
+          },
+          issues: issues.slice(0, 8).map((issue) => ({
+            code: issue.code,
+            domain: issue.domain,
+            severity: issue.severity,
+            message: issue.message,
+            impact: issue.impact,
+            recommendedAction: issue.recommendedAction,
+          })),
+          auditTrail: activities.slice(0, 8).map((entry) => ({
+            source: entry.role || entry.type || "audit",
+            severity: entry.type === "error" ? "critical" : "info",
+            message: entry.msg,
+            time: entry.time,
+          })),
+        }),
+      });
+
+      const payload = await fetchResponse.json();
+      if (!fetchResponse.ok) {
+        throw new Error(payload.message || payload.detail || "Copilot request failed");
+      }
+
+      setResponse(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Copilot request failed";
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen || hasPrimed) return;
+
+    setHasPrimed(true);
+    void askCopilot("What are the most urgent system failures right now, and which admin route should I inspect next?");
+  }, [hasPrimed, isOpen]);
+
+  return (
+    <div className="pointer-events-none fixed bottom-6 right-6 z-30">
+      {isOpen ? (
+        <div className="pointer-events-auto w-[22rem] overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_28px_64px_-28px_rgba(15,23,42,0.26)]">
+          <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">AI Copilot</p>
+              <h3 className="mt-2 text-base font-semibold text-slate-900">High-impact incident guide</h3>
+              <p className="mt-1 text-sm text-slate-600">Loaded with critical failures and the latest audit rail.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="space-y-4 px-5 py-4">
+            <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Critical queue</p>
+              <div className="mt-3 space-y-2">
+                {criticalIssues.map((issue) => (
+                  <div key={issue.id} className="flex items-start gap-2 text-sm text-slate-700">
+                    <span className="mt-1 h-2 w-2 rounded-full bg-rose-500" />
+                    <span>{issue.code.replaceAll("_", " ")}: {issue.domain}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {response ? (
+              <div className="rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-sm">
+                <p className="text-sm leading-7 text-slate-700">{response.reply}</p>
+                {response.auditHighlights?.length ? (
+                  <div className="mt-3 space-y-2">
+                    {response.auditHighlights.slice(0, 3).map((highlight, index) => (
+                      <p key={`${highlight}-${index}`} className="text-xs leading-6 text-slate-500">
+                        {highlight}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">
+                    {response.confidence || "medium"} confidence
+                  </span>
+                  {response.provider ? (
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600">
+                      {response.provider}
+                    </span>
+                  ) : null}
+                </div>
+                {response.navigationTarget ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(response.navigationTarget || buildObservabilityPath("bug-monitor"))}
+                    className="mt-4 inline-flex items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white transition hover:bg-slate-800"
+                  >
+                    Open suggested route
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-[18px] border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm leading-7 text-slate-600">
+                Ask why the current failures matter, what is inference versus proof, or which admin route should be inspected next.
+              </div>
+            )}
+
+            <div className="rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-sm">
+              <textarea
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                rows={3}
+                className="w-full resize-none border-none bg-transparent text-sm leading-6 text-slate-700 outline-none"
+                placeholder="Ask about the current issue queue or the next route to inspect."
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => void askCopilot("What is the most urgent incident, and what should the operator do first?")}
+                  className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-600 transition hover:bg-slate-100"
+                >
+                  Explain failures
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void askCopilot(question)}
+                  disabled={isLoading || question.trim().length === 0}
+                  className="inline-flex items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SendHorizontal className="h-3.5 w-3.5" />}
+                  Ask copilot
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <button
+        type="button"
+        onClick={() => setIsOpen(true)}
+        className="pointer-events-auto ml-auto inline-flex h-14 w-14 items-center justify-center rounded-full border border-slate-900 bg-slate-900 text-white shadow-[0_22px_44px_-24px_rgba(15,23,42,0.38)] transition hover:bg-slate-800"
+      >
+        <MessageSquare className="h-5 w-5" />
+      </button>
+    </div>
+  );
 }
 
 function ScrollPage({ children }: { children: ReactNode }) {

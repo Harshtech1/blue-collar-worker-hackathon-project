@@ -4149,7 +4149,7 @@ function CommandCenterMotionStyles() {
       }
 
       .rahi-command-map .leaflet-tile {
-        filter: saturate(0.72) contrast(1.08) brightness(0.82);
+        filter: saturate(0.76) contrast(1.08) brightness(0.86);
       }
 
       .rahi-command-map .leaflet-control-zoom a {
@@ -4174,6 +4174,66 @@ function CommandCenterMotionStyles() {
 
       .rahi-map-tooltip::before {
         border-top-color: rgba(2, 6, 23, 0.9) !important;
+      }
+
+      .rahi-zone-label-wrapper {
+        background: transparent;
+        border: 0;
+      }
+
+      .rahi-zone-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.42rem;
+        padding: 0.38rem 0.72rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255,255,255,0.82);
+        background: rgba(248, 250, 252, 0.9);
+        box-shadow: 0 12px 28px -18px rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(12px);
+        white-space: nowrap;
+      }
+
+      .rahi-zone-label--primary {
+        border-color: rgba(129, 140, 248, 0.88);
+        box-shadow: 0 16px 36px -20px rgba(79, 70, 229, 0.42);
+      }
+
+      .rahi-zone-label__name {
+        color: #0f172a;
+        font: 700 11px/1 ${mapLabelFont};
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        text-shadow:
+          0 0 1px rgba(255,255,255,0.96),
+          0 1px 0 rgba(255,255,255,0.8);
+      }
+
+      .rahi-zone-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 22px;
+        padding: 0 0.6rem;
+        border-radius: 999px;
+        font: 700 10px/1 ${mapLabelFont};
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .rahi-zone-badge--healthy {
+        background: rgba(16, 185, 129, 0.16);
+        color: #047857;
+      }
+
+      .rahi-zone-badge--surge {
+        background: rgba(245, 158, 11, 0.18);
+        color: #b45309;
+      }
+
+      .rahi-zone-badge--critical {
+        background: rgba(244, 63, 94, 0.16);
+        color: #be123c;
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -4427,7 +4487,15 @@ function LensCard({ title, body, icon: Icon }: { title: string; body: string; ic
   );
 }
 
-function CommandMapView({ center, zoom }: { center: [number, number]; zoom: number }) {
+function CommandMapView({
+  center,
+  zoom,
+  onViewportChange,
+}: {
+  center: [number, number];
+  zoom: number;
+  onViewportChange?: (telemetry: CommandViewportTelemetry) => void;
+}) {
   const map = useMap();
 
   useEffect(() => {
@@ -4445,6 +4513,23 @@ function CommandMapView({ center, zoom }: { center: [number, number]; zoom: numb
       easeLinearity: 0.28,
     });
   }, [center, map, zoom]);
+
+  useMapEvents({
+    moveend(event) {
+      const liveCenter = event.target.getCenter();
+      onViewportChange?.({
+        center: [liveCenter.lat, liveCenter.lng],
+        zoom: event.target.getZoom(),
+      });
+    },
+    zoomend(event) {
+      const liveCenter = event.target.getCenter();
+      onViewportChange?.({
+        center: [liveCenter.lat, liveCenter.lng],
+        zoom: event.target.getZoom(),
+      });
+    },
+  });
 
   return null;
 }

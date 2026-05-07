@@ -53,6 +53,7 @@ interface MissionControlMapProps {
   bookings: MissionControlBooking[];
   onZoneSelect?: (zoneId: string) => void;
   highlightWorkerId?: string | null;
+  variant?: "full" | "lite";
   className?: string;
 }
 
@@ -186,8 +187,10 @@ export function MissionControlMap({
   bookings,
   onZoneSelect,
   highlightWorkerId,
+  variant = "full",
   className,
 }: MissionControlMapProps) {
+  const isLite = variant === "lite";
   const agraZoneAnchors = useMemo(() => buildZoneAnchors(), []);
   const selectedGlobalCity = useMemo(
     () => GLOBAL_SIMULATION_CITIES.find((city) => city.id === routeZoneId) || null,
@@ -319,7 +322,9 @@ export function MissionControlMap({
   );
 
   const activePressureColor = "#0F172A";
-  const defaultZoom = usingGlobalCityScope ? 11.4 : 12.6;
+  const defaultZoom = usingGlobalCityScope
+    ? (isLite ? 10.8 : 11.4)
+    : (isLite ? 11.8 : 12.6);
   const [viewportTelemetry, setViewportTelemetry] = useState<ViewportTelemetry>({
     center: highlightedZone.center,
     zoom: defaultZoom,
@@ -414,16 +419,17 @@ export function MissionControlMap({
   }, [highlightedZone.city, selectedGlobalCity]);
 
   return (
-    <div className={cn("relative h-full w-full overflow-hidden rounded-[1.35rem] border-2 border-slate-200 bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.18)]", className)}>
+    <div className={cn("relative w-full h-full min-h-[450px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.18)]", className)}>
       <style>{`
         .rahi-map-shell .leaflet-container {
           background: #f8fafc;
           height: 100%;
+          min-height: 400px;
           width: 100%;
         }
 
         .rahi-map-shell .leaflet-tile-pane {
-          filter: contrast(1.06) brightness(0.96) saturate(0.9);
+          filter: contrast(1.02) brightness(0.98) saturate(0.94);
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -503,15 +509,15 @@ export function MissionControlMap({
 
       `}</style>
 
-      <div className="rahi-map-shell absolute inset-0">
+      <div className="rahi-map-shell absolute inset-0 min-h-[450px]">
         <MapContainer
           center={highlightedZone.center}
           zoom={defaultZoom}
           preferCanvas
           zoomControl={false}
           attributionControl={false}
-          scrollWheelZoom
-          style={{ height: "100%", width: "100%" }}
+          scrollWheelZoom={!isLite}
+          style={{ height: "100%", width: "100%", minHeight: "400px" }}
         >
           <MissionViewport
             center={highlightedZone.center}
@@ -519,8 +525,12 @@ export function MissionControlMap({
             onViewportChange={setViewportTelemetry}
           />
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-            attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            attribution="Tiles &copy; Esri"
+          />
+          <TileLayer
+            url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places_Alternate/MapServer/tile/{z}/{y}/{x}"
+            attribution="Labels &copy; Esri"
           />
 
           <Pane name="sector-boxes" style={{ zIndex: 418 }}>
@@ -701,9 +711,11 @@ export function MissionControlMap({
         <div className="absolute left-4 top-4 rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_14px_32px_-20px_rgba(15,23,42,0.22)]">
           {marketBadgeLabel}
         </div>
-        <div className="absolute bottom-4 right-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
-          LAT {viewportTelemetry.center[0].toFixed(4)} | LNG {viewportTelemetry.center[1].toFixed(4)} | ALT {coordinateAltitude} | Z {viewportTelemetry.zoom.toFixed(1)}
-        </div>
+        {!isLite ? (
+          <div className="absolute bottom-4 right-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
+            LAT {viewportTelemetry.center[0].toFixed(4)} | LNG {viewportTelemetry.center[1].toFixed(4)} | ALT {coordinateAltitude} | Z {viewportTelemetry.zoom.toFixed(1)}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -719,6 +731,23 @@ function MissionViewport({
   onViewportChange: (telemetry: ViewportTelemetry) => void;
 }) {
   const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const observedNode = container.parentElement ?? container;
+
+    if (typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize();
+    });
+
+    observer.observe(observedNode);
+    return () => observer.disconnect();
+  }, [map]);
+
   useMapEvents({
     moveend() {
       const currentCenter = map.getCenter();
@@ -738,7 +767,24 @@ function MissionViewport({
 
   useEffect(() => {
     map.setView(center, zoom, { animate: true, duration: 2.5 });
-    onViewportChange({ center, zoom });
+    const syncViewport = () => {
+      map.invalidateSize();
+      const currentCenter = map.getCenter();
+      onViewportChange({
+        center: [Number(currentCenter.lat.toFixed(6)), Number(currentCenter.lng.toFixed(6))],
+        zoom: Number(map.getZoom().toFixed(2)),
+      });
+    };
+
+    const animationFrame = window.requestAnimationFrame(syncViewport);
+    const shortTimer = window.setTimeout(syncViewport, 180);
+    const entranceTimer = window.setTimeout(syncViewport, 420);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(shortTimer);
+      window.clearTimeout(entranceTimer);
+    };
   }, [center, map, onViewportChange, zoom]);
 
   return null;

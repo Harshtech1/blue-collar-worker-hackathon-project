@@ -84,6 +84,7 @@ export interface AdminShellContextValue {
   stats: AdminDashboardStats;
   loading: boolean;
   error: string;
+  pitchMode: boolean;
   routeZoneId: string;
   zoneLabel: string;
   currentMission: AdminMission;
@@ -111,6 +112,7 @@ export interface AdminShellContextValue {
   onSelectTool: (tool: AdminToolAction) => void;
   onSelectWarRoomZone: (zoneId: string) => void;
   onOpenVerificationDocument: (worker: any, type?: "aadhaar" | "pan") => void;
+  onTogglePitchMode: () => void;
 }
 
 export const useAdminShellContext = () => useOutletContext<AdminShellContextValue>();

@@ -12,6 +12,7 @@ import {
   Radar,
   Server,
   ShieldCheck,
+  Sparkles,
   UsersRound,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { API } from "@/lib/constants";
 import { toast } from "sonner";
 import { AdminSidebar } from "./components/AdminSidebar";
+import { AdminTechnicalCopilot } from "./components/AdminTechnicalCopilot";
 import {
   ADMIN_MISSION_LABELS,
   ADMIN_ROUTE_PREFIX,
@@ -45,6 +47,7 @@ import type {
 } from "./adminShellContext";
 
 const DEMO_ADMIN_TOKEN = "demo-admin-token";
+const ADMIN_PITCH_MODE_KEY = "adminPitchMode";
 
 const ADMIN_EMAIL_OPTIONS = [
   "rahiforbharat@gmail.com",
@@ -141,6 +144,7 @@ export default function AdminDashboard() {
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [pitchMode, setPitchMode] = useState(() => localStorage.getItem(ADMIN_PITCH_MODE_KEY) === "true");
 
   const [stats, setStats] = useState<AdminDashboardStats>(emptyStats);
   const [chartData, setChartData] = useState<Array<{ name: string; date?: string; bookings?: number; revenue?: number }>>([]);
@@ -524,6 +528,10 @@ export default function AdminDashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(ADMIN_PITCH_MODE_KEY, pitchMode ? "true" : "false");
+  }, [pitchMode]);
+
   const activeWorkersCount = useMemo(
     () => workersList.filter((worker) => worker.isAvailable || worker.status === "verified" || worker.status === "online").length,
     [workersList],
@@ -577,6 +585,9 @@ export default function AdminDashboard() {
   const handleWarRoomZoneSelect = useCallback((zoneId: string) => {
     navigate(buildWarRoomPath(zoneId));
   }, [navigate]);
+  const handlePitchModeToggle = useCallback(() => {
+    setPitchMode((current) => !current);
+  }, []);
 
   const topContextLabel = currentMission === "war-room"
     ? zoneLabel
@@ -589,6 +600,7 @@ export default function AdminDashboard() {
     stats,
     loading,
     error,
+    pitchMode,
     routeZoneId,
     zoneLabel,
     currentMission,
@@ -616,6 +628,7 @@ export default function AdminDashboard() {
     onSelectTool: handleToolSelection,
     onSelectWarRoomZone: handleWarRoomZoneSelect,
     onOpenVerificationDocument: handleViewVerificationDocument,
+    onTogglePitchMode: handlePitchModeToggle,
   }), [
     activities,
     activeWorkerRate,
@@ -629,6 +642,7 @@ export default function AdminDashboard() {
     error,
     globalUptime,
     handleMissionNavigation,
+    handlePitchModeToggle,
     handleTabNavigation,
     handleToolSelection,
     handleViewVerificationDocument,
@@ -639,6 +653,7 @@ export default function AdminDashboard() {
     loading,
     investorSummary,
     pendingPayouts,
+    pitchMode,
     routeZoneId,
     sevenDayBookings,
     sevenDayRevenue,
@@ -835,27 +850,48 @@ export default function AdminDashboard() {
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[9px] text-slate-600">
                     <BrainCircuit className="h-3 w-3 text-[#0F172A]" />
-                    {healthSnapshot?.deployment?.commit ? `COMMIT ${healthSnapshot.deployment.commit.slice(0, 7)}` : "COMMIT SYNCING"}
+                    {pitchMode
+                      ? "PITCH MODE ACTIVE"
+                      : healthSnapshot?.deployment?.commit
+                        ? `COMMIT ${healthSnapshot.deployment.commit.slice(0, 7)}`
+                        : "COMMIT SYNCING"}
                   </span>
                 </div>
                 <p className="mt-2 max-w-4xl text-[12px] text-slate-600">
-                  {llmMode === "ready"
+                  {pitchMode
+                    ? "Pitch Mode is simplifying the suite for presentations by foregrounding growth, unit economics, and expansion signals while muting low-level operator chatter."
+                    : llmMode === "ready"
                     ? missionNarratives[currentMission]
                     : "Cloud reasoning is degraded, but local fallback guidance is still steering the active shell."}
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handlePitchModeToggle}
+                  className={cn(
+                    "inline-flex min-h-10 items-center gap-2 rounded-full border px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] transition",
+                    pitchMode
+                      ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900",
+                  )}
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {pitchMode ? "Pitch Mode On" : "Pitch Mode Off"}
+                </button>
                 <HudTickerItem icon={Globe2} label="Mission" value={ADMIN_MISSION_LABELS[currentMission].toUpperCase()} tone="indigo" />
                 <HudTickerItem icon={Globe2} label="Uptime" value={globalUptime} tone="emerald" />
                 <HudTickerItem icon={Clock3} label="Latency" value={`${channelLatencyMs}ms`} tone="sky" />
                 <HudTickerItem icon={UsersRound} label="Active Fleet" value={`${activeWorkerRate}%`} tone="indigo" />
-                <HudTickerItem
-                  icon={Server}
-                  label="Cloud Engine"
-                  value={llmMode === "ready" ? "READY" : "FALLBACK"}
-                  tone={llmMode === "ready" ? "emerald" : "amber"}
-                />
+                {!pitchMode ? (
+                  <HudTickerItem
+                    icon={Server}
+                    label="Cloud Engine"
+                    value={llmMode === "ready" ? "READY" : "FALLBACK"}
+                    tone={llmMode === "ready" ? "emerald" : "amber"}
+                  />
+                ) : null}
               </div>
             </div>
           </div>
@@ -869,6 +905,8 @@ export default function AdminDashboard() {
           </div>
         </main>
       </div>
+
+      {!pitchMode ? <AdminTechnicalCopilot shellContext={shellContext} /> : null}
 
       <Dialog open={verificationViewerOpen} onOpenChange={setVerificationViewerOpen}>
         <DialogContent className="max-w-4xl border border-slate-200 bg-white text-slate-900 shadow-[0_32px_90px_-44px_rgba(15,23,42,0.24)]">
