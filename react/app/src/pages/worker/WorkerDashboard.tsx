@@ -46,9 +46,7 @@ import {
 } from '@/lib/upload';
 import { API_ROOT } from '@/lib/constants';
 
-
-
-
+const formatMonthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
 const WorkerDashboard = () => {
   const navigate = useNavigate();
@@ -72,6 +70,7 @@ const WorkerDashboard = () => {
   const [secureMediaError, setSecureMediaError] = useState<string | null>(null);
   const [mediaLayerReady, setMediaLayerReady] = useState<boolean | null>(null);
   const uploadNoticeToastRef = useRef<string | number | null>(null);
+  const isOtpReady = otp.length === 4 || otp.length === 6;
   
   const [selectedChatJob, setSelectedChatJob] = useState<any>(null);
   const currentUserId = user?._id || localStorage.getItem('userId') || '';
@@ -133,9 +132,8 @@ const WorkerDashboard = () => {
     if (!user) return;
     try {
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
       
-      const res = await fetch(`${API_BASE}/api/notifications?limit=5`, {
+      const res = await fetch(`${API_ROOT}/api/notifications?limit=5`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -144,7 +142,7 @@ const WorkerDashboard = () => {
       }
 
       // Fetch Real-Time Earnings Stats
-      const statsRes = await fetch(`${API_BASE}/api/worker/stats`, {
+      const statsRes = await fetch(`${API_ROOT}/api/worker/stats`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (statsRes.ok) {
@@ -156,24 +154,43 @@ const WorkerDashboard = () => {
     }
   };
 
+  const isSameDay = (value: string | null | undefined, target: Date) => {
+    if (!value) return false;
+    const parsed = new Date(value);
+    return !isNaN(parsed.getTime()) && parsed.toDateString() === target.toDateString();
+  };
+
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  const scheduledJobs = allJobs.filter(j => j.status !== 'cancelled');
+  const completedScheduledJobs = allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid');
+  const paidJobs = allJobs.filter(j => j.paymentStatus === 'paid');
+  const todayJobsCount = scheduledJobs.filter(j => isSameDay(j.scheduled_at || j.created_at, today)).length;
+  const yesterdayJobsCount = scheduledJobs.filter(j => isSameDay(j.scheduled_at || j.created_at, yesterday)).length;
+  const earningsToday = paidJobs
+    .filter(j => isSameDay(j.updated_at || j.created_at, today))
+    .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0);
+  const earningsYesterday = paidJobs
+    .filter(j => isSameDay(j.updated_at || j.created_at, yesterday))
+    .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0);
+  const totalScheduledJobs = scheduledJobs.length;
+  const completionPercent = totalScheduledJobs > 0
+    ? Math.min(100, Math.round((completedScheduledJobs.length / totalScheduledJobs) * 100))
+    : 0;
+  const earningsTrendPercent = Math.round(((earningsToday - earningsYesterday) / (earningsYesterday || 1)) * 100);
+  const earningsTrendLabel = `${earningsTrendPercent > 0 ? '+' : ''}${earningsTrendPercent}%`;
+  const earningsTrendPositive = earningsTrendPercent >= 0;
+
   // Dynamic Stats combining real API aggregation with active frontend state
   const stats = {
-    todayJobs: allJobs.filter(j => {
-      const today = new Date().toDateString();
-      const jobDate = j.scheduled_at ? new Date(j.scheduled_at).toDateString() : new Date(j.created_at).toDateString();
-      return jobDate === today;
-    }).length,
-    completedJobs: apiStats.totalCompleted || allJobs.filter(j => j.status === 'completed' || j.paymentStatus === 'paid').length, 
+    todayJobs: todayJobsCount,
+    completedJobs: apiStats.totalCompleted || completedScheduledJobs.length, 
     pendingJobs: pendingJobs.length + allJobs.filter(j => j.status === 'pending').length,
     activeJobsCount: apiStats.activeJobs || allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length,
     upcomingJobs: allJobs.filter(j => ['accepted', 'arriving', 'otp_verify', 'in_progress'].includes(j.status)).length + pendingJobs.length,
-    earningsToday: allJobs
-      .filter(j => (j.paymentStatus === 'paid'))
-      .filter(j => {
-        const date = new Date(j.updated_at || j.created_at);
-        return !isNaN(date.getTime()) && date.toDateString() === new Date().toDateString();
-      })
-      .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0),
+    earningsToday,
     totalEarnings: apiStats.totalEarnings || allJobs
       .filter(j => (j.paymentStatus === 'paid'))
       .reduce((sum, j) => sum + (j.worker_earning || j.total_price || 0), 0)
@@ -187,22 +204,30 @@ const WorkerDashboard = () => {
 
   // Generate monthly comparison data from real jobs (last 6 months)
   const monthlyData = useMemo(() => {
-    const months: Record<string, { month: string; current: number; previous: number }> = {};
     const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleDateString('en-US', { month: 'short' });
-      months[key] = { month: label, current: 0, previous: 0 };
-    }
+    const buckets = Array.from({ length: 6 }, (_, index) => {
+      const currentDate = new Date(now.getFullYear(), now.getMonth() - (5 - index), 1);
+      const previousDate = new Date(currentDate.getFullYear() - 1, currentDate.getMonth(), 1);
+      return {
+        month: currentDate.toLocaleDateString('en-US', { month: 'short' }),
+        currentKey: formatMonthKey(currentDate),
+        previousKey: formatMonthKey(previousDate),
+        current: 0,
+        previous: 0,
+      };
+    });
+    const currentBuckets = Object.fromEntries(buckets.map(bucket => [bucket.currentKey, bucket]));
+    const previousBuckets = Object.fromEntries(buckets.map(bucket => [bucket.previousKey, bucket]));
 
     if (apiStats.monthlyStats && apiStats.monthlyStats.length > 0) {
       apiStats.monthlyStats.forEach(stat => {
-        if (months[stat._id]) {
-          months[stat._id].current = stat.earnings;
+        if (currentBuckets[stat._id]) {
+          currentBuckets[stat._id].current = stat.earnings;
+        } else if (previousBuckets[stat._id]) {
+          previousBuckets[stat._id].previous = stat.earnings;
         }
       });
-      return Object.values(months);
+      return buckets.map(({ month, current, previous }) => ({ month, current, previous }));
     }
 
     allJobs
@@ -210,13 +235,12 @@ const WorkerDashboard = () => {
       .forEach(j => {
         const d = new Date(j.updated_at || j.created_at);
         if (isNaN(d.getTime())) return;
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        if (months[key]) months[key].current += j.worker_earning || j.total_price || 0;
-        // Previous year same month
-        const prevKey = `${d.getFullYear() - 1}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        if (months[prevKey]) months[prevKey].previous += j.worker_earning || j.total_price || 0;
+        const key = formatMonthKey(d);
+        const amount = j.worker_earning || j.total_price || 0;
+        if (currentBuckets[key]) currentBuckets[key].current += amount;
+        if (previousBuckets[key]) previousBuckets[key].previous += amount;
       });
-    return Object.values(months);
+    return buckets.map(({ month, current, previous }) => ({ month, current, previous }));
   }, [allJobs, apiStats.monthlyStats]);
 
   // Generate earning trend from completed jobs
@@ -436,8 +460,8 @@ const WorkerDashboard = () => {
           <CardContent>
             <div className="text-3xl font-bold text-gray-900">{stats.todayJobs}</div>
             <div className="flex items-center mt-1">
-              <span className="text-sm font-medium text-green-600">↗ +{stats.todayJobs}</span>
-              <span className="text-xs text-gray-500 ml-1">from yesterday</span>
+              <span className="text-sm font-medium text-worker-primary">{stats.todayJobs}</span>
+              <span className="text-xs text-gray-500 ml-1">Scheduled Today</span>
             </div>
           </CardContent>
         </Card>
@@ -475,10 +499,10 @@ const WorkerDashboard = () => {
               <div className="flex-1 bg-gray-200 rounded-full h-2">
                 <div 
                   className="bg-worker-accent h-2 rounded-full animate-pulse" 
-                  style={{width: '65%'}}
+                  style={{ width: `${completionPercent}%` }}
                 ></div>
               </div>
-              <span className="text-xs text-worker-accent font-medium">65%</span>
+              <span className="text-xs text-worker-accent font-medium">{completionPercent}%</span>
             </div>
           </CardContent>
         </Card>
@@ -493,8 +517,8 @@ const WorkerDashboard = () => {
           <CardContent>
             <div className="text-3xl font-bold text-gray-900">₹{stats.earningsToday.toLocaleString()}</div>
             <div className="flex items-center mt-1">
-              <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
-              <span className="text-sm font-medium text-green-600">+12%</span>
+              <TrendingUp className={`h-4 w-4 mr-1 ${earningsTrendPositive ? 'text-green-500' : 'rotate-180 text-red-500'}`} />
+              <span className={`text-sm font-medium ${earningsTrendPositive ? 'text-green-600' : 'text-red-600'}`}>{earningsTrendLabel}</span>
               <span className="text-xs text-gray-500 ml-1">vs yesterday</span>
             </div>
             <div className="mt-2 text-xs text-amber-700 bg-amber-100 px-2 py-1 rounded-full inline-block">
@@ -1031,8 +1055,8 @@ const WorkerDashboard = () => {
             </DialogTitle>
             <DialogDescription>
               {otpType === 'start' 
-                ? 'Upload a photo of the work site, then ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
-                : 'Upload a photo of the finished work, then ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
+                ? 'Upload a photo of the work site, then ask the customer for the start OTP shown on their tracking screen to start the job.' 
+                : 'Upload a photo of the finished work, then ask the customer for the completion OTP to finish the job and process payment.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1140,10 +1164,10 @@ const WorkerDashboard = () => {
                   <Input
                     id="otp"
                     type="text"
-                    placeholder="Enter 4-digit OTP"
+                    placeholder="Enter OTP"
                     value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    maxLength={4}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
                     disabled={proofUploading}
                     className="h-14 text-center text-2xl tracking-widest"
                   />
@@ -1156,7 +1180,7 @@ const WorkerDashboard = () => {
               Cancel
             </Button>
             {otpStep === 'otp' ? (
-              <Button onClick={handleVerifyOTP} disabled={otp.length !== 4 || !proofMedia || proofUploading}>
+              <Button onClick={handleVerifyOTP} disabled={!isOtpReady || !proofMedia || proofUploading}>
                 {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
               </Button>
             ) : (

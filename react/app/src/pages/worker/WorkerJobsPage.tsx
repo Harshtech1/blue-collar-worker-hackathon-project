@@ -49,6 +49,7 @@ const WorkerJobsPage = () => {
   const [secureMediaError, setSecureMediaError] = useState<string | null>(null);
   const [mediaLayerReady, setMediaLayerReady] = useState<boolean | null>(null);
   const uploadNoticeToastRef = useRef<string | number | null>(null);
+  const isOtpReady = otp.length === 4 || otp.length === 6;
 
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);
@@ -208,7 +209,7 @@ const WorkerJobsPage = () => {
     if (jobs.length > 0) {
       switch (activeTab) {
         case 'pending':
-          setFilteredJobs(jobs.filter(job => ['pending', 'accepted', 'in_progress'].includes(job.status)));
+          setFilteredJobs(jobs.filter(job => ['pending', 'accepted', 'arriving', 'otp_verify', 'in_progress'].includes(job.status)));
           break;
         case 'completed':
           setFilteredJobs(jobs.filter(job => job.status === 'completed'));
@@ -260,8 +261,8 @@ const WorkerJobsPage = () => {
           newStatus = 'otp_verify';
           break;
         case 'start':
-          newStatus = 'in_progress';
-          break;
+          toast.error('Follow the secure arrival and OTP flow to start this job.');
+          return;
         case 'complete':
           newStatus = 'completed';
           break;
@@ -533,10 +534,60 @@ const WorkerJobsPage = () => {
                             {job.status === 'accepted' && (
                               <Button 
                                 size="sm" 
-                                onClick={() => handleJobAction(job.id, 'start')}
+                                className="bg-blue-600 hover:bg-blue-700"
+                                onClick={() => handleJobAction(job.id, 'arriving')}
                               >
-                                Start Job
+                                <Navigation className="h-4 w-4 mr-2" />
+                                On the Way
                               </Button>
+                            )}
+                            {job.status === 'arriving' && (
+                              <Button
+                                size="sm"
+                                className="bg-amber-600 hover:bg-amber-700"
+                                onClick={() => handleJobAction(job.id, 'otp_verify')}
+                              >
+                                <MapPin className="h-4 w-4 mr-2" />
+                                Arrived
+                              </Button>
+                            )}
+                            {job.status === 'otp_verify' && (
+                              <>
+                                <div className="rounded-xl border border-blue-200 bg-blue-50 p-2 text-[11px] font-bold leading-snug text-blue-800">
+                                  <div className="flex items-center gap-1.5">
+                                    <Camera className="h-3.5 w-3.5" />
+                                    Before photo required
+                                  </div>
+                                  <p className="mt-0.5 text-[10px] font-semibold text-blue-600">Upload proof before entering OTP.</p>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  className="bg-blue-600 hover:bg-blue-700"
+                                  onClick={() => handleStartJob(job.id)}
+                                >
+                                  <Camera className="h-4 w-4 mr-2" />
+                                  Proof + OTP
+                                </Button>
+                              </>
+                            )}
+                            {job.status === 'in_progress' && (
+                              <>
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-[11px] font-bold leading-snug text-emerald-800">
+                                  <div className="flex items-center gap-1.5">
+                                    <Camera className="h-3.5 w-3.5" />
+                                    After photo required
+                                  </div>
+                                  <p className="mt-0.5 text-[10px] font-semibold text-emerald-600">Upload completion proof before final OTP.</p>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  className="bg-green-600 hover:bg-green-700"
+                                  onClick={() => handleCompleteJob(job.id)}
+                                >
+                                  <Camera className="h-4 w-4 mr-2" />
+                                  Proof + Complete
+                                </Button>
+                              </>
                             )}
                             <div className="flex gap-2 pt-2">
                               <Button size="sm" variant="outline" className="flex-1">
@@ -764,8 +815,8 @@ const WorkerJobsPage = () => {
             </DialogTitle>
             <DialogDescription>
               {otpType === 'start' 
-                ? 'Upload a photo of the work site, then ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
-                : 'Upload a photo of the finished work, then ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
+                ? 'Upload a photo of the work site, then ask the customer for the start OTP shown on their tracking screen to start the job.' 
+                : 'Upload a photo of the finished work, then ask the customer for the completion OTP to finish the job and process payment.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -873,10 +924,10 @@ const WorkerJobsPage = () => {
                   <Input
                     id="otp"
                     type="text"
-                    placeholder="Enter 4-digit OTP"
+                    placeholder="Enter OTP"
                     value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    maxLength={4}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
                     disabled={proofUploading}
                     className="h-14 text-center text-2xl tracking-widest"
                   />
@@ -889,7 +940,7 @@ const WorkerJobsPage = () => {
               Cancel
             </Button>
             {otpStep === 'otp' ? (
-              <Button onClick={handleVerifyOTP} disabled={otp.length !== 4 || !proofMedia || proofUploading}>
+              <Button onClick={handleVerifyOTP} disabled={!isOtpReady || !proofMedia || proofUploading}>
                 {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
               </Button>
             ) : (
