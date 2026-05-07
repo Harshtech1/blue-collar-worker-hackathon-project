@@ -170,11 +170,11 @@ const buildCityAnchors = (city: Pick<GlobalSimulationCity, "id" | "label" | "lat
       id: district.slug,
       label: district.label,
       city: city.label,
-      center: district.centerCoords,
-      intensity: Number((0.82 + (district.readinessScore / 100) * 0.78).toFixed(2)),
+      center: district.centerCoords || [city.lat, city.lng] as [number, number],
+      intensity: Number((0.82 + ((district.readinessScore || 78) / 100) * 0.78).toFixed(2)),
       scope: "city" as const,
-      zoomLevel: district.zoomLevel,
-      readinessScore: district.readinessScore,
+      zoomLevel: district.zoomLevel || 12.4,
+      readinessScore: district.readinessScore || 78,
       landmarkLabel: district.landmarkLabel,
     }));
   }
@@ -193,7 +193,7 @@ const buildCityAnchors = (city: Pick<GlobalSimulationCity, "id" | "label" | "lat
     label: anchor.label,
     city: city.label,
     center: anchor.distanceKm === 0
-      ? [city.lat, city.lng]
+      ? [city.lat, city.lng] as [number, number]
       : offsetCoordinate(city.lat, city.lng, anchor.distanceKm, anchor.bearingDeg),
     intensity: anchor.intensity,
     scope: "city",
@@ -295,7 +295,9 @@ export function MissionControlMap({
     },
     [selectedDistrictId, usingGlobalCityScope, zoneAnchors],
   );
-  const [mapViewMode, setMapViewMode] = useState<"road" | "terrain" | "high-contrast">(mapStyleMode || "road");
+  const [mapViewMode, setMapViewMode] = useState<"road" | "satellite">(
+    mapStyleMode === "high-contrast" ? "satellite" : "road",
+  );
   const [showSectorOverlays, setShowSectorOverlays] = useState(false);
   const [showMapSettings, setShowMapSettings] = useState(false);
   const activeDistrict = useMemo(
@@ -313,12 +315,12 @@ export function MissionControlMap({
     }
 
     if (mapStyleMode === "terrain") {
-      setMapViewMode("terrain");
+      setMapViewMode("road");
       setShowSectorOverlays(true);
       return;
     }
 
-    setMapViewMode("high-contrast");
+    setMapViewMode("satellite");
     setShowSectorOverlays(true);
   }, [mapStyleMode]);
 
@@ -559,9 +561,7 @@ export function MissionControlMap({
         .rahi-map-shell .leaflet-tile-pane {
           filter: ${mapViewMode === "road"
             ? "contrast(1.02) brightness(1) saturate(0.92)"
-            : mapViewMode === "terrain"
-              ? "contrast(1.06) brightness(1.01) saturate(0.98)"
-              : "contrast(1.14) brightness(0.76) saturate(0.72)"};
+            : "contrast(1.08) brightness(0.94) saturate(1.02)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -661,20 +661,21 @@ export function MissionControlMap({
               url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
               attribution="&copy; OpenStreetMap contributors &copy; CARTO"
             />
-          ) : mapViewMode === "terrain" ? (
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
-            />
           ) : (
-            <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
-            />
+            <>
+              <TileLayer
+                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                attribution="Tiles &copy; Esri"
+              />
+              <TileLayer
+                url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+                attribution="Labels &copy; Esri"
+              />
+            </>
           )}
 
           <Pane name="sector-boxes" style={{ zIndex: 418 }}>
-            {(showSectorOverlays || mapViewMode === "terrain") && !usingGlobalCityScope && labeledZones.filter((zone) => zone.bounds).map((zone) => (
+            {showSectorOverlays && !usingGlobalCityScope && labeledZones.filter((zone) => zone.bounds).map((zone) => (
               <Rectangle
                 key={`${zone.id}-bounds`}
                 bounds={zone.bounds!}
@@ -692,7 +693,7 @@ export function MissionControlMap({
           </Pane>
 
           <Pane name="pressure-zones" style={{ zIndex: 420 }}>
-            {(showSectorOverlays || mapViewMode === "terrain") && labeledZones.map((zone) => (
+            {showSectorOverlays && labeledZones.map((zone) => (
               <Circle
                 key={`${zone.id}-ring`}
                 center={zone.center}
@@ -721,7 +722,7 @@ export function MissionControlMap({
           </Pane>
 
           <Pane name="zone-labels" style={{ zIndex: 465 }}>
-            {(showSectorOverlays || mapViewMode === "terrain") && visibleZoneLabels.map((zone) => (
+            {showSectorOverlays && visibleZoneLabels.map((zone) => (
               <Marker
                 key={`${zone.id}-label`}
                 position={zone.center}
@@ -884,49 +885,36 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setMapViewMode("terrain");
-                    setShowSectorOverlays(true);
-                    onMapStyleChange?.("terrain");
+                    setShowSectorOverlays((current) => {
+                      const next = !current;
+                      onMapStyleChange?.(next ? "terrain" : mapViewMode === "satellite" ? "high-contrast" : "road");
+                      return next;
+                    });
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "terrain"
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-700 hover:bg-slate-50",
+                    showSectorOverlays ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Infrastructure Overlay</span>
-                  <span>{mapViewMode === "terrain" ? "On" : "Off"}</span>
+                  <span>Sector Overlays</span>
+                  <span>{showSectorOverlays ? "On" : "Off"}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setMapViewMode("high-contrast");
+                    setMapViewMode("satellite");
                     setShowSectorOverlays(true);
                     onMapStyleChange?.("high-contrast");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "high-contrast"
+                    mapViewMode === "satellite"
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>High-Contrast Dark</span>
-                  <span>{mapViewMode === "high-contrast" ? "On" : "Off"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSectorOverlays((current) => !current)}
-                  className={cn(
-                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showSectorOverlays || mapViewMode === "terrain"
-                      ? "bg-sky-50 text-sky-700"
-                      : "text-slate-700 hover:bg-slate-50",
-                  )}
-                >
-                  <span>District Heat Zones</span>
-                  <span>{showSectorOverlays || mapViewMode === "terrain" ? "On" : "Off"}</span>
+                  <span>Satellite</span>
+                  <span>{mapViewMode === "satellite" ? "Verification" : "Off"}</span>
                 </button>
               </div>
             ) : null}

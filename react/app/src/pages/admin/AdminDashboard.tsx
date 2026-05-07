@@ -966,6 +966,7 @@ export default function AdminDashboard() {
     onSelectWarRoomZone: handleWarRoomZoneSelect,
     onSelectMarketState: handleMarketStateSelect,
     onSelectMarketCity: handleMarketCitySelect,
+    onSelectMarketDistrict: handleMarketDistrictSelect,
     onSelectActiveMarket: handleActiveMarketSelect,
     onSelectActiveRegion: handleActiveRegionSelect,
     onSelectMapStyle: handleMapStyleSelect,

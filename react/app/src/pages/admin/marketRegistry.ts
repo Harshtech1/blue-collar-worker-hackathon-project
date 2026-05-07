@@ -44,6 +44,7 @@ export interface MarketDistrict {
   readinessScore?: number;
   zoomLevel?: number;
   landmarkLabel?: string;
+  aliases?: string[];
 }
 
 export interface MarketLocation {
@@ -62,6 +63,7 @@ export interface MarketContext {
 const DEFAULT_MARKET_LOCATION: MarketLocation = {
   stateSlug: "uttar-pradesh",
   citySlug: "agra",
+  districtSlug: "agra-cantt",
 };
 
 const CITY_STATE_OVERRIDES: Record<string, { stateSlug: string; stateLabel: string; stateCode: string }> = {
@@ -235,6 +237,46 @@ const SYNTHETIC_DISTRICT_BLUEPRINTS = [
   { suffix: "-orbit", labelSuffix: "Orbit" },
 ] as const;
 
+const CURATED_DISTRICT_BLUEPRINTS: Partial<Record<string, Array<{
+  slug: string;
+  label: string;
+  centerCoords: [number, number];
+  readinessScore: number;
+  zoomLevel: number;
+  landmarkLabel: string;
+}>>> = {
+  chandigarh: [
+    { slug: "sector-17", label: "Sector 17", centerCoords: [30.7392, 76.7821], readinessScore: 88, zoomLevel: 14.1, landmarkLabel: "CBD / retail grid" },
+    { slug: "industrial-area-phase-1", label: "Industrial Area Phase I", centerCoords: [30.7064, 76.8022], readinessScore: 81, zoomLevel: 13.7, landmarkLabel: "industrial cluster" },
+    { slug: "manimajra", label: "Manimajra", centerCoords: [30.7256, 76.8428], readinessScore: 84, zoomLevel: 13.5, landmarkLabel: "residential spine" },
+  ],
+  "new-delhi": [
+    { slug: "connaught-place", label: "Connaught Place", centerCoords: [28.6315, 77.2167], readinessScore: 92, zoomLevel: 14.2, landmarkLabel: "commercial hub" },
+    { slug: "dwarka-sector-12", label: "Dwarka Sector 12", centerCoords: [28.5927, 77.046], readinessScore: 83, zoomLevel: 13.7, landmarkLabel: "residential catchment" },
+    { slug: "karol-bagh", label: "Karol Bagh", centerCoords: [28.6511, 77.1904], readinessScore: 87, zoomLevel: 13.8, landmarkLabel: "mixed retail market" },
+  ],
+  chennai: [
+    { slug: "t-nagar", label: "T Nagar", centerCoords: [13.0418, 80.2341], readinessScore: 85, zoomLevel: 14, landmarkLabel: "high-density retail" },
+    { slug: "perungudi-omr", label: "Perungudi OMR", centerCoords: [12.9654, 80.2451], readinessScore: 81, zoomLevel: 13.5, landmarkLabel: "tech corridor" },
+    { slug: "anna-nagar", label: "Anna Nagar", centerCoords: [13.0849, 80.2101], readinessScore: 83, zoomLevel: 13.8, landmarkLabel: "residential cluster" },
+  ],
+  bengaluru: [
+    { slug: "koramangala", label: "Koramangala", centerCoords: [12.9352, 77.6245], readinessScore: 87, zoomLevel: 14, landmarkLabel: "startup and retail mix" },
+    { slug: "whitefield", label: "Whitefield", centerCoords: [12.9698, 77.75], readinessScore: 84, zoomLevel: 13.2, landmarkLabel: "distributed tech hub" },
+    { slug: "indiranagar", label: "Indiranagar", centerCoords: [12.9719, 77.6412], readinessScore: 89, zoomLevel: 13.8, landmarkLabel: "lifestyle catchment" },
+  ],
+  kolkata: [
+    { slug: "salt-lake-sector-v", label: "Salt Lake Sector V", centerCoords: [22.5797, 88.4317], readinessScore: 84, zoomLevel: 13.7, landmarkLabel: "office district" },
+    { slug: "park-street", label: "Park Street", centerCoords: [22.551, 88.3527], readinessScore: 86, zoomLevel: 14, landmarkLabel: "retail and dining belt" },
+    { slug: "new-town-action-area-i", label: "New Town Action Area I", centerCoords: [22.5756, 88.4791], readinessScore: 82, zoomLevel: 13.3, landmarkLabel: "planned growth zone" },
+  ],
+  mumbai: [
+    { slug: "powai", label: "Powai", centerCoords: [19.1187, 72.906], readinessScore: 84, zoomLevel: 13.7, landmarkLabel: "mixed residential-tech zone" },
+    { slug: "andheri-west", label: "Andheri West", centerCoords: [19.1364, 72.8274], readinessScore: 88, zoomLevel: 13.9, landmarkLabel: "dense service corridor" },
+    { slug: "lower-parel", label: "Lower Parel", centerCoords: [18.9984, 72.8266], readinessScore: 90, zoomLevel: 14, landmarkLabel: "premium business district" },
+  ],
+};
+
 const slugify = (value: string) => (
   value
     .trim()
@@ -251,6 +293,41 @@ const toTitleCase = (value: string) => (
     .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
     .join(" ")
 );
+
+const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+const toDegrees = (radians: number) => (radians * 180) / Math.PI;
+const EARTH_RADIUS_KM = 6371;
+
+const offsetMarketCoordinate = (
+  lat: number,
+  lng: number,
+  distanceKm: number,
+  bearingDeg: number,
+): [number, number] => {
+  if (distanceKm === 0) {
+    return [Number(lat.toFixed(6)), Number(lng.toFixed(6))];
+  }
+
+  const angularDistance = distanceKm / EARTH_RADIUS_KM;
+  const bearing = toRadians(bearingDeg);
+  const startLat = toRadians(lat);
+  const startLng = toRadians(lng);
+
+  const nextLat = Math.asin(
+    (Math.sin(startLat) * Math.cos(angularDistance))
+      + (Math.cos(startLat) * Math.sin(angularDistance) * Math.cos(bearing)),
+  );
+
+  const nextLng = startLng + Math.atan2(
+    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(startLat),
+    Math.cos(angularDistance) - (Math.sin(startLat) * Math.sin(nextLat)),
+  );
+
+  return [
+    Number(toDegrees(nextLat).toFixed(6)),
+    Number((((toDegrees(nextLng) + 540) % 360) - 180).toFixed(6)),
+  ];
+};
 
 const inferStateMeta = (city: GlobalSimulationCity) => {
   const override = CITY_STATE_OVERRIDES[city.id];
@@ -349,20 +426,23 @@ const MARKET_STATES: MarketState[] = Object.values(
   }, {}),
 ).sort((left, right) => left.label.localeCompare(right.label));
 
-const AGRA_PRIORITY_DISTRICT_IDS = new Set(["agra-cantt", "dayal-bagh", "sikandra"]);
-const agraSeededDistricts = sectorSeeds.filter((sector) => (
-  sector.city.toLowerCase() === "agra"
-  && (AGRA_PRIORITY_DISTRICT_IDS.has(sector.id) || AGRA_PRIORITY_DISTRICT_IDS.has(slugify(sector.label)))
-));
 const fallbackAgraDistricts = sectorSeeds.filter((sector) => sector.city.toLowerCase() === "agra");
 
-const SEEDED_DISTRICTS: MarketDistrict[] = (agraSeededDistricts.length > 0 ? agraSeededDistricts : fallbackAgraDistricts)
+const SEEDED_DISTRICTS: MarketDistrict[] = fallbackAgraDistricts
   .map((sector) => ({
     slug: sector.id,
-    label: sector.label,
+    label: sector.id === "dayalbagh" ? "Dayal Bagh" : sector.label,
     citySlug: "agra",
     stateSlug: "uttar-pradesh",
     kind: "seeded" as const,
+    centerCoords: [
+      Number((((sector.latRange[0] + sector.latRange[1]) / 2)).toFixed(6)),
+      Number((((sector.lngRange[0] + sector.lngRange[1]) / 2)).toFixed(6)),
+    ],
+    readinessScore: Math.max(68, Math.min(97, Math.round((sector.demandWeight * 34) + (sector.historicalTraffic * 30) + 18))),
+    zoomLevel: 13.8,
+    landmarkLabel: `${sector.label} service zone`,
+    aliases: sector.id === "dayalbagh" ? ["dayal-bagh", "dayal bagh"] : [],
   }));
 
 export const listMarketStates = () => MARKET_STATES;
@@ -381,16 +461,50 @@ export const findMarketCity = (citySlug?: string | null) => (
   MARKET_CITIES.find((city) => city.slug === citySlug || city.simulationCityId === citySlug) || null
 );
 
-export const buildSyntheticDistrictsForCity = (city: MarketCity): MarketDistrict[] => (
-  SYNTHETIC_DISTRICT_BLUEPRINTS.map((blueprint) => ({
-    slug: `${city.slug}${blueprint.suffix}`,
-    label: `${city.label} ${blueprint.labelSuffix}`,
-    citySlug: city.slug,
-    stateSlug: city.stateSlug,
-    kind: "synthetic" as const,
-    landmarkLabel: blueprint.labelSuffix,
-  }))
-);
+export const buildSyntheticDistrictsForCity = (city: MarketCity): MarketDistrict[] => {
+  const curatedBlueprints = CURATED_DISTRICT_BLUEPRINTS[city.slug];
+  if (curatedBlueprints?.length) {
+    return curatedBlueprints.map((district) => ({
+      slug: district.slug,
+      label: district.label,
+      citySlug: city.slug,
+      stateSlug: city.stateSlug,
+      kind: "synthetic" as const,
+      centerCoords: district.centerCoords,
+      readinessScore: district.readinessScore,
+      zoomLevel: district.zoomLevel,
+      landmarkLabel: district.landmarkLabel,
+      aliases: [district.label.toLowerCase(), district.slug.replace(/-/g, " ")],
+    }));
+  }
+
+  return SYNTHETIC_DISTRICT_BLUEPRINTS.map((blueprint, index) => {
+    const districtProfile = blueprint.suffix === ""
+      ? { distanceKm: 0, bearingDeg: 0, readinessScore: 92, zoomLevel: 12.9 }
+      : blueprint.suffix === "-north"
+        ? { distanceKm: 4.1, bearingDeg: 0, readinessScore: 84, zoomLevel: 12.5 }
+        : blueprint.suffix === "-east"
+          ? { distanceKm: 4.3, bearingDeg: 90, readinessScore: 82, zoomLevel: 12.4 }
+          : blueprint.suffix === "-south"
+            ? { distanceKm: 4.2, bearingDeg: 180, readinessScore: 79, zoomLevel: 12.3 }
+            : blueprint.suffix === "-west"
+              ? { distanceKm: 4.1, bearingDeg: 270, readinessScore: 80, zoomLevel: 12.3 }
+              : { distanceKm: 5.6, bearingDeg: 45 + (index * 8), readinessScore: 76, zoomLevel: 12.1 };
+
+    return {
+      slug: `${city.slug}${blueprint.suffix}`,
+      label: `${city.label} ${blueprint.labelSuffix}`,
+      citySlug: city.slug,
+      stateSlug: city.stateSlug,
+      kind: "synthetic" as const,
+      centerCoords: offsetMarketCoordinate(city.lat, city.lng, districtProfile.distanceKm, districtProfile.bearingDeg),
+      readinessScore: districtProfile.readinessScore,
+      zoomLevel: districtProfile.zoomLevel,
+      landmarkLabel: blueprint.labelSuffix,
+      aliases: [`${city.label} ${blueprint.labelSuffix}`.toLowerCase(), `${city.slug}${blueprint.suffix}`.replace(/-/g, " ")],
+    };
+  })
+};
 
 export const getMarketDistrictsForCity = (citySlug?: string | null): MarketDistrict[] => {
   const city = findMarketCity(citySlug);
@@ -405,13 +519,22 @@ export const getMarketDistrictsForCity = (citySlug?: string | null): MarketDistr
 
 export const getMarketDistrictBySlug = (districtSlug?: string | null, citySlug?: string | null) => {
   if (!districtSlug) return null;
+  const normalizedDistrictSlug = slugify(districtSlug);
 
-  const seeded = SEEDED_DISTRICTS.find((district) => district.slug === districtSlug);
+  const seeded = SEEDED_DISTRICTS.find((district) => (
+    district.slug === normalizedDistrictSlug
+    || slugify(district.label) === normalizedDistrictSlug
+    || district.aliases?.some((alias) => slugify(alias) === normalizedDistrictSlug)
+  ));
   if (seeded && (!citySlug || seeded.citySlug === citySlug)) return seeded;
 
   for (const city of MARKET_CITIES) {
     if (citySlug && city.slug !== citySlug) continue;
-    const synthetic = buildSyntheticDistrictsForCity(city).find((district) => district.slug === districtSlug);
+    const synthetic = buildSyntheticDistrictsForCity(city).find((district) => (
+      district.slug === normalizedDistrictSlug
+      || slugify(district.label) === normalizedDistrictSlug
+      || district.aliases?.some((alias) => slugify(alias) === normalizedDistrictSlug)
+    ));
     if (synthetic) return synthetic;
   }
 
@@ -445,7 +568,7 @@ export function resolveMarketLocation(
   return {
     stateSlug: context.state.slug,
     citySlug: context.city.slug,
-    districtSlug: context.district?.slug || location.districtSlug || null,
+    districtSlug: context.district?.slug || getDefaultDistrictForCity(context.city.slug)?.slug || location.districtSlug || null,
   };
 }
 
@@ -475,7 +598,7 @@ export const resolveMarketContext = (
     state,
     city: normalizedCity,
     districts: getMarketDistrictsForCity(normalizedCity.slug),
-    district: getMarketDistrictBySlug(districtSlug || null),
+    district: getMarketDistrictBySlug(districtSlug || null, normalizedCity.slug) || getDefaultDistrictForCity(normalizedCity.slug),
   };
 };
 
@@ -484,10 +607,10 @@ export const resolveMarketLabel = (
   citySlug?: string | null,
   districtSlug?: string | null,
 ) => {
-  const district = getMarketDistrictBySlug(districtSlug);
+  const district = getMarketDistrictBySlug(districtSlug, citySlug);
   if (district) return district.label;
 
-  const context = resolveMarketContext(stateSlug, citySlug);
+  const context = resolveMarketContext(stateSlug, citySlug, districtSlug);
   return context.city.label;
 };
 
@@ -539,8 +662,8 @@ export const buildMarketBreadcrumb = (
   citySlug?: string | null,
   districtSlug?: string | null,
 ) => {
-  const context = resolveMarketContext(stateSlug, citySlug);
-  const districtLabel = districtSlug ? getMarketDistrictBySlug(districtSlug)?.label : null;
+  const context = resolveMarketContext(stateSlug, citySlug, districtSlug);
+  const districtLabel = districtSlug ? getMarketDistrictBySlug(districtSlug, context.city.slug)?.label : context.district?.label || null;
   return districtLabel
     ? `Markets > ${context.state.label} > ${context.city.label} > ${districtLabel}`
     : `Markets > ${context.state.label} > ${context.city.label}`;
@@ -548,11 +671,14 @@ export const buildMarketBreadcrumb = (
 
 export const buildMarketGeoConfig = ({
   market,
+  stateSlug,
   citySlug,
+  districtSlug,
   center,
   radiusKm = 12,
 }: {
   market?: MarketCity;
+  stateSlug?: string | null;
   citySlug?: string | null;
   districtSlug?: string | null;
   center?: { lat: number; lng: number };
@@ -560,12 +686,19 @@ export const buildMarketGeoConfig = ({
 } = {}): SimulationGeoConfig => {
   const resolvedMarket = market
     || findMarketCity(citySlug)
+    || getDefaultCityForState(stateSlug)
     || findMarketCity(DEFAULT_MARKET_LOCATION.citySlug)
     || CURATED_MARKET_CITIES[0];
-  const resolvedCenter = center || {
-    lat: resolvedMarket.lat,
-    lng: resolvedMarket.lng,
-  };
+  const resolvedDistrict = getMarketDistrictBySlug(districtSlug, resolvedMarket.slug);
+  const resolvedCenter = center || (resolvedDistrict?.centerCoords
+    ? {
+        lat: resolvedDistrict.centerCoords[0],
+        lng: resolvedDistrict.centerCoords[1],
+      }
+    : {
+        lat: resolvedMarket.lat,
+        lng: resolvedMarket.lng,
+      });
   const isKnownGlobalMarket = GLOBAL_SIMULATION_CITIES.some((entry) => entry.id === resolvedMarket.simulationCityId);
 
   if (isKnownGlobalMarket) {
@@ -589,7 +722,9 @@ export const buildMarketGeoConfig = ({
       stateName: resolvedMarket.stateLabel,
       stateCode: resolvedMarket.stateCode,
       country: resolvedMarket.country,
-      displayName: [resolvedMarket.label, resolvedMarket.stateLabel, resolvedMarket.country].join(", "),
+      displayName: [resolvedDistrict?.label, resolvedMarket.label, resolvedMarket.stateLabel, resolvedMarket.country]
+        .filter(Boolean)
+        .join(", "),
     },
   });
 };

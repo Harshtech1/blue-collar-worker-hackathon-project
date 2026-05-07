@@ -2081,7 +2081,7 @@ export function AdminLegacyRedirect({
   if (kind === "war-room") {
     return <Navigate to={buildWarRoomPath(
       params.stateSlug && params.citySlug
-        ? { stateSlug: params.stateSlug, citySlug: params.citySlug }
+        ? { stateSlug: params.stateSlug, citySlug: params.citySlug, districtSlug: params.districtSlug || null }
         : params.zoneId || DEFAULT_WAR_ROOM_MARKET,
     )} replace />;
   }
