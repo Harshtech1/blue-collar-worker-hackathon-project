@@ -906,7 +906,7 @@ export default function AdminDashboard() {
         </main>
       </div>
 
-      {!pitchMode ? <AdminTechnicalCopilot shellContext={shellContext} /> : null}
+      <AdminTechnicalCopilot shellContext={shellContext} showLauncher={!pitchMode} />
 
       <Dialog open={verificationViewerOpen} onOpenChange={setVerificationViewerOpen}>
         <DialogContent className="max-w-4xl border border-slate-200 bg-white text-slate-900 shadow-[0_32px_90px_-44px_rgba(15,23,42,0.24)]">

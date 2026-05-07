@@ -29,7 +29,7 @@ import { toast } from "sonner";
 import { API } from "@/lib/constants";
 import { DataTable } from "./components/DataTable";
 import { MissionControlMap } from "./components/MissionControlMap";
-import { StrategyPulse } from "./components/StrategyPulse";
+import { StrategyChips } from "./components/StrategyChips";
 import {
   buildMissionPath,
   buildObservabilityPath,
@@ -40,7 +40,7 @@ import {
 } from "./adminRoutes";
 import { useAdminShellContext } from "./adminShellContext";
 import { ADMIN_ISSUE_SEVERITY_WEIGHT, ADMIN_OBSERVABILITY_ISSUES, type ObservabilityIssue } from "./adminSignals";
-import { buildSystemInsightsSummary } from "@/pages/admin/utils/systemInsights";
+import { buildSystemInsightsSummary } from "./utils/systemInsights";
 import { buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
 
 type CommandOption = {
@@ -99,6 +99,154 @@ const getYieldSnapshot = ({
 
 const formatInr = (value: number) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
 
+type ZoneViewport = {
+  label: string;
+  lat: number;
+  lng: number;
+};
+
+const getZoneViewport = (routeZoneId: string, fallbackLabel: string): ZoneViewport => {
+  const sector = sectorSeeds.find((entry) => entry.id === routeZoneId);
+  if (sector) {
+    return {
+      label: sector.label || fallbackLabel,
+      lat: Number((((sector.latRange[0] + sector.latRange[1]) / 2)).toFixed(4)),
+      lng: Number((((sector.lngRange[0] + sector.lngRange[1]) / 2)).toFixed(4)),
+    };
+  }
+
+  const city = GLOBAL_SIMULATION_CITIES.find((entry) => entry.id === routeZoneId);
+  if (city) {
+    return {
+      label: city.label || fallbackLabel,
+      lat: Number(city.lat.toFixed(4)),
+      lng: Number(city.lng.toFixed(4)),
+    };
+  }
+
+  const geoConfig = buildSimulationGeoConfig({
+    cityId: "agra",
+    radiusKm: 10,
+  });
+
+  return {
+    label: fallbackLabel || geoConfig.marketLabel || "Agra Cantt",
+    lat: Number(geoConfig.center.lat.toFixed(4)),
+    lng: Number(geoConfig.center.lng.toFixed(4)),
+  };
+};
+
+const formatViewportLabel = ({ label, lat, lng }: ZoneViewport) => {
+  const latSuffix = lat >= 0 ? "N" : "S";
+  const lngSuffix = lng >= 0 ? "E" : "W";
+  return `VIEWPORT: ${label.toUpperCase()} // ${Math.abs(lat).toFixed(4)}° ${latSuffix}, ${Math.abs(lng).toFixed(4)}° ${lngSuffix}`;
+};
+
+const downloadInvestorBriefFromNode = async ({
+  node,
+  fileName,
+}: {
+  node: HTMLDivElement | null;
+  fileName: string;
+}) => {
+  if (!node) {
+    throw new Error("Investor scorecard is not ready yet.");
+  }
+
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf"),
+  ]);
+
+  const canvas = await html2canvas(node, {
+    backgroundColor: "#f8fafc",
+    scale: 2,
+    useCORS: true,
+    logging: false,
+  });
+
+  const image = canvas.toDataURL("image/png");
+  const pdf = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 10;
+  const usableWidth = pageWidth - (margin * 2);
+  const usableHeight = pageHeight - (margin * 2);
+  const ratio = Math.min(usableWidth / canvas.width, usableHeight / canvas.height);
+  const renderWidth = canvas.width * ratio;
+  const renderHeight = canvas.height * ratio;
+  const x = (pageWidth - renderWidth) / 2;
+  const y = (pageHeight - renderHeight) / 2;
+
+  pdf.addImage(image, "PNG", x, y, renderWidth, renderHeight, undefined, "FAST");
+  pdf.save(fileName);
+};
+
+type ProjectedAssetYieldSnapshot = {
+  monthlyJobsRunRate: number;
+  monthlyNetProfit: number;
+  annualizedNetProfit: number;
+  expansionCac: number;
+  roi12m: number;
+};
+
+const getMonthlyJobsRunRate = ({
+  sevenDayBookings,
+  completedCount,
+  fallbackActiveBookings,
+}: {
+  sevenDayBookings: number;
+  completedCount: number;
+  fallbackActiveBookings: number;
+}) => {
+  if (sevenDayBookings > 0) {
+    return Math.max(1, Math.round((sevenDayBookings / 7) * 30));
+  }
+
+  if (completedCount > 0) {
+    return Math.max(1, Math.round(completedCount * 4.2));
+  }
+
+  return Math.max(1, Math.round(fallbackActiveBookings * 3.4));
+};
+
+const getProjectedAssetYieldSnapshot = ({
+  netProfitPerJob,
+  sevenDayBookings,
+  completedCount,
+  fallbackActiveBookings,
+  expansionCac,
+}: {
+  netProfitPerJob: number;
+  sevenDayBookings: number;
+  completedCount: number;
+  fallbackActiveBookings: number;
+  expansionCac: number;
+}): ProjectedAssetYieldSnapshot => {
+  const monthlyJobsRunRate = getMonthlyJobsRunRate({
+    sevenDayBookings,
+    completedCount,
+    fallbackActiveBookings,
+  });
+  const monthlyNetProfit = Math.max(0, Math.round(netProfitPerJob * monthlyJobsRunRate));
+  const annualizedNetProfit = monthlyNetProfit * 12;
+  const safeExpansionCac = Math.max(1, Math.round(expansionCac || 0));
+  const roi12m = Number((((annualizedNetProfit - safeExpansionCac) / safeExpansionCac) * 100).toFixed(1));
+
+  return {
+    monthlyJobsRunRate,
+    monthlyNetProfit,
+    annualizedNetProfit,
+    expansionCac: safeExpansionCac,
+    roi12m,
+  };
+};
+
 const countVerifiedWorkers = (workersList: any[]) => workersList.filter((worker) => (
   worker?.status === "verified"
   || worker?.is_verified === true
@@ -122,6 +270,7 @@ export function AdminOverviewPage() {
     llmMode,
     activeWorkerRate,
     averageTicket,
+    sevenDayBookings,
     investorSummary,
     onNavigateTab,
     onSelectWarRoomZone,
@@ -145,7 +294,7 @@ export function AdminOverviewPage() {
     Math.round((verifiedWorkers / Math.max(1, stats.totalWorkers || workersList.length || 1)) * 100)
   ), [verifiedWorkers, stats.totalWorkers, workersList.length]);
   const yieldSnapshot = useMemo(() => getYieldSnapshot({
-    totalRevenue: Number(stats.totalRevenue || 0),
+    totalRevenue: Number(investorSummary?.revenue ?? stats.totalRevenue ?? 0),
     completedCount: Number(stats.completedBookings || 0),
     fallbackAverageTicket: Number(averageTicket || 0),
     investorSummary,
@@ -190,48 +339,50 @@ export function AdminOverviewPage() {
     llmMode,
     stats,
   ]);
+  const executiveViewport = useMemo(
+    () => getZoneViewport(DEFAULT_WAR_ROOM_ZONE, "Agra Cantt"),
+    [],
+  );
+  const overviewAssetYield = useMemo(() => getProjectedAssetYieldSnapshot({
+    netProfitPerJob: yieldSnapshot.netProfitPerJob,
+    sevenDayBookings,
+    completedCount: yieldSnapshot.completedCount,
+    fallbackActiveBookings: stats.activeBookings,
+    expansionCac: overviewSummary.unitEconomics.cacProjected,
+  }), [
+    overviewSummary.unitEconomics.cacProjected,
+    sevenDayBookings,
+    stats.activeBookings,
+    yieldSnapshot.completedCount,
+    yieldSnapshot.netProfitPerJob,
+  ]);
+  const executiveAssetYield = useMemo(() => getProjectedAssetYieldSnapshot({
+    netProfitPerJob: yieldSnapshot.netProfitPerJob,
+    sevenDayBookings,
+    completedCount: yieldSnapshot.completedCount,
+    fallbackActiveBookings: stats.activeBookings,
+    expansionCac: executiveBriefSummary.unitEconomics.cacProjected,
+  }), [
+    executiveBriefSummary.unitEconomics.cacProjected,
+    sevenDayBookings,
+    stats.activeBookings,
+    yieldSnapshot.completedCount,
+    yieldSnapshot.netProfitPerJob,
+  ]);
   const handleDownloadInvestorBrief = async () => {
     if (!investorBriefRef.current || isExportingInvestorBrief) return;
 
     setIsExportingInvestorBrief(true);
 
     try {
-      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-        import("html2canvas"),
-        import("jspdf"),
-      ]);
-
-      const canvas = await html2canvas(investorBriefRef.current, {
-        backgroundColor: "#f8fafc",
-        scale: 2,
-        useCORS: true,
-        logging: false,
+      await downloadInvestorBriefFromNode({
+        node: investorBriefRef.current,
+        fileName: `Karigar-360-Investor-Scorecard-${new Date().toISOString().slice(0, 10)}.pdf`,
       });
-
-      const image = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 10;
-      const usableWidth = pageWidth - (margin * 2);
-      const usableHeight = pageHeight - (margin * 2);
-      const ratio = Math.min(usableWidth / canvas.width, usableHeight / canvas.height);
-      const renderWidth = canvas.width * ratio;
-      const renderHeight = canvas.height * ratio;
-      const x = (pageWidth - renderWidth) / 2;
-      const y = (pageHeight - renderHeight) / 2;
-
-      pdf.addImage(image, "PNG", x, y, renderWidth, renderHeight, undefined, "FAST");
-      pdf.save(`RAHI-Investor-Brief-${new Date().toISOString().slice(0, 10)}.pdf`);
-      toast.success("Investor brief downloaded.");
+      toast.success("Investor scorecard downloaded.");
     } catch (error) {
       console.error("[investor-brief]", error);
-      toast.error("Investor brief generation failed.");
+      toast.error("Investor scorecard generation failed.");
     } finally {
       setIsExportingInvestorBrief(false);
     }
@@ -239,7 +390,17 @@ export function AdminOverviewPage() {
 
   return (
     <ScrollPage>
-      <StrategyPulse summary={overviewSummary} />
+      <StrategyChips summary={overviewSummary} />
+
+      {pitchMode ? (
+        <ProjectedAssetYieldHero
+          marketLabel={overviewSummary.marketMetrics.zoneLabel}
+          postureLabel={overviewSummary.marketMetrics.isExistingMarket ? "Pilot Proof of Concept" : "Expansion Readiness"}
+          assetYield={overviewAssetYield}
+          paybackDays={overviewSummary.unitEconomics.paybackDays}
+          yieldPerJob={yieldSnapshot.netProfitPerJob}
+        />
+      ) : null}
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.28fr)_minmax(20rem,0.72fr)]">
         <SuitePanel
@@ -345,10 +506,11 @@ export function AdminOverviewPage() {
                 type="button"
                 onClick={handleDownloadInvestorBrief}
                 disabled={isExportingInvestorBrief}
+                aria-label="Download investor brief from overview"
                 className="inline-flex min-h-12 items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {isExportingInvestorBrief ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                Download Investor Brief
+                Download Investor Scorecard
               </button>
 
               <button
@@ -555,11 +717,13 @@ export function AdminOverviewPage() {
         </section>
       )}
 
-      <div className="pointer-events-none fixed left-[-99999px] top-0 z-[-1] w-[980px]">
+      <div className="pointer-events-none fixed left-[-99999px] top-0 z-[-1] w-[980px]" aria-hidden="true">
         <div ref={investorBriefRef}>
           <ExecutiveInvestorBrief
             summary={executiveBriefSummary}
             yieldSnapshot={yieldSnapshot}
+            assetYield={executiveAssetYield}
+            viewportLabel={formatViewportLabel(executiveViewport)}
             verifiedWorkers={verifiedWorkers}
             verifiedWorkerRate={verifiedWorkerRate}
             totalWorkers={stats.totalWorkers}
@@ -710,7 +874,7 @@ export function AdminWarRoomPage() {
           />
 
           <div className="mt-4">
-            <StrategyPulse summary={warRoomSummary} />
+            <StrategyChips summary={warRoomSummary} />
           </div>
         </div>
 
@@ -1138,7 +1302,23 @@ export function AdminWorkforcePage() {
 }
 
 export function AdminFinancePage() {
-  const { stats, bookingsList, investorSummary, pitchMode } = useAdminShellContext();
+  const {
+    stats,
+    bookingsList,
+    workersList,
+    investorSummary,
+    pitchMode,
+    routeZoneId,
+    zoneLabel,
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    llmMode,
+    healthSnapshot,
+    sevenDayBookings,
+  } = useAdminShellContext();
+  const investorBriefRef = useRef<HTMLDivElement | null>(null);
+  const [isExportingInvestorBrief, setIsExportingInvestorBrief] = useState(false);
 
   const completed = bookingsList.filter((booking) => booking.status === "completed" && booking.total_price);
   const matchedOrInProgress = bookingsList.filter((booking) => booking.status === "in_progress" || booking.status === "matched");
@@ -1157,6 +1337,85 @@ export function AdminFinancePage() {
   const netProfitPerJob = yieldSnapshot.netProfitPerJob;
   const totalCommission = yieldSnapshot.totalCommission;
   const pendingPayouts = matchedOrInProgress.reduce((sum, booking) => sum + Number(booking.total_price || 0), 0);
+  const verifiedWorkers = useMemo(() => countVerifiedWorkers(workersList), [workersList]);
+  const verifiedWorkerRate = useMemo(() => (
+    Math.round((verifiedWorkers / Math.max(1, stats.totalWorkers || workersList.length || 1)) * 100)
+  ), [verifiedWorkers, stats.totalWorkers, workersList.length]);
+  const financeSummary = useMemo(() => buildSystemInsightsSummary({
+    routeZoneId,
+    zoneLabel,
+    stats,
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    llmMode,
+    healthSnapshot,
+    investorSummary,
+  }), [
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    healthSnapshot,
+    investorSummary,
+    llmMode,
+    routeZoneId,
+    stats,
+    zoneLabel,
+  ]);
+  const financeAssetYield = useMemo(() => getProjectedAssetYieldSnapshot({
+    netProfitPerJob,
+    sevenDayBookings,
+    completedCount,
+    fallbackActiveBookings: stats.activeBookings,
+    expansionCac: financeSummary.unitEconomics.cacProjected,
+  }), [
+    completedCount,
+    financeSummary.unitEconomics.cacProjected,
+    netProfitPerJob,
+    sevenDayBookings,
+    stats.activeBookings,
+  ]);
+  const financeBriefSummary = useMemo(() => buildSystemInsightsSummary({
+    routeZoneId: DEFAULT_WAR_ROOM_ZONE,
+    zoneLabel: "Agra Cantt",
+    stats,
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    llmMode,
+    healthSnapshot,
+    investorSummary,
+  }), [
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    healthSnapshot,
+    investorSummary,
+    llmMode,
+    stats,
+  ]);
+  const financeExecutiveViewport = useMemo(
+    () => getZoneViewport(DEFAULT_WAR_ROOM_ZONE, "Agra Cantt"),
+    [],
+  );
+  const handleDownloadInvestorBrief = async () => {
+    if (!investorBriefRef.current || isExportingInvestorBrief) return;
+
+    setIsExportingInvestorBrief(true);
+
+    try {
+      await downloadInvestorBriefFromNode({
+        node: investorBriefRef.current,
+        fileName: `Karigar-360-Investor-Scorecard-${new Date().toISOString().slice(0, 10)}.pdf`,
+      });
+      toast.success("Investor scorecard downloaded.");
+    } catch (error) {
+      console.error("[investor-brief]", error);
+      toast.error("Investor scorecard generation failed.");
+    } finally {
+      setIsExportingInvestorBrief(false);
+    }
+  };
 
   const serviceRevenue = completed.reduce<Record<string, number>>((accumulator, booking) => {
     const key = booking.service || "General";
@@ -1179,6 +1438,29 @@ export function AdminFinancePage() {
 
   return (
     <ScrollPage>
+      {pitchMode ? (
+        <ProjectedAssetYieldHero
+          marketLabel={zoneLabel}
+          postureLabel={financeSummary.marketMetrics.isExistingMarket ? "Pilot Asset Yield" : "Shadow Launch Asset Yield"}
+          assetYield={financeAssetYield}
+          paybackDays={financeSummary.unitEconomics.paybackDays}
+          yieldPerJob={netProfitPerJob}
+        />
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <button
+          type="button"
+          onClick={handleDownloadInvestorBrief}
+          disabled={isExportingInvestorBrief}
+          aria-label="Download investor brief from finance"
+          className="inline-flex min-h-12 items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          {isExportingInvestorBrief ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Download Investor Brief
+        </button>
+      </div>
+
       <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <SuitePanel
           eyebrow="Unit Economics"
@@ -1328,6 +1610,20 @@ export function AdminFinancePage() {
           hideFooter
         />
       )}
+
+      <div className="pointer-events-none fixed left-[-99999px] top-0 z-[-1] w-[980px]" aria-hidden="true">
+        <div ref={investorBriefRef}>
+          <ExecutiveInvestorBrief
+            summary={financeBriefSummary}
+            yieldSnapshot={yieldSnapshot}
+            assetYield={financeAssetYield}
+            viewportLabel={formatViewportLabel(financeExecutiveViewport)}
+            verifiedWorkers={verifiedWorkers}
+            verifiedWorkerRate={verifiedWorkerRate}
+            totalWorkers={stats.totalWorkers}
+          />
+        </div>
+      </div>
     </ScrollPage>
   );
 }
@@ -1962,12 +2258,16 @@ function ObservabilityCopilotBubble({
 function ExecutiveInvestorBrief({
   summary,
   yieldSnapshot,
+  assetYield,
+  viewportLabel,
   verifiedWorkers,
   verifiedWorkerRate,
   totalWorkers,
 }: {
   summary: ReturnType<typeof buildSystemInsightsSummary>;
   yieldSnapshot: ReturnType<typeof getYieldSnapshot>;
+  assetYield: ProjectedAssetYieldSnapshot;
+  viewportLabel: string;
   verifiedWorkers: number;
   verifiedWorkerRate: number;
   totalWorkers: number;
@@ -1981,7 +2281,7 @@ function ExecutiveInvestorBrief({
     {
       city: "Chandigarh",
       stage: "Shadow Launch",
-      note: `Freelancer-first expansion with projected CAC ${formatInr(summary.unitEconomics.cacProjected)} and ${summary.unitEconomics.paybackDays}-day payback.`,
+      note: `Freelancer-first expansion with projected CAC ${formatInr(summary.unitEconomics.cacProjected)}, ${summary.unitEconomics.paybackDays}-day payback, and projected 12-month asset yield of ${assetYield.roi12m.toFixed(0)}%.`,
     },
     {
       city: "New Delhi",
@@ -2000,21 +2300,21 @@ function ExecutiveInvestorBrief({
           <div className="flex items-start justify-between gap-6">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
-                RAHI Investor Brief
+                Karigar 360 Institutional Scorecard
               </p>
               <h1 className="mt-2 text-[2rem] font-black tracking-tight text-[#0F172A]">
-                Karigar 360 expansion and unit-economics scorecard
+                12-month asset yield, expansion blueprint, and trust verification
               </h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-                Executive snapshot of the Agra command base, verified-worker trust coverage, and the next shadow-launch sequence for Chandigarh and New Delhi.
+                Boardroom-grade view of the Agra pilot, the Chandigarh shadow-launch math, and the verification rails protecting expansion quality.
               </p>
             </div>
 
-            <div className="rounded-[22px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-right">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Trust badge</p>
-              <p className="mt-2 text-3xl font-black text-emerald-700">{verifiedWorkerRate}%</p>
-              <p className="mt-1 text-xs font-semibold text-emerald-800">
-                {verifiedWorkers}/{Math.max(1, totalWorkers)} workers verified
+            <div className="rounded-[22px] border border-[#0F172A] bg-[#0F172A] px-5 py-4 text-right text-white">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Projected 12M yield</p>
+              <p className="mt-2 text-3xl font-black">{assetYield.roi12m.toFixed(0)}%</p>
+              <p className="mt-1 text-xs font-semibold text-slate-200">
+                {formatInr(assetYield.monthlyNetProfit)} monthly net profit run-rate
               </p>
             </div>
           </div>
@@ -2024,15 +2324,18 @@ function ExecutiveInvestorBrief({
           <div className="space-y-6">
             <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
               <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
-                Net Profit per Job
+                Section 1
               </p>
+              <h2 className="mt-2 text-xl font-black tracking-tight text-[#0F172A]">
+                Golden Yield
+              </h2>
               <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
-                <p className="text-lg font-bold text-[#0F172A]">
+                <p className="text-3xl font-black text-[#0F172A]">
                   {formatInr(yieldSnapshot.netProfitPerJob)}
                 </p>
                 <p className="mt-3 text-sm leading-7 text-slate-700">
                   <span className="font-bold text-slate-900">Formula:</span>{" "}
-                  Net Profit per Job = Platform Commission - (Marketing CAC + Incentives)
+                  Net Profit per Job = Commission - (Marketing CAC + Incentives)
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <BriefMetric label="Commission" value={formatInr(yieldSnapshot.commissionPerJob)} tone="navy" />
@@ -2040,6 +2343,32 @@ function ExecutiveInvestorBrief({
                   <BriefMetric label="Incentives" value={formatInr(yieldSnapshot.incentivesPerJob)} tone="amber" />
                 </div>
               </div>
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                    Projected 12-Month Asset Yield
+                  </p>
+                  <h2 className="mt-2 text-xl font-black tracking-tight text-[#0F172A]">
+                    Expansion payback math the investor can remember
+                  </h2>
+                </div>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                  Payback {summary.unitEconomics.paybackDays} days
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <BriefMetric label="Monthly net profit" value={formatInr(assetYield.monthlyNetProfit)} tone="emerald" />
+                <BriefMetric label="Expansion CAC" value={formatInr(assetYield.expansionCac)} tone="amber" />
+                <BriefMetric label="Monthly run-rate" value={`${assetYield.monthlyJobsRunRate} jobs`} tone="navy" />
+                <BriefMetric label="Annualized profit" value={formatInr(assetYield.annualizedNetProfit)} tone="sky" />
+              </div>
+              <p className="mt-4 text-sm leading-7 text-slate-700">
+                ROI_12m = ((Monthly Net Profit x 12) - Expansion CAC) / Expansion CAC. Current modeled output lands at <span className="font-black text-[#0F172A]">{assetYield.roi12m.toFixed(0)}%</span>.
+              </p>
             </div>
 
             <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
@@ -2060,6 +2389,7 @@ function ExecutiveInvestorBrief({
               <div className="mt-5">
                 <ExecutiveDensityThumbnail
                   zoneLabel={summary.marketMetrics.zoneLabel}
+                  viewportLabel={viewportLabel}
                   density={summary.marketMetrics.density}
                   activeJobs={Math.max(12, Math.round(summary.marketMetrics.density * 10))}
                   workerCoverage={Math.max(6, Math.round((100 - verifiedWorkerRate) * 0.08 + 8))}
@@ -2071,11 +2401,14 @@ function ExecutiveInvestorBrief({
           <div className="space-y-6">
             <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
               <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
-                Shadow launch timeline
+                Section 2
               </p>
               <h2 className="mt-2 text-xl font-black tracking-tight text-[#0F172A]">
-                Chandigarh and New Delhi scaling path
+                Expansion Blueprint
               </h2>
+              <p className="mt-3 text-sm leading-7 text-slate-600">
+                Shadow launch sequence that turns the Agra playbook into a low-capital expansion path.
+              </p>
 
               <div className="mt-5 space-y-4">
                 {expansionTimeline.map((step, index) => (
@@ -2097,10 +2430,13 @@ function ExecutiveInvestorBrief({
 
             <div className="rounded-[28px] border border-slate-200 bg-[#0F172A] px-6 py-6 text-white shadow-sm">
               <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">
-                Executive summary
+                Section 3
               </p>
+              <h2 className="mt-2 text-xl font-black tracking-tight text-white">
+                Trust & Verification
+              </h2>
               <p className="mt-3 text-sm leading-7 text-slate-200">
-                RAHI is demonstrating city-scale logistics discipline in Agra first, with verified-worker trust coverage, visible unit economics, and a controlled shadow-launch path into new markets.
+                Verified workers, secure proof rails, and audit-backed operations reduce expansion risk before spend scales.
               </p>
               <div className="mt-5 grid gap-3">
                 <div className="flex items-center justify-between rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
@@ -2110,6 +2446,12 @@ function ExecutiveInvestorBrief({
                 <div className="flex items-center justify-between rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Expansion posture</span>
                   <span className="text-sm font-bold text-white">Shadow Launch / Freelancer-first</span>
+                </div>
+                <div className="rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Risk mitigation</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-100">
+                    Critical payment, booking, and proof failures remain isolated behind the verified audit trail so margin protection stays visible while the expansion engine scales.
+                  </p>
                 </div>
                 <div className="flex items-center justify-between rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Generated</span>
@@ -2126,13 +2468,66 @@ function ExecutiveInvestorBrief({
   );
 }
 
+function ProjectedAssetYieldHero({
+  marketLabel,
+  postureLabel,
+  assetYield,
+  paybackDays,
+  yieldPerJob,
+}: {
+  marketLabel: string;
+  postureLabel: string;
+  assetYield: ProjectedAssetYieldSnapshot;
+  paybackDays: number;
+  yieldPerJob: number;
+}) {
+  return (
+    <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
+            Projected Asset Yield
+          </p>
+          <h2 className="mt-2 text-2xl font-black tracking-tight text-[#0F172A]">
+            {marketLabel} is operating as a measurable asset, not just a dashboard.
+          </h2>
+          <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+            {postureLabel} stays disciplined when 12-month yield, CAC recovery, and payback remain visible above the fold.
+          </p>
+        </div>
+
+        <div className="rounded-[20px] border border-[#0F172A] bg-[#0F172A] px-5 py-4 text-right text-white">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+            12M Yield
+          </p>
+          <p className="mt-2 text-3xl font-black">
+            {assetYield.roi12m.toFixed(0)}%
+          </p>
+          <p className="mt-1 text-xs font-semibold text-slate-200">
+            {formatInr(assetYield.annualizedNetProfit)} annualized net profit
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 md:grid-cols-4">
+        <MetricTile label="Run-rate jobs" value={assetYield.monthlyJobsRunRate.toLocaleString("en-IN")} tone="navy" />
+        <MetricTile label="Monthly yield" value={formatInr(assetYield.monthlyNetProfit)} tone="emerald" />
+        <MetricTile label="Payback window" value={`${paybackDays} days`} tone="amber" />
+        <MetricTile label="Profit / job" value={formatInr(yieldPerJob)} tone="sky" />
+      </div>
+    </section>
+  );
+}
+
 function ExecutiveDensityThumbnail({
   zoneLabel,
+  viewportLabel,
   density,
   activeJobs,
   workerCoverage,
 }: {
   zoneLabel: string;
+  viewportLabel: string;
   density: number;
   activeJobs: number;
   workerCoverage: number;
@@ -2157,10 +2552,11 @@ function ExecutiveDensityThumbnail({
       <div className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white bg-emerald-400 shadow-[0_0_0_10px_rgba(16,185,129,0.26)]" />
 
       <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 rounded-[22px] border border-white/10 bg-slate-950/55 px-4 py-3 backdrop-blur-sm">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Active focus</p>
-          <p className="mt-1 text-lg font-black text-white">{zoneLabel}</p>
-        </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Active focus</p>
+            <p className="mt-1 text-lg font-black text-white">{zoneLabel}</p>
+            <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300">{viewportLabel}</p>
+          </div>
 
         <div className="grid grid-cols-2 gap-3 text-right">
           <div>

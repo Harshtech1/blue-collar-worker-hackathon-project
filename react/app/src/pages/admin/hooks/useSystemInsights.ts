@@ -5,7 +5,7 @@ import {
   normalizeStrategyChips,
   type StrategyChip,
   type SystemInsightsSummary,
-} from "@/pages/admin/utils/systemInsights";
+} from "../utils/systemInsights";
 
 const SYSTEM_INSIGHTS_DEBOUNCE_MS = 700;
 const DEMO_ADMIN_TOKEN = "demo-admin-token";

@@ -4,6 +4,8 @@ import {
   buildSimulationHistoryDocument,
 } from "../models/SimulationHistory.js";
 import {
+  analyzeAdminCopilotWithLLM,
+  analyzeSystemInsightsWithLLM,
   analyzeStrategyWithLLM,
   hasStrategyProviderConfigured,
 } from "../services/llmService.js";
@@ -73,6 +75,116 @@ const getHistoricalSignals = async (db, areaQuery, days = 14) => {
       actual_demand: row.orders + (row.emergency_orders || 0),
     };
   });
+};
+
+const toAuditTimestamp = (value) => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toISOString();
+  }
+  return date.toISOString();
+};
+
+const toAuditMillis = (value) => {
+  const millis = new Date(value || 0).getTime();
+  return Number.isFinite(millis) ? millis : 0;
+};
+
+const sortAuditTrailByTime = (entries = []) => (
+  [...entries]
+    .filter((entry) => entry && entry.message)
+    .sort((left, right) => toAuditMillis(right.time) - toAuditMillis(left.time))
+);
+
+const buildBookingAuditTrail = async (db) => {
+  const bookings = await db.collection("bookings").find(
+    {},
+    {
+      projection: {
+        serviceName: 1,
+        service: 1,
+        status: 1,
+        paymentStatus: 1,
+        amount: 1,
+        total_price: 1,
+        city: 1,
+        address: 1,
+        updatedAt: 1,
+        createdAt: 1,
+        statusHistory: 1,
+      },
+    },
+  ).sort({ updatedAt: -1, createdAt: -1 }).limit(8).toArray();
+
+  return bookings.flatMap((booking) => {
+    const serviceLabel = booking.serviceName || booking.service || "Service";
+    const locationLabel = booking.city || booking.address || "Unknown location";
+    const latestStatus = Array.isArray(booking.statusHistory) && booking.statusHistory.length > 0
+      ? booking.statusHistory[booking.statusHistory.length - 1]
+      : null;
+    const latestTime = latestStatus?.timestamp || booking.updatedAt || booking.createdAt;
+    const entries = [
+      {
+        source: "booking",
+        severity: booking.status === "cancelled" ? "critical" : booking.status === "pending" ? "watch" : "info",
+        time: toAuditTimestamp(latestTime),
+        message: `${serviceLabel} in ${locationLabel} is currently ${booking.status || "unknown"}${latestStatus?.actor ? ` via ${latestStatus.actor}` : ""}.`,
+      },
+    ];
+
+    if (booking.paymentStatus !== "paid" && ["matched", "in_progress", "completed"].includes(String(booking.status || ""))) {
+      const amount = Math.round(Number(booking.amount ?? booking.total_price ?? 0));
+      entries.push({
+        source: "payment",
+        severity: booking.status === "completed" ? "critical" : "watch",
+        time: toAuditTimestamp(booking.updatedAt || booking.createdAt),
+        message: `Payment is still pending for ${serviceLabel} in ${locationLabel}${amount > 0 ? ` at INR ${amount.toLocaleString("en-IN")}` : ""}.`,
+      });
+    }
+
+    return entries;
+  });
+};
+
+const buildSimulationAuditTrail = async (db) => {
+  const history = await db.collection(SIMULATION_HISTORY_COLLECTION).find(
+    {},
+    {
+      projection: {
+        zoneLabel: 1,
+        city: 1,
+        scenario: 1,
+        analysisMode: 1,
+        auditLog: 1,
+        createdAt: 1,
+        llmResponse: 1,
+      },
+    },
+  ).sort({ createdAt: -1 }).limit(6).toArray();
+
+  return history.map((entry) => ({
+    source: "strategy",
+    severity: "info",
+    time: toAuditTimestamp(entry.createdAt),
+    message: entry.auditLog
+      || entry.llmResponse?.signal
+      || `${entry.analysisMode || "strategy_brief"} completed for ${entry.zoneLabel || entry.city || "the active zone"} during ${entry.scenario || "baseline"} mode.`,
+  }));
+};
+
+const buildPersistentAuditTrail = async (db) => {
+  const [bookingTrail, simulationTrail] = await Promise.all([
+    buildBookingAuditTrail(db).catch((error) => {
+      console.warn("[admin-copilot] Booking audit trail unavailable:", error.message);
+      return [];
+    }),
+    buildSimulationAuditTrail(db).catch((error) => {
+      console.warn("[admin-copilot] Simulation audit trail unavailable:", error.message);
+      return [];
+    }),
+  ]);
+
+  return sortAuditTrailByTime([...bookingTrail, ...simulationTrail]).slice(0, 16);
 };
 
 export const analyzeAreaDensity = async (req, res) => {
@@ -268,6 +380,64 @@ export const analyzeStrategyBrief = async (req, res) => {
     return res.status(500).json({
       message: "Strategy analysis failed",
       detail: error instanceof Error ? error.message : "Unknown strategy error",
+    });
+  }
+};
+
+export const askAdminCopilot = async (req, res) => {
+  let db = null;
+
+  try {
+    try {
+      db = getDb();
+    } catch (dbError) {
+      console.warn("[askAdminCopilot] Database unavailable, continuing without persistence:", dbError.message);
+    }
+
+    const persistentAuditTrail = db
+      ? await buildPersistentAuditTrail(db)
+      : [];
+
+    const mergedAuditTrail = sortAuditTrailByTime([
+      ...(Array.isArray(req.body?.auditTrail) ? req.body.auditTrail : []),
+      ...persistentAuditTrail,
+    ]).slice(0, 24);
+
+    const copilotResult = await analyzeAdminCopilotWithLLM({
+      ...(req.body || {}),
+      auditTrail: mergedAuditTrail,
+    });
+
+    return res.json({
+      ...copilotResult.copilot,
+      provider: copilotResult.provider,
+      model: copilotResult.model,
+      fallback: !hasStrategyProviderConfigured() || copilotResult.provider === "rule_engine",
+    });
+  } catch (error) {
+    console.error("askAdminCopilot Error:", error);
+    return res.status(500).json({
+      message: "Admin copilot request failed",
+      detail: error instanceof Error ? error.message : "Unknown admin copilot error",
+    });
+  }
+};
+
+export const analyzeSystemInsights = async (req, res) => {
+  try {
+    const insightsResult = await analyzeSystemInsightsWithLLM(req.body || {});
+
+    return res.json({
+      ...insightsResult.insights,
+      provider: insightsResult.provider,
+      model: insightsResult.model,
+      fallback: !hasStrategyProviderConfigured() || insightsResult.provider === "rule_engine",
+    });
+  } catch (error) {
+    console.error("analyzeSystemInsights Error:", error);
+    return res.status(500).json({
+      message: "System insights generation failed",
+      detail: error instanceof Error ? error.message : "Unknown system insights error",
     });
   }
 };

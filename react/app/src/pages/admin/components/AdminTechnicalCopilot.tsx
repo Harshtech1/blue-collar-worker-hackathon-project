@@ -407,8 +407,10 @@ const buildCopilotPayload = (
 
 export function AdminTechnicalCopilot({
   shellContext,
+  showLauncher = true,
 }: {
   shellContext: AdminShellContextValue;
+  showLauncher?: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -740,27 +742,29 @@ export function AdminTechnicalCopilot({
           </section>
         ) : null}
 
-        <button
-          type="button"
-          onClick={() => setIsOpen((current) => !current)}
-          className="group inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/88 px-4 py-3 text-left shadow-[0_20px_48px_-28px_rgba(15,23,42,0.35)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-28px_rgba(15,23,42,0.45)]"
-          aria-label="Open AI navigator"
-        >
-          <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-[linear-gradient(135deg,#0F172A_0%,#1E293B_100%)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
-            <span className="absolute inset-0 rounded-full bg-emerald-400/20 blur-md transition group-hover:bg-emerald-400/30" />
-            <MessageSquare className="relative h-5 w-5" />
-          </span>
+        {showLauncher ? (
+          <button
+            type="button"
+            onClick={() => setIsOpen((current) => !current)}
+            className="group inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/88 px-4 py-3 text-left shadow-[0_20px_48px_-28px_rgba(15,23,42,0.35)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-28px_rgba(15,23,42,0.45)]"
+            aria-label="Open AI navigator"
+          >
+            <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-[linear-gradient(135deg,#0F172A_0%,#1E293B_100%)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
+              <span className="absolute inset-0 rounded-full bg-emerald-400/20 blur-md transition group-hover:bg-emerald-400/30" />
+              <MessageSquare className="relative h-5 w-5" />
+            </span>
 
-          <span className="hidden min-w-0 sm:block">
-            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              AI Navigator
+            <span className="hidden min-w-0 sm:block">
+              <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                AI Navigator
+              </span>
+              <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-slate-900">
+                Ask or navigate
+                <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
+              </span>
             </span>
-            <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-slate-900">
-              Ask or navigate
-              <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
-            </span>
-          </span>
-        </button>
+          </button>
+        ) : null}
       </div>
     </div>
   );

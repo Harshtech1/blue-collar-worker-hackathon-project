@@ -40,6 +40,183 @@ Respond only with JSON.`;
 const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_STRATEGY_MAX_TOKENS = 500;
+const DEFAULT_ADMIN_COPILOT_MAX_TOKENS = 450;
+const DEFAULT_SYSTEM_INSIGHTS_MAX_TOKENS = 320;
+const ADMIN_ROUTE_PREFIX = "/admin-portal-2026";
+
+const ADMIN_COPILOT_SYSTEM_PROMPT = `### ROLE: RAHI TECHNICAL COPILOT
+You are the technical copilot for the RAHI admin suite. You help operators understand incidents, summarize recent audit events, and navigate safely inside the admin surface.
+
+### OPERATING RULES
+- Use only the provided system context, issue list, and audit trail.
+- If you infer a cause instead of proving it directly, say that it is an inference.
+- Keep answers concise, operator-friendly, and technically grounded.
+- Only navigate when the operator is clearly asking to move somewhere.
+- If the operator asks for navigation and analysis together, answer the question briefly first and still return the route.
+- Never send the operator outside the admin suite.
+- Never suggest logout, customer routes, or destructive actions.
+
+### NAVIGATION TOOL
+You may select a single MapsTo(route) destination, but it must be one of the allowed admin routes supplied in the prompt.
+
+### OUTPUT
+Return valid JSON with:
+- reply: short natural-language answer for the operator.
+- navigationTarget: allowed admin route string or null.
+- navigationReason: short reason for the route choice or null.
+- auditHighlights: up to 3 short audit or issue lines.
+- confidence: one of high, medium, low.`;
+
+const SYSTEM_INSIGHTS_SYSTEM_PROMPT = `### ROLE: RAHI SYSTEM INSIGHTS ENGINE
+You convert compact RAHI operating metrics into 3 concise strategy chips for leadership.
+
+### OBJECTIVE
+Generate exactly 3 actionable chips in this order:
+1. Local Ops
+2. Financial Sustainability
+3. Market Expansion
+
+### RULES
+- Each chip must be concise, executive-friendly, and operationally useful.
+- Ground every chip in the supplied metrics.
+- Keep each insight under 140 characters when possible.
+- If the market city is NOT Agra, the Expansion Posture chip must explicitly include:
+  "Shadow Launch (Freelancer-First)"
+  and the exact financial line:
+  "Projected CAC: ₹150 | Payback Window: 18 Days"
+- If the market city IS Agra, focus the Expansion Posture chip on protecting the pilot before aggressive rollout.
+- Do not mention that you are an AI.
+
+### OUTPUT
+Return valid JSON:
+{
+  "chips": [
+    { "id": "local_ops", "title": "Local Ops", "insight": "..." },
+    { "id": "financial_stability", "title": "Financial Sustainability", "insight": "..." },
+    { "id": "expansion_posture", "title": "Market Expansion", "insight": "..." }
+  ]
+}
+
+Respond with JSON only.`;
+
+const ADMIN_ALLOWED_ROUTE_PATTERNS = [
+  /^\/admin-portal-2026\/overview$/,
+  /^\/admin-portal-2026\/workforce$/,
+  /^\/admin-portal-2026\/finance$/,
+  /^\/admin-portal-2026\/settings$/,
+  /^\/admin-portal-2026\/heatmap$/,
+  /^\/admin-portal-2026\/observability\/(system-health|bug-monitor|api-telemetry|audit-logs)$/,
+  /^\/admin-portal-2026\/war-room\/[a-z0-9-]+$/,
+  /^\/admin-portal-2026\/intelligence\/[a-z0-9-]+$/,
+];
+
+const ADMIN_ROUTE_TOOL_CATALOG = [
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/overview`,
+    label: "Overview",
+    reason: "Opening the morning brief and executive snapshot.",
+    keywords: ["overview", "dashboard", "brief", "summary"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/workforce`,
+    label: "Workforce",
+    reason: "Opening workforce operations for worker, booking, and trust-score review.",
+    keywords: ["workforce", "workers", "bookings", "customers", "trust scores", "trust score", "fleet"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/finance`,
+    label: "Finance",
+    reason: "Opening finance so you can inspect payouts, revenue, and payment exposure.",
+    keywords: ["finance", "money", "payments", "payment", "payout", "payouts", "revenue", "cash"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/observability/system-health`,
+    label: "System Health",
+    reason: "Opening system health for uptime, provider status, and deployment checks.",
+    keywords: ["system health", "observability", "uptime", "infra", "deployment", "health"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/observability/bug-monitor`,
+    label: "Issue Monitor",
+    reason: "Opening the issue monitor so the top incidents stay in view.",
+    keywords: ["bug", "bugs", "incident", "incidents", "failure", "failures", "error", "errors"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/observability/api-telemetry`,
+    label: "API Telemetry",
+    reason: "Opening API telemetry for latency and performance signals.",
+    keywords: ["latency", "telemetry", "api", "performance", "response time"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/observability/audit-logs`,
+    label: "Audit Logs",
+    reason: "Opening the verified audit trail and recent operating events.",
+    keywords: ["audit", "logs", "log", "trail", "strict persistence", "persistence"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/heatmap`,
+    label: "Heatmap",
+    reason: "Opening the heatmap view for spatial demand analysis.",
+    keywords: ["heatmap", "density map"],
+  },
+];
+
+const ADMIN_WAR_ROOM_ROUTE_CATALOG = [
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/agra-cantt`,
+    label: "Agra Cantt War Room",
+    reason: "Opening the Agra Cantt war room for active command coverage.",
+    keywords: ["agra cantt", "agra"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/taj-ganj`,
+    label: "Taj Ganj War Room",
+    reason: "Opening the Taj Ganj war room for the active sector.",
+    keywords: ["taj ganj"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/fatehabad-road`,
+    label: "Fatehabad Road War Room",
+    reason: "Opening the Fatehabad Road war room for the active sector.",
+    keywords: ["fatehabad"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/chandigarh`,
+    label: "Chandigarh War Room",
+    reason: "Opening the Chandigarh war room so the map centers on that market.",
+    keywords: ["chandigarh"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/chennai`,
+    label: "Chennai War Room",
+    reason: "Opening the Chennai war room so the map centers on that market.",
+    keywords: ["chennai"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/bengaluru`,
+    label: "Bengaluru War Room",
+    reason: "Opening the Bengaluru war room so the map centers on that market.",
+    keywords: ["bengaluru", "bangalore"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/kolkata`,
+    label: "Kolkata War Room",
+    reason: "Opening the Kolkata war room so the map centers on that market.",
+    keywords: ["kolkata", "calcutta"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/mumbai`,
+    label: "Mumbai War Room",
+    reason: "Opening the Mumbai war room so the map centers on that market.",
+    keywords: ["mumbai"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/new-delhi`,
+    label: "New Delhi War Room",
+    reason: "Opening the New Delhi war room so the map centers on that market.",
+    keywords: ["new delhi", "delhi"],
+  },
+];
 
 class ProviderRequestError extends Error {
   constructor(provider, status, message) {
@@ -191,6 +368,137 @@ const strategyGeminiSchema = {
   type: "object",
   properties: strategyJsonSchema.properties,
   required: strategyJsonSchema.required,
+};
+
+const AdminCopilotRequestSchema = z.object({
+  message: z.string().min(1),
+  currentRoute: z.string().optional().default(`${ADMIN_ROUTE_PREFIX}/observability/system-health`),
+  systemSummary: z.any().optional().default(null),
+  systemContext: z.object({
+    currentMission: z.string().optional().default("observability"),
+    currentObservabilityPanel: z.string().optional().default("system-health"),
+    currentZoneId: z.string().optional().default("agra-cantt"),
+    zoneLabel: z.string().optional().default("Agra Cantt"),
+    globalUptime: z.string().optional().default("99.20%"),
+    latencyMs: z.number().nonnegative().optional().default(0),
+    llmMode: z.enum(["ready", "fallback"]).optional().default("ready"),
+    llmSummary: z.string().optional().default("Cloud Engine: Monitoring"),
+    activeWorkerRate: z.number().optional().default(0),
+    activeBugs: z.number().optional().default(0),
+    pendingPayouts: z.number().optional().default(0),
+    averageTicket: z.number().optional().default(0),
+    sevenDayBookings: z.number().optional().default(0),
+    sevenDayRevenue: z.number().optional().default(0),
+    healthSnapshot: z.any().optional().default(null),
+  }).optional().default({}),
+  issues: z.array(z.object({
+    code: z.string().optional().default(""),
+    domain: z.string().optional().default(""),
+    severity: z.string().optional().default("watch"),
+    message: z.string().optional().default(""),
+    impact: z.string().optional().default(""),
+    recommendedAction: z.string().optional().default(""),
+  })).optional().default([]),
+  auditTrail: z.array(z.object({
+    source: z.string().optional().default("audit"),
+    severity: z.string().optional().default("info"),
+    message: z.string().optional().default(""),
+    time: z.string().optional().default(""),
+  })).optional().default([]),
+  providerPreference: z.enum(["groq", "gemini"]).optional(),
+});
+
+const AdminCopilotResponseSchema = z.object({
+  reply: z.string().min(1),
+  navigationTarget: z.string().nullable().optional(),
+  navigationReason: z.string().nullable().optional(),
+  auditHighlights: z.array(z.string()).optional().default([]),
+  confidence: z.enum(["high", "medium", "low"]).optional().default("medium"),
+});
+
+const SystemInsightsRequestSchema = z.object({
+  marketMetrics: z.object({
+    city: z.string().optional().default("Agra"),
+    zoneLabel: z.string().optional().default("Agra Cantt"),
+    density: z.number().optional().default(0.82),
+    surgeZones: z.array(z.string()).optional().default([]),
+    cityTier: z.enum(["pilot", "tier_1", "tier_2", "tier_3", "international"]).optional().default("tier_2"),
+    isExistingMarket: z.boolean().optional().default(false),
+  }).optional().default({}),
+  unitEconomics: z.object({
+    yieldPerJob: z.number().optional().default(0),
+    cacProjected: z.number().optional().default(150),
+    paybackDays: z.number().optional().default(18),
+  }).optional().default({}),
+  systemHealth: z.object({
+    criticalBugs: z.number().int().nonnegative().optional().default(0),
+    uptime: z.number().nonnegative().optional().default(99.9),
+    llmMode: z.enum(["ready", "fallback"]).optional().default("ready"),
+  }).optional().default({}),
+  providerPreference: z.enum(["groq", "gemini"]).optional(),
+});
+
+const SystemInsightChipSchema = z.object({
+  id: z.enum(["local_ops", "financial_stability", "expansion_posture"]),
+  title: z.string().optional(),
+  insight: z.string().min(1),
+});
+
+const SystemInsightsResponseSchema = z.object({
+  chips: z.array(SystemInsightChipSchema).min(1).max(3),
+});
+
+const adminCopilotJsonSchema = {
+  type: "object",
+  properties: {
+    reply: { type: "string" },
+    navigationTarget: { type: ["string", "null"] },
+    navigationReason: { type: ["string", "null"] },
+    auditHighlights: {
+      type: "array",
+      items: { type: "string" },
+      minItems: 0,
+      maxItems: 3,
+    },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+  },
+  required: ["reply", "navigationTarget", "navigationReason", "auditHighlights", "confidence"],
+  additionalProperties: false,
+};
+
+const adminCopilotGeminiSchema = {
+  type: "object",
+  properties: adminCopilotJsonSchema.properties,
+  required: adminCopilotJsonSchema.required,
+};
+
+const systemInsightsJsonSchema = {
+  type: "object",
+  properties: {
+    chips: {
+      type: "array",
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", enum: ["local_ops", "financial_stability", "expansion_posture"] },
+          title: { type: "string" },
+          insight: { type: "string" },
+        },
+        required: ["id", "title", "insight"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["chips"],
+  additionalProperties: false,
+};
+
+const systemInsightsGeminiSchema = {
+  type: "object",
+  properties: systemInsightsJsonSchema.properties,
+  required: systemInsightsJsonSchema.required,
 };
 
 const formatCurrency = (value) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
@@ -653,6 +961,14 @@ const normalizeOptionalText = (value) => {
   return undefined;
 };
 
+const normalizeTextArray = (value) => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeOptionalText(item))
+    .filter(Boolean)
+    .slice(0, 3);
+};
+
 const finalizeStrategy = (raw, payload) => {
   const parsed = StrategyResponseSchema.parse(raw);
   const competitorPressure = hasCompetitorPressure(payload);
@@ -808,6 +1124,566 @@ const callGeminiStrategy = async (payload) => {
     recordProviderHealth("gemini", classifyProviderStatus(status, message), message);
     throw error;
   }
+};
+
+const sanitizeAdminRoute = (route) => {
+  const normalized = normalizeOptionalText(route);
+  if (!normalized) return null;
+  return ADMIN_ALLOWED_ROUTE_PATTERNS.some((pattern) => pattern.test(normalized))
+    ? normalized
+    : null;
+};
+
+const tokenizeAdminCopilotQuery = (value) => (
+  String(value || "")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g)
+    || []
+);
+
+const hasAdminNavigationIntent = (message) => (
+  /(?:go to|take me(?: to)?|open|show me|jump to|navigate(?: to)?|bring me(?: to)?|move to)/i
+    .test(String(message || ""))
+);
+
+const findMatchingAdminRoute = (normalizedMessage, routes) => (
+  routes.find((entry) => entry.keywords.some((keyword) => normalizedMessage.includes(keyword)))
+  || null
+);
+
+const resolveAdminNavigation = (message, systemContext = {}) => {
+  const normalizedMessage = String(message || "").toLowerCase();
+  if (!normalizedMessage) return null;
+
+  const currentZoneId = String(systemContext?.currentZoneId || "agra-cantt").trim().toLowerCase() || "agra-cantt";
+  const currentZoneLabel = normalizeOptionalText(systemContext?.zoneLabel) || "the active zone";
+  const currentZoneRoute = {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/${encodeURIComponent(currentZoneId)}`,
+    label: `${currentZoneLabel} War Room`,
+    reason: `Opening the war room for ${currentZoneLabel}.`,
+  };
+
+  const explicitZoneRoute = findMatchingAdminRoute(normalizedMessage, ADMIN_WAR_ROOM_ROUTE_CATALOG);
+  if (explicitZoneRoute && (hasAdminNavigationIntent(normalizedMessage) || /war room|operations center|map|intelligence/.test(normalizedMessage))) {
+    return explicitZoneRoute;
+  }
+
+  if (/war room|operations center|map|intelligence/.test(normalizedMessage) && hasAdminNavigationIntent(normalizedMessage)) {
+    return currentZoneRoute;
+  }
+
+  if (!hasAdminNavigationIntent(normalizedMessage)) {
+    return null;
+  }
+
+  return findMatchingAdminRoute(normalizedMessage, ADMIN_ROUTE_TOOL_CATALOG)
+    || explicitZoneRoute
+    || null;
+};
+
+const buildAdminCopilotPrompt = (payload, heuristicNavigation) => {
+  const healthSnapshot = payload.systemContext?.healthSnapshot || {};
+  const summaryContext = {
+    currentRoute: payload.currentRoute,
+    currentMission: payload.systemContext?.currentMission,
+    observabilityPanel: payload.systemContext?.currentObservabilityPanel,
+    systemSummary: payload.systemSummary || null,
+    zoneLabel: payload.systemContext?.zoneLabel,
+    uptime: payload.systemContext?.globalUptime,
+    latencyMs: payload.systemContext?.latencyMs,
+    activeBugs: payload.systemContext?.activeBugs,
+    activeWorkerRate: payload.systemContext?.activeWorkerRate,
+    pendingPayouts: payload.systemContext?.pendingPayouts,
+    averageTicket: payload.systemContext?.averageTicket,
+    sevenDayBookings: payload.systemContext?.sevenDayBookings,
+    sevenDayRevenue: payload.systemContext?.sevenDayRevenue,
+    llmMode: payload.systemContext?.llmMode,
+    llmSummary: payload.systemContext?.llmSummary,
+    database: healthSnapshot?.database || "unknown",
+    secureUploads: healthSnapshot?.media?.secureUploadsReady ? "ready" : "fallback",
+    deploymentBranch: healthSnapshot?.deployment?.branch || "unknown",
+    deploymentCommit: healthSnapshot?.deployment?.commit || null,
+  };
+
+  const issueLines = payload.issues.length > 0
+    ? payload.issues.slice(0, 8).map((issue) => (
+      `- [${String(issue.severity || "watch").toUpperCase()}] ${issue.domain || issue.code || "Issue"}: ${issue.message}${issue.impact ? ` Impact: ${issue.impact}` : ""}${issue.recommendedAction ? ` Action: ${issue.recommendedAction}` : ""}`
+    )).join("\n")
+    : "- No open issues supplied.";
+
+  const auditLines = payload.auditTrail.length > 0
+    ? payload.auditTrail.slice(0, 12).map((entry) => (
+      `- [${String(entry.source || "audit").toUpperCase()}${entry.time ? ` @ ${entry.time}` : ""}] ${entry.message}`
+    )).join("\n")
+    : "- No recent audit events supplied.";
+
+  const allowedRouteLines = [...ADMIN_ROUTE_TOOL_CATALOG, ...ADMIN_WAR_ROOM_ROUTE_CATALOG]
+    .map((entry) => `- ${entry.label}: ${entry.route}`)
+    .join("\n");
+
+  return [
+    "System Context:",
+    JSON.stringify(summaryContext, null, 2),
+    "",
+    "Open Issues:",
+    issueLines,
+    "",
+    "STRICT_PERSISTENCE Audit Trail:",
+    auditLines,
+    "",
+    "Allowed MapsTo(route) destinations:",
+    allowedRouteLines,
+    "",
+    `Heuristic navigation hint: ${heuristicNavigation ? `${heuristicNavigation.route} (${heuristicNavigation.reason})` : "none"}`,
+    "",
+    `Operator query: ${payload.message}`,
+    "",
+    "Return JSON only. Keep reply concise. Use navigationTarget only for a clear admin-navigation intent.",
+  ].join("\n");
+};
+
+const collectRelevantAdminHighlights = (payload) => {
+  const tokens = tokenizeAdminCopilotQuery(payload.message).filter((token) => token.length > 2);
+  const scored = [
+    ...payload.issues.map((issue) => ({
+      source: issue.domain || issue.code || "issue",
+      message: [issue.message, issue.impact, issue.recommendedAction].filter(Boolean).join(" "),
+      severity: issue.severity || "watch",
+      score: 0,
+    })),
+    ...payload.auditTrail.map((entry) => ({
+      source: entry.source || "audit",
+      message: entry.message || "",
+      severity: entry.severity || "info",
+      score: 0,
+    })),
+  ].map((entry) => {
+    const haystack = `${entry.source} ${entry.message}`.toLowerCase();
+    const matchedTokenCount = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0);
+    const severityBoost = entry.severity === "critical"
+      ? 3
+      : entry.severity === "watch"
+        ? 2
+        : 1;
+    return {
+      ...entry,
+      score: matchedTokenCount + severityBoost,
+    };
+  });
+
+  const bestScore = scored.reduce((max, entry) => Math.max(max, entry.score), 0);
+  const relevant = bestScore > 1
+    ? scored.filter((entry) => entry.score >= bestScore - 1)
+    : scored.filter((entry) => entry.severity === "critical" || entry.severity === "watch");
+
+  return relevant
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 3)
+    .map((entry) => `[${String(entry.source || "audit").toUpperCase()}] ${entry.message.trim()}`)
+    .filter(Boolean);
+};
+
+const finalizeAdminCopilot = (raw, payload, heuristicNavigation) => {
+  const parsed = AdminCopilotResponseSchema.parse(raw);
+  const llmNavigation = sanitizeAdminRoute(parsed.navigationTarget);
+  const finalNavigation = heuristicNavigation?.route
+    || (hasAdminNavigationIntent(payload.message) ? llmNavigation : null);
+  const navigationReason = finalNavigation
+    ? heuristicNavigation?.reason
+      || normalizeOptionalText(parsed.navigationReason)
+      || `Opening ${finalNavigation}.`
+    : null;
+
+  return {
+    reply: parsed.reply.trim(),
+    navigationTarget: finalNavigation,
+    navigationReason,
+    auditHighlights: normalizeTextArray(parsed.auditHighlights),
+    confidence: parsed.confidence || "medium",
+  };
+};
+
+const buildAdminCopilotFallback = (payload) => {
+  const query = String(payload.message || "").toLowerCase();
+  const navigation = resolveAdminNavigation(payload.message, payload.systemContext);
+  const highlights = collectRelevantAdminHighlights(payload);
+  const latencyMs = Math.round(Number(payload.systemContext?.latencyMs || 0));
+  const activeBugs = Math.round(Number(payload.systemContext?.activeBugs || 0));
+  const criticalBugCount = Math.round(Number(payload.systemSummary?.systemHealth?.criticalBugs || activeBugs || 0));
+  const yieldPerJob = Math.round(Number(payload.systemSummary?.unitEconomics?.yieldPerJob || 0));
+  const healthSnapshot = payload.systemContext?.healthSnapshot || {};
+  const database = healthSnapshot?.database || "unknown";
+  const secureUploadsReady = healthSnapshot?.media?.secureUploadsReady === true;
+  const llmMode = payload.systemContext?.llmMode || healthSnapshot?.llm?.mode || "ready";
+
+  let reply;
+
+  if (navigation?.route && hasAdminNavigationIntent(payload.message)) {
+    if (/payment|payout|finance|money|revenue|settlement/.test(query)) {
+      reply = `Unit economics are averaging ${formatCurrency(yieldPerJob)} per job, pending payout exposure is ${formatCurrency(payload.systemContext?.pendingPayouts || 0)}, and seven-day revenue is ${formatCurrency(payload.systemContext?.sevenDayRevenue || 0)}. ${navigation.reason}`;
+    } else {
+      reply = navigation.reason;
+    }
+  } else if (/latency|slow|performance|api/.test(query)) {
+    reply = `Latency is currently ${latencyMs} ms. ${latencyMs > 80 ? "That is elevated for the admin rail, so API Telemetry and the issue monitor are the first places I would check." : "That is within the normal operating band right now."} Database is ${database}, secure uploads are ${secureUploadsReady ? "ready" : "in fallback"}, and the cloud reasoning rail is ${llmMode}.`;
+  } else if (/payment|payout|finance|money|revenue|settlement/.test(query)) {
+    reply = `Unit economics are averaging ${formatCurrency(yieldPerJob)} per job, pending payout exposure is ${formatCurrency(payload.systemContext?.pendingPayouts || 0)}, and seven-day revenue is ${formatCurrency(payload.systemContext?.sevenDayRevenue || 0)}. ${highlights[0] ? `The strongest related signal is ${highlights[0]}.` : "I would open Finance and the issue monitor to confirm whether this is a settlement problem or just payout backlog."}`;
+  } else if (/health|uptime|system|observability/.test(query)) {
+    reply = `From the STRICT_PERSISTENCE rail, I count ${criticalBugCount} critical bugs currently active. System uptime is ${payload.systemContext?.globalUptime || "unknown"}, latency is ${latencyMs} ms, and the cloud engine is ${llmMode}. ${secureUploadsReady ? "Secure uploads are ready." : "Secure uploads are running in fallback."}`;
+  } else if (/bug|error|failure|incident|audit|log/.test(query)) {
+    reply = highlights.length > 0
+      ? `The latest audit trail points to ${highlights[0]}${highlights[1] ? ` Next signal: ${highlights[1]}.` : ""}`
+      : "I do not have a matching persisted incident signal in the current audit trail, so any root-cause answer here would be an inference from live context only.";
+  } else {
+    reply = "I can summarize system health, explain latency, inspect payout pressure, read recent audit events, or navigate anywhere inside the admin suite.";
+  }
+
+  return {
+    reply,
+    navigationTarget: navigation?.route || null,
+    navigationReason: navigation?.reason || null,
+    auditHighlights: highlights,
+    confidence: highlights.length > 0 ? "high" : "medium",
+  };
+};
+
+const callGroqAdminCopilot = async (payload, heuristicNavigation) => {
+  const groqApiKey = getGroqApiKey();
+  const groqModel = getGroqModel();
+
+  if (!groqApiKey) {
+    recordProviderHealth("groq", "missing", "GROQ_API_KEY is not configured");
+    throw new Error("GROQ_API_KEY is not configured");
+  }
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqApiKey}`,
+      },
+      body: JSON.stringify({
+        model: groqModel,
+        temperature: 0.15,
+        max_completion_tokens: DEFAULT_ADMIN_COPILOT_MAX_TOKENS,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: ADMIN_COPILOT_SYSTEM_PROMPT },
+          { role: "user", content: buildAdminCopilotPrompt(payload, heuristicNavigation) },
+        ],
+      }),
+    });
+
+    const { text } = await parseGroqResponse(response);
+    recordProviderHealth("groq", "ready");
+    return {
+      copilot: finalizeAdminCopilot(extractJson(text), payload, heuristicNavigation),
+      provider: "groq",
+      model: groqModel,
+      rawText: text,
+    };
+  } catch (error) {
+    const status = error instanceof ProviderRequestError ? error.status : 0;
+    const message = error instanceof Error ? error.message : "Unknown Groq copilot error";
+    recordProviderHealth("groq", classifyProviderStatus(status, message), message);
+    throw error;
+  }
+};
+
+const callGeminiAdminCopilot = async (payload, heuristicNavigation) => {
+  const geminiApiKey = getGeminiApiKey();
+  const geminiModel = getGeminiModel();
+
+  if (!geminiApiKey) {
+    recordProviderHealth("gemini", "missing", "GEMINI_API_KEY is not configured");
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": geminiApiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: ADMIN_COPILOT_SYSTEM_PROMPT }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: buildAdminCopilotPrompt(payload, heuristicNavigation) }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.15,
+            topP: 0.8,
+            maxOutputTokens: DEFAULT_ADMIN_COPILOT_MAX_TOKENS,
+            responseMimeType: "application/json",
+            responseSchema: adminCopilotGeminiSchema,
+          },
+        }),
+      },
+    );
+
+    const { text } = await parseGeminiResponse(response);
+    recordProviderHealth("gemini", "ready");
+    return {
+      copilot: finalizeAdminCopilot(extractJson(text), payload, heuristicNavigation),
+      provider: "gemini",
+      model: geminiModel,
+      rawText: text,
+    };
+  } catch (error) {
+    const status = error instanceof ProviderRequestError ? error.status : 0;
+    const message = error instanceof Error ? error.message : "Unknown Gemini copilot error";
+    recordProviderHealth("gemini", classifyProviderStatus(status, message), message);
+    throw error;
+  }
+};
+
+export const analyzeAdminCopilotWithLLM = async (input) => {
+  const payload = AdminCopilotRequestSchema.parse(input);
+  const heuristicNavigation = resolveAdminNavigation(payload.message, payload.systemContext);
+  const providers = payload.providerPreference === "gemini"
+    ? [callGeminiAdminCopilot, callGroqAdminCopilot]
+    : payload.providerPreference === "groq"
+      ? [callGroqAdminCopilot, callGeminiAdminCopilot]
+      : [callGroqAdminCopilot, callGeminiAdminCopilot];
+
+  for (const provider of providers) {
+    try {
+      return await provider(payload, heuristicNavigation);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown admin copilot error";
+      const providerLabel = error instanceof ProviderRequestError ? `${error.provider}:${error.status}` : provider.name;
+      console.warn("[admin-copilot]", providerLabel, message);
+    }
+  }
+
+  return {
+    copilot: buildAdminCopilotFallback(payload),
+    provider: "rule_engine",
+    model: "admin-copilot-fallback",
+    rawText: null,
+  };
+};
+
+const getSystemInsightsMaxTokens = () => DEFAULT_SYSTEM_INSIGHTS_MAX_TOKENS;
+
+const buildSystemInsightsPrompt = (payload) => [
+  "Analyze these RAHI platform metrics.",
+  "Generate 3 short, high-impact strategy chips focused on:",
+  "1. Local Ops",
+  "2. Financial Sustainability",
+  "3. Market Expansion",
+  "",
+  "System Summary:",
+  JSON.stringify(payload, null, 2),
+  "",
+  "Return JSON only.",
+].join("\n");
+
+const buildSystemInsightsFallback = (input) => {
+  const payload = SystemInsightsRequestSchema.parse(input);
+  const city = String(payload.marketMetrics?.city || "Agra");
+  const zoneLabel = payload.marketMetrics?.zoneLabel || city;
+  const density = Number(payload.marketMetrics?.density || 0.82);
+  const surgeZone = payload.marketMetrics?.surgeZones?.[0] || zoneLabel;
+  const yieldPerJob = Math.round(Number(payload.unitEconomics?.yieldPerJob || 0));
+  const cacProjected = Math.round(Number(payload.unitEconomics?.cacProjected || 150));
+  const paybackDays = Math.round(Number(payload.unitEconomics?.paybackDays || 18));
+  const criticalBugs = Math.round(Number(payload.systemHealth?.criticalBugs || 0));
+
+  return {
+    chips: [
+      {
+        id: "local_ops",
+        title: "Local Ops",
+        insight: density >= 1
+          ? `Protect ${surgeZone} first and shift standby coverage into the densest active lane.`
+          : `Keep ${surgeZone} under light-touch coverage until density hardens above 1.0.`,
+      },
+      {
+        id: "financial_stability",
+        title: "Financial Stability",
+        insight: criticalBugs > 0
+          ? `Hold yield near ₹${yieldPerJob} while ${criticalBugs} critical issues stay active and CAC remains near ₹${cacProjected}.`
+          : `Yield is holding near ₹${yieldPerJob}; keep projected CAC near ₹${cacProjected} and payback at ${paybackDays} days.`,
+      },
+      {
+        id: "expansion_posture",
+        title: "Expansion Posture",
+        insight: city.trim().toLowerCase() !== "agra"
+          ? `Shadow Launch (Freelancer-First) | Projected CAC: ₹${cacProjected} | Payback: ${paybackDays} Days`
+          : `Agra pilot first: protect the core and export the playbook only after payback stays inside ${paybackDays} days.`,
+      },
+    ],
+  };
+};
+
+const finalizeSystemInsights = (raw, input) => {
+  const parsed = SystemInsightsResponseSchema.parse(raw);
+  const fallback = buildSystemInsightsFallback(input).chips;
+  const chipMap = new Map(parsed.chips.map((chip) => [chip.id, chip]));
+  const normalizedCity = String(input?.marketMetrics?.city || "Agra").trim().toLowerCase();
+
+  return {
+    chips: fallback.map((seed) => {
+      const source = chipMap.get(seed.id);
+      const title = normalizeOptionalText(source?.title) || seed.title;
+      let insight = normalizeOptionalText(source?.insight) || seed.insight;
+
+      if (
+        seed.id === "expansion_posture"
+        && normalizedCity !== "agra"
+        && (
+          !/shadow launch \(freelancer-first\)/i.test(insight)
+          || !/projected cac:/i.test(insight)
+          || !/payback window:/i.test(insight)
+        )
+      ) {
+        insight = seed.insight;
+      }
+
+      return {
+        id: seed.id,
+        title,
+        insight,
+      };
+    }),
+  };
+};
+
+const callGroqSystemInsights = async (input) => {
+  const payload = SystemInsightsRequestSchema.parse(input);
+  const groqApiKey = getGroqApiKey();
+  const groqModel = getGroqModel();
+
+  if (!groqApiKey) {
+    recordProviderHealth("groq", "missing", "GROQ_API_KEY is not configured");
+    throw new Error("GROQ_API_KEY is not configured");
+  }
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqApiKey}`,
+      },
+      body: JSON.stringify({
+        model: groqModel,
+        temperature: 0.15,
+        max_completion_tokens: getSystemInsightsMaxTokens(),
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: SYSTEM_INSIGHTS_SYSTEM_PROMPT },
+          { role: "user", content: buildSystemInsightsPrompt(payload) },
+        ],
+      }),
+    });
+
+    const { text } = await parseGroqResponse(response);
+    recordProviderHealth("groq", "ready");
+    return {
+      insights: finalizeSystemInsights(extractJson(text), payload),
+      provider: "groq",
+      model: groqModel,
+      rawText: text,
+    };
+  } catch (error) {
+    const status = error instanceof ProviderRequestError ? error.status : 0;
+    const message = error instanceof Error ? error.message : "Unknown Groq system insights error";
+    recordProviderHealth("groq", classifyProviderStatus(status, message), message);
+    throw error;
+  }
+};
+
+const callGeminiSystemInsights = async (input) => {
+  const payload = SystemInsightsRequestSchema.parse(input);
+  const geminiApiKey = getGeminiApiKey();
+  const geminiModel = getGeminiModel();
+
+  if (!geminiApiKey) {
+    recordProviderHealth("gemini", "missing", "GEMINI_API_KEY is not configured");
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": geminiApiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: SYSTEM_INSIGHTS_SYSTEM_PROMPT }],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: buildSystemInsightsPrompt(payload) }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.15,
+            topP: 0.8,
+            maxOutputTokens: getSystemInsightsMaxTokens(),
+            responseMimeType: "application/json",
+            responseSchema: systemInsightsGeminiSchema,
+          },
+        }),
+      },
+    );
+
+    const { text } = await parseGeminiResponse(response);
+    recordProviderHealth("gemini", "ready");
+    return {
+      insights: finalizeSystemInsights(extractJson(text), payload),
+      provider: "gemini",
+      model: geminiModel,
+      rawText: text,
+    };
+  } catch (error) {
+    const status = error instanceof ProviderRequestError ? error.status : 0;
+    const message = error instanceof Error ? error.message : "Unknown Gemini system insights error";
+    recordProviderHealth("gemini", classifyProviderStatus(status, message), message);
+    throw error;
+  }
+};
+
+export const analyzeSystemInsightsWithLLM = async (input) => {
+  const payload = SystemInsightsRequestSchema.parse(input);
+  const providers = payload.providerPreference === "gemini"
+    ? [callGeminiSystemInsights, callGroqSystemInsights]
+    : payload.providerPreference === "groq"
+      ? [callGroqSystemInsights, callGeminiSystemInsights]
+      : [callGroqSystemInsights, callGeminiSystemInsights];
+
+  for (const provider of providers) {
+    try {
+      return await provider(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown system insights error";
+      const providerLabel = error instanceof ProviderRequestError ? `${error.provider}:${error.status}` : provider.name;
+      console.warn("[system-insights]", providerLabel, message);
+    }
+  }
+
+  return {
+    insights: buildSystemInsightsFallback(payload),
+    provider: "rule_engine",
+    model: "system-insights-fallback",
+    rawText: null,
+  };
 };
 
 export const buildFallbackStrategy = (input) => {

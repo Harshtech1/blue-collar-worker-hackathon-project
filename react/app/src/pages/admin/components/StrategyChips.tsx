@@ -3,7 +3,7 @@ import { ArrowUpRight, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitAdminCopilotSeed } from "../adminCopilotEvents";
 import { useSystemInsights } from "../hooks/useSystemInsights";
-import type { StrategyChip, SystemInsightsSummary } from "@/pages/admin/utils/systemInsights";
+import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsights";
 
 interface StrategyChipsProps {
   summary: SystemInsightsSummary;
@@ -36,13 +36,13 @@ export function StrategyChips({ summary, className, onChipClick }: StrategyChips
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
-            Agentic Pulse
+            Strategic Pulse
           </p>
           <h3 className="mt-2 text-lg font-black text-[#0F172A]">
-            Proactive strategy guidance
+            Active guidance
           </h3>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            Concise action cues generated from market density, unit economics, and system health.
+            AI-ranked business intent for expansion posture, live risk, and yield optimization.
           </p>
         </div>
 
