@@ -36,13 +36,13 @@ export function StrategyChips({ summary, className, onChipClick }: StrategyChips
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
-            Strategic Pulse
+            Agentic Pulse
           </p>
           <h3 className="mt-2 text-lg font-black text-[#0F172A]">
-            Active guidance
+            Proactive strategy guidance
           </h3>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            AI-ranked business intent for expansion posture, live risk, and yield optimization.
+            Concise action cues generated from market density, unit economics, and system health.
           </p>
         </div>
 

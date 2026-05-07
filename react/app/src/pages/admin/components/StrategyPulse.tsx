@@ -1,7 +1,6 @@
 import { ArrowRight, Loader2, Radar, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitAdminCopilotSeed } from "../adminCopilotEvents";
-import { humanizeIssueCode } from "../adminSignals";
 import { useSystemInsights } from "../hooks/useSystemInsights";
 import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsights";
 
@@ -14,38 +13,6 @@ const CHIP_TONES: Record<StrategyChip["id"], string> = {
   local_ops: "border-sky-200 bg-sky-50/70 text-sky-950",
   financial_stability: "border-amber-200 bg-amber-50/80 text-amber-950",
   expansion_posture: "border-emerald-200 bg-emerald-50/80 text-emerald-950",
-};
-
-const CHIP_ACTIONS: Record<StrategyChip["id"], string> = {
-  local_ops: "Explain local ops",
-  financial_stability: "Open finance brief",
-  expansion_posture: "Open market entry brief",
-};
-
-const buildCopilotPrompt = (chip: StrategyChip, summary: SystemInsightsSummary) => {
-  if (chip.id === "expansion_posture") {
-    const targetCity = summary.marketMetrics.city.trim().toLowerCase() === "agra"
-      ? summary.marketMetrics.recommendedExpansionCity
-      : summary.marketMetrics.city;
-
-    return {
-      prompt: `Explain the market entry playbook for ${targetCity}. Focus on Shadow Launch (Freelancer-First), projected CAC of INR ${Math.round(summary.unitEconomics.cacProjected)}, payback in ${Math.round(summary.unitEconomics.paybackDays)} days, trust rails, and the first 14-day rollout plan.`,
-      sourceLabel: `Shadow Launch | ${targetCity}`,
-    };
-  }
-
-  if (chip.id === "financial_stability") {
-    return {
-      prompt: `Show me the money for ${summary.marketMetrics.city}. Walk me through unit economics, yield per job, CAC, incentives, and the next financial protection move before expansion.`,
-      sourceLabel: "Finance | Unit Economics",
-    };
-  }
-
-  const bugLabel = humanizeIssueCode(summary.systemHealth.primaryCriticalBugCode || "critical_bug");
-  return {
-    prompt: `Explain the local ops recommendation for ${summary.marketMetrics.zoneLabel}. Highlight surge zones, staffing moves, and whether ${bugLabel} changes the next 24-hour operating plan.`,
-    sourceLabel: `Local Ops | ${summary.marketMetrics.zoneLabel}`,
-  };
 };
 
 export function StrategyPulse({ summary, className }: StrategyPulseProps) {
@@ -86,45 +53,42 @@ export function StrategyPulse({ summary, className }: StrategyPulseProps) {
       </div>
 
       <div className="mission-scrollbar mt-4 flex gap-3 overflow-x-auto pb-1">
-        {chips.map((chip) => {
-          const copilotAction = buildCopilotPrompt(chip, summary);
-
-          return (
-            <button
-              key={`${chip.id}-${chip.insight}`}
-              type="button"
-              onClick={() => emitAdminCopilotSeed({
-                ...copilotAction,
-                mode: "send",
-              })}
-              className={cn(
-                "group min-w-[320px] flex-1 rounded-[22px] border px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_18px_42px_-30px_rgba(15,23,42,0.3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
-                CHIP_TONES[chip.id],
-              )}
-            >
-              <div className="flex h-full flex-col justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-current/70">
-                    {chip.title}
-                  </p>
-                  <p className="mt-3 text-sm font-semibold leading-6 text-current">
-                    {chip.insight}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-current/70">
-                    Copilot handoff
-                  </span>
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-current">
-                    {CHIP_ACTIONS[chip.id]}
-                    <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
-                  </span>
-                </div>
+        {chips.map((chip) => (
+          <button
+            key={`${chip.id}-${chip.insight}`}
+            type="button"
+            onClick={() => emitAdminCopilotSeed({
+              prompt: chip.copilotQuery,
+              sourceLabel: chip.title,
+              mode: "send",
+            })}
+            className={cn(
+              "group min-w-[320px] flex-1 rounded-[22px] border px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_18px_42px_-30px_rgba(15,23,42,0.3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
+              CHIP_TONES[chip.id],
+            )}
+          >
+            <div className="flex h-full flex-col justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-current/70">
+                  {chip.title}
+                </p>
+                <p className="mt-3 text-sm font-semibold leading-6 text-current">
+                  {chip.insight}
+                </p>
               </div>
-            </button>
-          );
-        })}
+
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-current/70">
+                  Copilot handoff
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-current">
+                  {chip.actionLabel}
+                  <ArrowRight className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
+                </span>
+              </div>
+            </div>
+          </button>
+        ))}
       </div>
     </section>
   );

@@ -54,7 +54,7 @@ const QUICK_ACTIONS = [
   "Jump to New Delhi",
 ];
 
-const INITIAL_ASSISTANT_MESSAGE = "AI Navigator is live. Ask about profit, risks, critical bugs, or say something like \"Jump to Delhi and show me the expansion plan\".";
+const INITIAL_ASSISTANT_MESSAGE = "AI Navigator is live. Ask about profit, risks, critical bugs, or say \"Jump to Delhi and show me the expansion plan\".";
 
 const createMessageId = () => (
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -244,6 +244,42 @@ const explainIssuePlainly = (issue: ObservabilityIssue) => (
   `${humanizeIssueCode(issue.code)} is happening because ${issue.message} Plain English: ${issue.impact} Recommended move: ${issue.recommendedAction}`
 );
 
+const buildNavigationAnnouncement = (
+  route: string,
+  context: AdminShellContextValue,
+  systemSummary: ReturnType<typeof buildSystemInsightsSummary>,
+) => {
+  if (route.startsWith(buildMissionPath("finance"))) {
+    return `Welcome to the Ledger. Yield is ${formatCurrency(systemSummary.unitEconomics.yieldPerJob)} per job and pending payouts are ${formatCurrency(context.pendingPayouts)}.`;
+  }
+
+  if (route.includes("/war-room/")) {
+    const targetZone = resolveRouteZoneOverride(route, context.routeZoneId, context.zoneLabel);
+    const targetSystemSummary = buildSystemInsightsSummary({
+      routeZoneId: targetZone.zoneId,
+      zoneLabel: targetZone.zoneLabel,
+      stats: context.stats,
+      activeWorkerRate: context.activeWorkerRate,
+      averageTicket: context.averageTicket,
+      globalUptime: context.globalUptime,
+      llmMode: context.llmMode,
+      healthSnapshot: context.healthSnapshot,
+      investorSummary: context.investorSummary,
+    });
+    return `War Room is live for ${targetZone.zoneLabel}. Market density is ${targetSystemSummary.marketMetrics.density.toFixed(2)} and the strongest launch lane is ${targetSystemSummary.marketMetrics.recommendedExpansionCity}.`;
+  }
+
+  if (route.startsWith(buildObservabilityPath("system-health"))) {
+    return `System Health is in view. ${systemSummary.systemHealth.criticalBugs} critical bugs are active and uptime is ${context.globalUptime}.`;
+  }
+
+  if (route.startsWith(buildObservabilityPath("bug-monitor"))) {
+    return `Issue Monitor is in view. ${systemSummary.systemHealth.criticalBugs} critical bugs are active across the STRICT_PERSISTENCE rail.`;
+  }
+
+  return null;
+};
+
 const buildLocalCopilotResponse = (
   message: string,
   context: AdminShellContextValue,
@@ -365,20 +401,11 @@ const buildCopilotPayload = (
   context: AdminShellContextValue,
   currentRoute: string,
   strategySummary: ReturnType<typeof buildCopilotSummary>,
+  systemSummary: ReturnType<typeof buildSystemInsightsSummary>,
 ) => ({
   message,
   currentRoute,
-  systemSummary: buildSystemInsightsSummary({
-    routeZoneId: context.routeZoneId,
-    zoneLabel: context.zoneLabel,
-    stats: context.stats,
-    activeWorkerRate: context.activeWorkerRate,
-    averageTicket: context.averageTicket,
-    globalUptime: context.globalUptime,
-    llmMode: context.llmMode,
-    healthSnapshot: context.healthSnapshot,
-    investorSummary: context.investorSummary,
-  }),
+  systemSummary,
   systemContext: {
     currentMission: context.currentMission,
     currentObservabilityPanel: context.currentObservabilityPanel,
@@ -388,6 +415,9 @@ const buildCopilotPayload = (
     latencyMs: context.channelLatencyMs,
     llmMode: context.llmMode,
     llmSummary: context.llmSummary,
+    marketMetrics: systemSummary.marketMetrics,
+    yieldPerJob: systemSummary.unitEconomics.yieldPerJob,
+    criticalBugCount: systemSummary.systemHealth.criticalBugs,
     activeWorkerRate: context.activeWorkerRate,
     activeBugs: strategySummary.systemHealth.criticalBugCount,
     pendingPayouts: context.pendingPayouts,
@@ -427,6 +457,27 @@ export function AdminTechnicalCopilot({
       role: "assistant",
       content: INITIAL_ASSISTANT_MESSAGE,
     },
+  ]);
+  const systemSummary = useMemo(() => buildSystemInsightsSummary({
+    routeZoneId: shellContext.routeZoneId,
+    zoneLabel: shellContext.zoneLabel,
+    stats: shellContext.stats,
+    activeWorkerRate: shellContext.activeWorkerRate,
+    averageTicket: shellContext.averageTicket,
+    globalUptime: shellContext.globalUptime,
+    llmMode: shellContext.llmMode,
+    healthSnapshot: shellContext.healthSnapshot,
+    investorSummary: shellContext.investorSummary,
+  }), [
+    shellContext.routeZoneId,
+    shellContext.zoneLabel,
+    shellContext.stats,
+    shellContext.activeWorkerRate,
+    shellContext.averageTicket,
+    shellContext.globalUptime,
+    shellContext.llmMode,
+    shellContext.healthSnapshot,
+    shellContext.investorSummary,
   ]);
   const strategySummary = useMemo(() => (
     buildCopilotSummary(shellContext, location.pathname)
@@ -490,7 +541,7 @@ export function AdminTechnicalCopilot({
         Authorization: `Bearer ${token}`,
       },
       cache: "no-store",
-      body: JSON.stringify(buildCopilotPayload(message, shellContext, location.pathname, strategySummary)),
+      body: JSON.stringify(buildCopilotPayload(message, shellContext, location.pathname, strategySummary, systemSummary)),
     });
 
     if (!response.ok) {
@@ -499,7 +550,7 @@ export function AdminTechnicalCopilot({
     }
 
     return response.json();
-  }, [location.pathname, shellContext, strategySummary]);
+  }, [location.pathname, shellContext, strategySummary, systemSummary]);
 
   const handleSend = useCallback(async (nextMessage?: string) => {
     const message = (nextMessage ?? input).trim();
@@ -534,6 +585,16 @@ export function AdminTechnicalCopilot({
       const resultNavigationTarget = result.navigationTarget;
       if (resultNavigationTarget && isAdminSafeRoute(resultNavigationTarget) && resultNavigationTarget !== location.pathname) {
         navigate(resultNavigationTarget);
+        const announcement = buildNavigationAnnouncement(resultNavigationTarget, shellContext, systemSummary);
+        if (announcement) {
+          window.setTimeout(() => {
+            appendMessage({
+              id: createMessageId(),
+              role: "assistant",
+              content: announcement,
+            });
+          }, 160);
+        }
       }
     } catch (error) {
       const fallback = buildLocalCopilotResponse(message, shellContext, location.pathname);
@@ -549,11 +610,21 @@ export function AdminTechnicalCopilot({
       const fallbackNavigationTarget = fallback.navigationTarget;
       if (fallbackNavigationTarget && isAdminSafeRoute(fallbackNavigationTarget) && fallbackNavigationTarget !== location.pathname) {
         navigate(fallbackNavigationTarget);
+        const announcement = buildNavigationAnnouncement(fallbackNavigationTarget, shellContext, systemSummary);
+        if (announcement) {
+          window.setTimeout(() => {
+            appendMessage({
+              id: createMessageId(),
+              role: "assistant",
+              content: announcement,
+            });
+          }, 160);
+        }
       }
     } finally {
       setIsLoading(false);
     }
-  }, [input, isLoading, location.pathname, navigate, requestCopilot, shellContext]);
+  }, [input, isLoading, location.pathname, navigate, requestCopilot, shellContext, systemSummary]);
 
   useEffect(() => {
     const handleSeed = (event: Event) => {
@@ -561,7 +632,7 @@ export function AdminTechnicalCopilot({
       if (!detail?.prompt) return;
 
       setIsOpen(true);
-      setInlineNote(detail.sourceLabel ? `${detail.sourceLabel} queued in the copilot.` : "Preparing guided prompt...");
+      setInlineNote(detail.sourceLabel ? `${detail.sourceLabel} queued in AI Navigator.` : "Preparing guided prompt...");
       setInput(detail.prompt);
 
       if (detail.mode === "draft") {
@@ -744,20 +815,20 @@ export function AdminTechnicalCopilot({
 
         {showLauncher ? (
           <button
-            type="button"
-            onClick={() => setIsOpen((current) => !current)}
-            className="group inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/88 px-4 py-3 text-left shadow-[0_20px_48px_-28px_rgba(15,23,42,0.35)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-28px_rgba(15,23,42,0.45)]"
-            aria-label="Open AI navigator"
-          >
+          type="button"
+          onClick={() => setIsOpen((current) => !current)}
+          className="group inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/88 px-4 py-3 text-left shadow-[0_20px_48px_-28px_rgba(15,23,42,0.35)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-28px_rgba(15,23,42,0.45)]"
+          aria-label="Open AI navigator"
+        >
             <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-[linear-gradient(135deg,#0F172A_0%,#1E293B_100%)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
               <span className="absolute inset-0 rounded-full bg-emerald-400/20 blur-md transition group-hover:bg-emerald-400/30" />
               <MessageSquare className="relative h-5 w-5" />
             </span>
 
-            <span className="hidden min-w-0 sm:block">
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                AI Navigator
-              </span>
+          <span className="hidden min-w-0 sm:block">
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              AI Navigator
+            </span>
               <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-slate-900">
                 Ask or navigate
                 <ChevronRight className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5" />
