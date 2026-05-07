@@ -10,6 +10,8 @@ export interface StrategyTerminalBrief {
   procedures: string[];
   provider: string;
   model: string;
+  counterPositioningMove?: string;
+  auditLog?: string;
   historyId?: string | null;
   saved?: boolean;
   fallback?: boolean;

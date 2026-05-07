@@ -1570,6 +1570,14 @@ export function IntelligenceTab({
       priceMultiplier,
       pricingSignal,
       serviceWarning: analysis.service_warning || null,
+      competitorPressure: true,
+      competitorSignals: [competitorPulseMessage],
+      competitorContext: {
+        competitor: competitorPulse.competitor,
+        zoneLabel: competitorPulse.zoneLabel,
+        discountPercent: competitorPulse.discountPercent,
+        response: competitorPulse.response,
+      },
       auditData: auditSignals,
       logicSignals: combinedLogicSignals,
       financials: {
@@ -1669,6 +1677,13 @@ export function IntelligenceTab({
           : `CEO briefing ready via ${String(result.provider || "llm").toUpperCase()}.`,
         { tone: result.fallback ? "warning" : "success", source: "strategy", tag: "DECISION" },
       );
+      if (result.auditLog) {
+        appendLogicEntry(result.auditLog, {
+          tone: "warning",
+          source: "strategy",
+          tag: "STRATEGY",
+        });
+      }
 
       if (!options?.silent) {
         toast.success(deepDive ? "Deep strategy briefing is ready." : "Strategy briefing updated.");
@@ -1699,6 +1714,10 @@ export function IntelligenceTab({
         `Live strategy provider unavailable. Falling back to the local density rule engine for ${activeSector.label}.`,
         { tone: "critical", source: "strategy", tag: "SYSTEM" },
       );
+      appendLogicEntry(
+        `[STRATEGY] Defending margin via Quality-Audit differentiation in ${competitorPulse.zoneLabel}; emphasize Verified Pro proof-of-work, secure-media audit coverage, and loyalty retention instead of matching blanket competitor discounts.`,
+        { tone: "warning", source: "strategy", tag: "STRATEGY" },
+      );
 
       if (!options?.silent) {
         toast.error("Live strategy provider unavailable. Showing fallback briefing.");
@@ -1725,6 +1744,10 @@ export function IntelligenceTab({
     latestSimulation,
     manualScenario.projectedProfit,
     manualScenario.totalWorkers,
+    competitorPulse.competitor,
+    competitorPulse.discountPercent,
+    competitorPulse.response,
+    competitorPulse.zoneLabel,
     competitorPulseMessage,
     appendLogicEntry,
     priceMultiplier,

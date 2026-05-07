@@ -11,6 +11,12 @@ export const buildSimulationHistoryDocument = ({
   model,
   createdBy,
 }) => ({
+  auditLog: llmResponse?.auditLog || null,
+  competitorPressure: Boolean(requestPayload?.competitorPressure),
+  competitorSignals: Array.isArray(requestPayload?.competitorSignals)
+    ? requestPayload.competitorSignals.slice(0, 3)
+    : [],
+  counterPositioningMove: llmResponse?.counterPositioningMove || null,
   logicSignals: Array.isArray(requestPayload?.logicSignals)
     ? requestPayload.logicSignals.slice(0, 3)
     : [],

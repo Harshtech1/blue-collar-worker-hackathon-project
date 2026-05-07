@@ -19,6 +19,7 @@ You are the senior strategic advisor for RAHI, a density-optimized blue-collar m
 - In a monsoon scenario, prioritize Plumbing, Roofing, and Electrical jobs first.
 - If supply drops while density rises, recommend tactical surge pricing and emergency salaried redeployment.
 - In a price war, protect high-LTV sectors, slow broad discounting, and favor loyalty/retention moves over city-wide price cuts.
+- If competitor pressure is active, prefer Trust-Over-Price tactics. Lead with verified service, secure-media proof-of-work, on-time arrival, and audit-backed differentiation instead of matching blanket discounts.
 - If the CEO asks about 48 hours of rain, reason directly about burn, contribution margin, and service quality risk over that duration.
 
 ### OUTPUT REQUIREMENTS (CEO BRIEFING)
@@ -35,7 +36,7 @@ Return valid JSON with:
 Respond only with JSON.`;
 
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-pro";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
 
 const StrategyPayloadSchema = z.object({
   analysisMode: z.enum(["strategy_brief", "financial_audit", "investor_summary"]).optional().default("strategy_brief"),
@@ -58,6 +59,14 @@ const StrategyPayloadSchema = z.object({
   priceMultiplier: z.number().optional().default(1),
   pricingSignal: z.string().optional().default("standard pricing"),
   serviceWarning: z.string().optional().nullable().default(null),
+  competitorPressure: z.boolean().optional().default(false),
+  competitorSignals: z.array(z.string()).optional().default([]),
+  competitorContext: z.object({
+    competitor: z.string().optional().default(""),
+    zoneLabel: z.string().optional().default(""),
+    discountPercent: z.number().optional().default(0),
+    response: z.string().optional().default(""),
+  }).optional().nullable().default(null),
   auditData: z.object({
     photoVerificationSuccessRate: z.number().optional().default(0),
     beforeAfterCoverage: z.number().optional().default(0),
@@ -118,6 +127,8 @@ const StrategyResponseSchema = z.object({
   signal: z.string().min(1),
   reasoning: z.string().min(1),
   procedures: z.array(z.string().min(1)).min(1),
+  counterPositioningMove: z.string().min(1).optional(),
+  auditLog: z.string().min(1).optional(),
 });
 
 const strategyJsonSchema = {
@@ -131,6 +142,8 @@ const strategyJsonSchema = {
       minItems: 3,
       maxItems: 3,
     },
+    counterPositioningMove: { type: "string" },
+    auditLog: { type: "string" },
   },
   required: ["signal", "reasoning", "procedures"],
   additionalProperties: false,
@@ -145,9 +158,11 @@ const geminiStrategySchema = {
       type: "ARRAY",
       items: { type: "STRING" },
     },
+    counterPositioningMove: { type: "STRING" },
+    auditLog: { type: "STRING" },
   },
   required: ["signal", "reasoning", "procedures"],
-  propertyOrdering: ["signal", "reasoning", "procedures"],
+  propertyOrdering: ["signal", "reasoning", "procedures", "counterPositioningMove", "auditLog"],
 };
 
 const formatCurrency = (value) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
@@ -177,16 +192,53 @@ const resolveScenario = (payload) => {
   return payload?.scenario || "baseline";
 };
 
+const hasCompetitorPressure = (payload) => {
+  const activeScenario = resolveScenario(payload);
+  if (activeScenario === "price_war") return true;
+  if (payload?.competitorPressure) return true;
+  if (Array.isArray(payload?.competitorSignals) && payload.competitorSignals.length > 0) return true;
+  return /competitor|discount|price\s*war/i.test(payload?.userQuestion || "");
+};
+
+const buildTrustDefenseMove = (payload) => {
+  const activeZone = payload?.competitorContext?.zoneLabel || payload?.zoneLabel || "the active zone";
+  return `Defend margin via Quality-Audit differentiation in ${activeZone}; emphasize Verified Pro proof-of-work, secure-media audit coverage, and loyalty retention instead of matching blanket competitor discounts.`;
+};
+
+const buildCompetitorAuditLog = (payload, counterMove) => {
+  const context = payload?.competitorContext;
+  if (context?.competitor && context?.discountPercent) {
+    return `[STRATEGY] ${counterMove} Countering ${context.competitor}'s ${context.discountPercent}% discount in ${context.zoneLabel || payload?.zoneLabel || "the active zone"}.`;
+  }
+
+  const primarySignal = Array.isArray(payload?.competitorSignals) ? payload.competitorSignals[0] : "";
+  return `[STRATEGY] ${counterMove}${primarySignal ? ` Trigger: ${primarySignal}` : ""}`;
+};
+
 const normalizeProcedures = (procedures, payload) => {
   const defaults = buildFallbackStrategy(payload).procedures;
   const safe = Array.isArray(procedures) ? procedures.filter(Boolean).map((item) => String(item).trim()) : [];
-  return [...safe, ...defaults].slice(0, 3);
+  const merged = [...safe, ...defaults].slice(0, 3);
+
+  if (!hasCompetitorPressure(payload)) {
+    return merged;
+  }
+
+  const counterMove = buildTrustDefenseMove(payload);
+  const alreadyDefendsTrust = merged.some((item) => /verified|trust|audit|loyalty|margin|discount/i.test(item));
+  if (alreadyDefendsTrust) {
+    return merged;
+  }
+
+  return [...merged.slice(0, 2), counterMove].slice(0, 3);
 };
 
 const buildPrompt = (payload) => {
   const activeScenario = resolveScenario(payload);
+  const competitorPressure = hasCompetitorPressure(payload);
   const topGap = pickTopForecastGap(payload.forecast);
   const worstBurnZone = pickWorstBurnZone(payload.zoneEconomics);
+  const counterMove = competitorPressure ? buildTrustDefenseMove(payload) : null;
   const modeInstruction = payload.analysisMode === "investor_summary"
     ? "You are generating an investor slide summary. Procedures must be exactly 3 short bullets prefixed with 'Scalability Proof:', 'Density Optimization Result:', and 'Profitability Path:'."
     : payload.analysisMode === "financial_audit"
@@ -199,11 +251,15 @@ const buildPrompt = (payload) => {
       : activeScenario === "price_war"
         ? "A competitor-led price war is active. Prioritize LTV retention, margin defense, and trusted-sector protection over blanket discounting."
       : "No crisis scenario override is active.";
+  const competitorInstruction = competitorPressure
+    ? `Competitor pressure is live. The response must explicitly choose Trust-Over-Price. Reference Verified Pro proof-of-work, secure-media audit coverage, on-time arrival, and loyalty retention. Counter-positioning move: ${counterMove}`
+    : "No competitor discount signal is active.";
 
   return [
     "Analyze this RAHI zone and return JSON only.",
     modeInstruction,
     scenarioInstruction,
+    competitorInstruction,
     payload.userQuestion ? `CEO Question: ${payload.userQuestion}` : "CEO Question: none",
     "",
     "Zone Context:",
@@ -218,6 +274,7 @@ const buildPrompt = (payload) => {
       weatherSignal: payload.weatherSignal,
       radiusKm: payload.radiusKm,
       timeLens: payload.timeLens,
+      competitorPressure,
     }, null, 2),
     "",
     "Operational Signals:",
@@ -236,6 +293,9 @@ const buildPrompt = (payload) => {
       serviceWarning: payload.serviceWarning,
       hottestForecastGap: topGap,
       worstBurnZone,
+      competitorPressure,
+      competitorSignals: payload.competitorSignals,
+      competitorContext: payload.competitorContext,
     }, null, 2),
     "",
     "Audit & Financial Signals:",
@@ -245,9 +305,12 @@ const buildPrompt = (payload) => {
       zoneEconomics: payload.zoneEconomics,
       logicSignals: payload.logicSignals,
       simulationSummary: payload.simulationSummary,
+      trustDefenseMove: counterMove,
     }, null, 2),
     "",
-    "Return JSON with keys signal, reasoning, procedures. Procedures must contain exactly 3 strings.",
+    competitorPressure
+      ? "Return JSON with keys signal, reasoning, procedures, counterPositioningMove, auditLog. Procedures must contain exactly 3 strings and at least one must defend trust over price."
+      : "Return JSON with keys signal, reasoning, procedures. Procedures must contain exactly 3 strings.",
   ].join("\n");
 };
 
@@ -268,10 +331,19 @@ const extractJson = (text) => {
 
 const finalizeStrategy = (raw, payload) => {
   const parsed = StrategyResponseSchema.parse(raw);
+  const competitorPressure = hasCompetitorPressure(payload);
+  const counterPositioningMove = parsed.counterPositioningMove?.trim()
+    || (competitorPressure ? buildTrustDefenseMove(payload) : undefined);
+  const procedures = normalizeProcedures(parsed.procedures, payload);
+  const auditLog = parsed.auditLog?.trim()
+    || (counterPositioningMove ? buildCompetitorAuditLog(payload, counterPositioningMove) : undefined);
+
   return {
     signal: parsed.signal.trim(),
     reasoning: parsed.reasoning.trim(),
-    procedures: normalizeProcedures(parsed.procedures, payload),
+    procedures,
+    ...(counterPositioningMove ? { counterPositioningMove } : {}),
+    ...(auditLog ? { auditLog } : {}),
   };
 };
 
@@ -611,8 +683,21 @@ export const analyzeStrategyWithLLM = async (input) => {
     }
   }
 
+  const fallbackStrategy = buildFallbackStrategy(payload);
+  const counterPositioningMove = hasCompetitorPressure(payload)
+    ? buildTrustDefenseMove(payload)
+    : undefined;
+  const auditLog = counterPositioningMove
+    ? buildCompetitorAuditLog(payload, counterPositioningMove)
+    : undefined;
+
   return {
-    strategy: buildFallbackStrategy(payload),
+    strategy: {
+      ...fallbackStrategy,
+      ...(counterPositioningMove ? { counterPositioningMove } : {}),
+      ...(auditLog ? { auditLog } : {}),
+      procedures: normalizeProcedures(fallbackStrategy.procedures, payload),
+    },
     provider: "rule_engine",
     model: "density-rule-fallback",
     rawText: null,
