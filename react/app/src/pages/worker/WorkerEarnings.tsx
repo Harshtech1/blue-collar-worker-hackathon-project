@@ -52,13 +52,13 @@ export default function WorkerEarnings() {
       color: 'text-green-600',
     },
     {
-      label: 'This Week',
+      label: t('worker.earnings_week'),
       value: getWeekEarnings(),
       icon: Calendar,
       color: 'text-blue-600',
     },
     {
-      label: 'Total Earnings',
+      label: t('worker.earnings_total'),
       value: workerProfile?.total_earnings || 0,
       icon: TrendingUp,
       color: 'text-purple-600',

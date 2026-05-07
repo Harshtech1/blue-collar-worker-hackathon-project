@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Upload, MapPin, IdCard, Briefcase, Calendar, Clock, 
   IndianRupee, Camera, Sparkles, CheckCircle2, ChevronRight,
-  Shield, User, Smartphone, Building2, Star
+  Shield, User, Smartphone, Building2, Star, Lock
 } from 'lucide-react';
 import { Layout } from '@/components/layout/Layout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -51,6 +51,7 @@ type FormData = {
     aadhaar: File | null;
     pan: File | null;
     bankDetails: File | null;
+    certificates: File | null;
   };
   terms: boolean;
 };
@@ -89,7 +90,8 @@ const WorkerOnboardingPage = () => {
     documents: {
       aadhaar: null,
       pan: null,
-      bankDetails: null
+      bankDetails: null,
+      certificates: null
     },
     terms: false
   });
@@ -119,6 +121,16 @@ const WorkerOnboardingPage = () => {
         services: prev.professional.services.includes(service)
           ? prev.professional.services.filter(s => s !== service)
           : [...prev.professional.services, service]
+      }
+    }));
+  };
+
+  const handleDocumentChange = (field: keyof FormData['documents'], file: File | null) => {
+    setFormData(prev => ({
+      ...prev,
+      documents: {
+        ...prev.documents,
+        [field]: file,
       }
     }));
   };
@@ -405,24 +417,32 @@ const WorkerOnboardingPage = () => {
                              <UploadCard 
                                title="Aadhaar Card" 
                                subtitle="Front and Back copy"
-                               icon={IdCard}
-                             />
-                             <UploadCard 
-                               title="PAN Card" 
-                               subtitle="Clear photograph of front"
-                               icon={Smartphone}
-                             />
-                             <UploadCard 
-                               title="Bank Passbook" 
-                               subtitle="For direct payments"
-                               icon={Building2}
-                             />
-                             <UploadCard 
-                               title="Certificates" 
-                               subtitle="Any skill certifications"
-                               optional
-                               icon={Star}
-                             />
+                                icon={IdCard}
+                                file={formData.documents.aadhaar}
+                                onFileSelected={(file: File | null) => handleDocumentChange('aadhaar', file)}
+                              />
+                              <UploadCard 
+                                title="PAN Card" 
+                                subtitle="Clear photograph of front"
+                                icon={Smartphone}
+                                file={formData.documents.pan}
+                                onFileSelected={(file: File | null) => handleDocumentChange('pan', file)}
+                              />
+                              <UploadCard 
+                                title="Bank Passbook" 
+                                subtitle="For direct payments"
+                                icon={Building2}
+                                file={formData.documents.bankDetails}
+                                onFileSelected={(file: File | null) => handleDocumentChange('bankDetails', file)}
+                              />
+                              <UploadCard 
+                                title="Certificates" 
+                                subtitle="Any skill certifications"
+                                optional
+                                icon={Star}
+                                file={formData.documents.certificates}
+                                onFileSelected={(file: File | null) => handleDocumentChange('certificates', file)}
+                              />
                           </div>
 
                           <div className="p-6 rounded-3xl bg-amber-50 border border-amber-100 flex gap-4">
@@ -557,23 +577,42 @@ const InputField = ({ label, value, onChange, placeholder, disabled, type = 'tex
   </div>
 );
 
-const UploadCard = ({ title, subtitle, optional, icon: Icon }: any) => (
-  <div className="group border-2 border-dashed border-slate-200 rounded-[2rem] p-8 text-center bg-slate-50/50 hover:bg-white hover:border-primary/50 transition-all cursor-pointer">
-    <div className="h-16 w-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
-      <Icon className="h-8 w-8 text-slate-400 group-hover:text-primary" />
+const UploadCard = ({ title, subtitle, optional, icon: Icon, file, onFileSelected }: any) => {
+  const inputId = `${title.toLowerCase().replace(/\s+/g, '-')}-upload`;
+
+  return (
+    <div className="group border-2 border-dashed border-slate-200 rounded-[2rem] p-8 text-center bg-slate-50/50 hover:bg-white hover:border-primary/50 transition-all cursor-pointer">
+      <input
+        id={inputId}
+        type="file"
+        className="hidden"
+        accept="image/*,.pdf"
+        onChange={(e) => onFileSelected?.(e.target.files?.[0] || null)}
+      />
+      <div className="h-16 w-16 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm group-hover:scale-110 group-hover:rotate-3 transition-all duration-300">
+        <Icon className="h-8 w-8 text-slate-400 group-hover:text-primary" />
+      </div>
+      <div className="flex flex-col gap-1 mb-6">
+        <h4 className="font-bold text-slate-800 flex items-center justify-center gap-2">
+          {title} 
+          {optional && <span className="text-[10px] uppercase bg-slate-200 px-2 py-0.5 rounded text-slate-500">Optional</span>}
+        </h4>
+        <p className="text-xs text-slate-400 font-medium">{subtitle}</p>
+        {file && (
+          <p className="text-xs font-semibold text-primary">{file.name}</p>
+        )}
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => document.getElementById(inputId)?.click()}
+        className="rounded-xl border-slate-200 font-bold bg-white shadow-sm group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all"
+      >
+        <Upload className="h-4 w-4 mr-2" />
+        {file ? 'Replace File' : 'Upload File'}
+      </Button>
     </div>
-    <div className="flex flex-col gap-1 mb-6">
-      <h4 className="font-bold text-slate-800 flex items-center justify-center gap-2">
-        {title} 
-        {optional && <span className="text-[10px] uppercase bg-slate-200 px-2 py-0.5 rounded text-slate-500">Optional</span>}
-      </h4>
-      <p className="text-xs text-slate-400 font-medium">{subtitle}</p>
-    </div>
-    <Button variant="outline" className="rounded-xl border-slate-200 font-bold bg-white shadow-sm group-hover:bg-primary group-hover:text-white group-hover:border-primary transition-all">
-      <Upload className="h-4 w-4 mr-2" />
-      Upload File
-    </Button>
-  </div>
-);
+  );
+};
 
 export default WorkerOnboardingPage;

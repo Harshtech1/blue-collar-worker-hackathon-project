@@ -64,37 +64,39 @@ export function useWalletTransactions() {
     setWithdrawing(true);
 
     try {
-      // Create withdrawal transaction
+      const { data: profile, error: profileError } = await db
+        .collection('worker_profiles')
+        .select('wallet_balance')
+        .eq('user_id', user.id)
+        .single();
+
+      if (profileError) throw profileError;
+
+      if (!profile || (profile.wallet_balance || 0) < amount) {
+        toast({
+          title: 'Insufficient Balance',
+          description: 'Your available wallet balance is too low for this withdrawal request.',
+          variant: 'destructive',
+        });
+        return { error: new Error('Insufficient wallet balance') };
+      }
+
       const { error } = await db
         .collection('wallet_transactions')
         .insert({
           worker_id: user.id,
           amount: -amount,
           transaction_type: 'withdrawal',
-          status: 'completed',
+          status: 'pending',
           upi_id: upiId,
-          description: `Withdrawal to ${upiId}`,
+          description: `Withdrawal request to ${upiId}`,
         });
 
       if (error) throw error;
 
-      // Update wallet balance in worker_profiles manually
-      const { data: profile } = await db
-        .collection('worker_profiles')
-        .select('wallet_balance')
-        .eq('user_id', user.id)
-        .single();
-
-      if (profile) {
-        await db
-          .collection('worker_profiles')
-          .update({ wallet_balance: (profile.wallet_balance || 0) - amount })
-          .eq('user_id', user.id);
-      }
-
       toast({
-        title: 'Withdrawal Successful!',
-        description: `₹${amount} sent to ${upiId}`,
+        title: 'Withdrawal Requested',
+        description: `Withdrawal of ₹${amount} is pending transfer to ${upiId}`,
       });
 
       fetchTransactions();

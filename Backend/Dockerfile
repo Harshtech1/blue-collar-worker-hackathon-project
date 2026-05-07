@@ -9,6 +9,10 @@ RUN npm ci --omit=dev
 # Copy source
 COPY . .
 
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+
+USER app
+
 EXPOSE 5000
 
 CMD ["node", "src/index.js"]

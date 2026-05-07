@@ -818,9 +818,6 @@ const WorkerSettingsPage = () => {
                           setAadhaarStatus('uploading');
                           try {
                             const token = localStorage.getItem('token');
-                            const API_BASE = import.meta.env.PROD
-                              ? 'https://blue-collar-worker-hackathon-project.onrender.com'
-                              : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
                             const fd = new FormData();
                             fd.append('file', await compressImageForUpload(aadhaarFile));
                             fd.append('type', 'aadhaar');

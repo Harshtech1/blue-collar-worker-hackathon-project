@@ -710,7 +710,10 @@ export const listBookings = async (req, res) => {
       try {
         const token = req.headers.authorization.split(' ')[1];
         const jwt = await import('jsonwebtoken');
-        const decoded = jwt.default.verify(token, process.env.JWT_SECRET || 'changeme');
+        if (!process.env.JWT_SECRET) {
+          throw new Error('JWT_SECRET is not configured');
+        }
+        const decoded = jwt.default.verify(token, process.env.JWT_SECRET);
         if (decoded.role === 'worker') {
           query.assignment_mode = 'waterfall';
           query.last_pinged_worker_id = decoded.id;

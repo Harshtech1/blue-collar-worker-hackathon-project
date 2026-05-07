@@ -222,7 +222,7 @@ export const getDemandHeatmap = async (req, res) => {
 export const getTeamVisits = async (req, res) => {
   try {
     const db = WorkerProfile.collection().s.db;
-    const thekedar_id = req.user.id;
+    const thekedar_id = req.user._id?.toString() || req.user.id;
 
     const visits = await db.collection('bookings').aggregate([
       {
@@ -235,7 +235,7 @@ export const getTeamVisits = async (req, res) => {
         $lookup: {
           from: 'worker_profiles',
           localField: 'worker_id',
-          foreignField: 'user_id',
+          foreignField: 'user',
           as: 'worker'
         }
       },

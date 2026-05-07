@@ -46,9 +46,8 @@ export const updateUser = async (req, res) => {
       { returnDocument: 'after' }
     );
 
-    if (!result.value && !result) return res.status(404).json({ message: 'User not found' });
-
-    const user = result.value || result;
+    const user = result?.value ?? result;
+    if (!user) return res.status(404).json({ message: 'User not found' });
     const { password, ...safeUser } = user;
     res.json({
       ...safeUser,

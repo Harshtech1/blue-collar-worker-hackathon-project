@@ -56,7 +56,7 @@ const WorkerNotificationsPage = () => {
       socket.off('new_booking', handleNewBooking);
       socket.off('booking_updated', handleBookingUpdated);
     };
-  }, [socket]);
+  }, [socket, isOnline]);
 
   const fetchNotifications = async () => {
     if (!user || !token) return;
@@ -133,6 +133,7 @@ const WorkerNotificationsPage = () => {
     } catch (error) {
       console.error('Error responding to booking:', error);
       toast.error('Failed to update booking');
+    } finally {
       setLoading(false);
     }
   };

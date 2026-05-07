@@ -4,9 +4,10 @@ import { getDb } from '../config/db.js';
 export const getUserNotifications = async (req, res) => {
     try {
         const db = getDb();
+        const userId = new ObjectId(req.user._id);
         const notifications = await db
             .collection('notifications')
-            .find({ user: new ObjectId(req.user._id) })
+            .find({ $or: [{ user: userId }, { recipient_user_id: userId }] })
             .sort({ createdAt: -1 })
             .limit(50)
             .toArray();
@@ -23,19 +24,21 @@ export const markAsRead = async (req, res) => {
         const { id } = req.params;
 
         const db = getDb();
+        const userId = new ObjectId(req.user._id);
         const result = await db
             .collection('notifications')
             .findOneAndUpdate(
-                { _id: new ObjectId(id), user: new ObjectId(req.user._id) },
+                { _id: new ObjectId(id), $or: [{ user: userId }, { recipient_user_id: userId }] },
                 { $set: { read: true, updatedAt: new Date() } },
                 { returnDocument: 'after' }
             );
 
-        if (!result.value && !result) {
+        const notification = result?.value ?? result;
+        if (!notification) {
             return res.status(404).json({ message: 'Notification not found' });
         }
 
-        res.json(result.value || result);
+        res.json(notification);
     } catch (err) {
         console.error('Error marking notification read:', err);
         res.status(500).json({ message: 'Server error' });
@@ -45,10 +48,11 @@ export const markAsRead = async (req, res) => {
 export const markAllAsRead = async (req, res) => {
     try {
         const db = getDb();
+        const userId = new ObjectId(req.user._id);
         await db
             .collection('notifications')
             .updateMany(
-                { user: new ObjectId(req.user._id), read: false },
+                { $or: [{ user: userId }, { recipient_user_id: userId }], read: false },
                 { $set: { read: true, updatedAt: new Date() } }
             );
 
@@ -65,6 +69,7 @@ export const createNotification = async (userId, type, title, message, relatedId
         const db = getDb();
         const doc = {
             user: new ObjectId(userId),
+            recipient_user_id: new ObjectId(userId),
             type,
             title,
             message,

@@ -311,7 +311,7 @@ connectDB()
 
       const token = jwt.sign(
         { role: "admin", email },
-        process.env.JWT_SECRET || "changeme",
+        process.env.JWT_SECRET,
         { expiresIn: "4h" },
       );
 

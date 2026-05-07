@@ -5,8 +5,24 @@ import { ObjectId } from 'mongodb';
 import { sendEmail } from '../utils/emailService.js';
 import { getMediaUrl, normalizeMediaField } from '../utils/mediaStorage.js';
 
+const getJwtSecret = () => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET is not configured');
+  }
+  return process.env.JWT_SECRET;
+};
+
+const isMasterOtpEnabled = () => process.env.ALLOW_MASTER_OTP === 'true' || process.env.NODE_ENV !== 'production';
+const getMasterOtp = () => process.env.MASTER_OTP || '123456';
+
+const logOtpForDev = (identifier, otp) => {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[DEV] OTP for ${identifier}: ${otp}`);
+  }
+};
+
 const generateToken = (user) => {
-  return jwt.sign({ id: user._id.toString(), email: user.email, role: user.role }, process.env.JWT_SECRET || 'changeme', { expiresIn: '7d' });
+  return jwt.sign({ id: user._id.toString(), email: user.email, role: user.role }, getJwtSecret(), { expiresIn: '7d' });
 };
 
 const generateOTP = () => {
@@ -29,7 +45,7 @@ export const register = async (req, res) => {
       const salt = await bcrypt.genSalt(10);
       const hashedPassword = await bcrypt.hash(password, salt);
       const otp = generateOTP();
-      console.log(`[DEV] OTP for ${email}: ${otp}`); // Log OTP for debugging
+      logOtpForDev(email, otp);
 
       await db.collection('users').updateOne({ _id: existing._id }, {
         $set: {
@@ -54,7 +70,7 @@ export const register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
     const otp = generateOTP();
-    console.log(`[DEV] OTP for ${email}: ${otp}`); // Log OTP for debugging
+    logOtpForDev(email, otp);
 
     const newUser = {
       email,
@@ -99,7 +115,10 @@ export const verifyOtp = async (req, res) => {
     if (!user) return res.status(400).json({ message: 'User not found' });
 
     // Secret master OTP for hackathon demos/testing where emails easily fail
-    const isMasterOtp = otp === '123456';
+    const isMasterOtp = isMasterOtpEnabled() && otp === getMasterOtp();
+    if (isMasterOtp) {
+      console.warn('[AUTH] Master OTP used for verification');
+    }
 
     // Allow strict equality or loose equality if types differ, but both are strings ideally.
     if (user.otp !== otp && !isMasterOtp) {
@@ -180,7 +199,7 @@ export const login = async (req, res) => {
     if (ADMIN_EMAIL && ADMIN_PASSWORD && email.toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
       const token = jwt.sign(
         { role: "admin", email },
-        process.env.JWT_SECRET || "changeme",
+        getJwtSecret(),
         { expiresIn: "4h" }
       );
       return res.json({ token, role: "admin", user: { email, role: "admin", full_name: "Admin Backend" }, requireOtp: false });
@@ -195,7 +214,7 @@ export const login = async (req, res) => {
 
     // Generate OTP for 2FA
     const otp = generateOTP();
-    console.log(`[DEV] OTP for ${email}: ${otp}`); // Log OTP for debugging
+    logOtpForDev(email, otp);
 
     await db.collection('users').updateOne({ _id: user._id }, {
       $set: { otp, otpExpires: new Date(Date.now() + 10 * 60 * 1000) }
@@ -230,7 +249,7 @@ export const sendOtp = async (req, res) => {
     }
 
     const otp = generateOTP();
-    console.log(`[DEV] OTP for ${identifier}: ${otp}`);
+    logOtpForDev(identifier, otp);
 
     await db.collection('users').updateOne(
       { _id: user._id },
@@ -256,7 +275,7 @@ export const getMe = async (req, res) => {
     if (!authHeader) return res.status(401).json({ message: 'No token' });
 
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+    const decoded = jwt.verify(token, getJwtSecret());
 
     // Check if the decoded token represents an admin
     if (decoded.role === 'admin') {

@@ -156,9 +156,10 @@ export const updateByUserId = async (req, res) => {
       { returnDocument: 'after' }
     );
 
-    if (!result.value && !result) return res.status(404).json({ message: 'Not found' });
+    const updatedProfile = result?.value ?? result;
+    if (!updatedProfile) return res.status(404).json({ message: 'Not found' });
 
-    res.json(withLegacyMediaAliases(result.value || result));
+    res.json(withLegacyMediaAliases(updatedProfile));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -258,7 +259,6 @@ export const getNearbyWorkers = async (req, res) => {
     }
 
     const coordinates = [parseFloat(lng), parseFloat(lat)];
-    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
 
     const query = {
       location: {
@@ -314,10 +314,10 @@ export const simulateWorkerMovement = async (req, res) => {
     const workerUserId = booking.worker_user_id || booking.worker;
     if (!workerUserId) return res.status(400).json({ message: 'No worker assigned to this booking' });
 
-    res.json({ message: 'Simulation started for worker movement' });
-
-    // Background simulation: Move worker closer to customer
     const targetLoc = [booking.customer_lng, booking.customer_lat];
+    if (targetLoc.some(coord => typeof coord !== 'number' || Number.isNaN(coord))) {
+      return res.status(400).json({ message: 'Booking customer coordinates are missing' });
+    }
     const workerProfile = await WorkerProfile.collection().findOne({ 
       $or: [
         { user: new ObjectId(workerUserId) },
@@ -326,10 +326,12 @@ export const simulateWorkerMovement = async (req, res) => {
     });
     
     if (!workerProfile) {
-      console.log('Worker profile not found for simulation');
-      return;
+      return res.status(404).json({ message: 'Worker profile not found for simulation' });
     }
 
+    res.json({ message: 'Simulation started for worker movement' });
+
+    // Background simulation: Move worker closer to customer
     let currentLoc = workerProfile.location.coordinates;
     const steps = 12;
     const interval = 6000; // 6 seconds per step

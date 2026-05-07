@@ -8,7 +8,7 @@ export const Service = {
   validate: (data) => {
     const errors = [];
     if (!data.name) errors.push('Name is required');
-    if (!data.price) errors.push('Price is required');
+    if (data.price === null || data.price === undefined) errors.push('Price is required');
     return errors;
   },
 

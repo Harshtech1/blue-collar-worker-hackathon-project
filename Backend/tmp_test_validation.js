@@ -1,16 +1,20 @@
 import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
-dotenv.config({ path: "d:/blue_collar_worker/blue-collar-worker-hackathon-project/Backend/.env" });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
+const DB_NAME = process.env.DB_NAME || process.env.MONGO_DB || 'test';
 
 async function testValidation() {
   const client = new MongoClient(uri);
   try {
     await client.connect();
     console.log("Connected to MongoDB for testing schema validation");
-    const db = client.db();
+    const db = client.db(DB_NAME);
 
     // Reapply validation to ensure it's up to date
     const collections = await db.listCollections({ name: 'payments' }).toArray();
@@ -20,21 +24,27 @@ async function testValidation() {
     await db.command({
       collMod: 'payments',
       validator: {
-        $jsonSchema: {
-          bsonType: "object",
-          required: ["booking_id", "total_amount", "platform_fee_amount", "worker_amount"],
-          properties: {
-            total_amount: { bsonType: ["number", "double", "int"] },
-            platform_fee_amount: { bsonType: ["number", "double", "int"] },
-            worker_amount: { bsonType: ["number", "double", "int"] }
+        $and: [
+          {
+            $jsonSchema: {
+              bsonType: "object",
+              required: ["booking_id", "total_amount", "platform_fee_amount", "worker_amount"],
+              properties: {
+                total_amount: { bsonType: ["number", "double", "int"] },
+                platform_fee_amount: { bsonType: ["number", "double", "int"] },
+                worker_amount: { bsonType: ["number", "double", "int"] }
+              }
+            }
+          },
+          {
+            $expr: {
+              $eq: [
+                { $round: ["$total_amount", 2] },
+                { $round: [{ $add: ["$platform_fee_amount", "$worker_amount"] }, 2] }
+              ]
+            }
           }
-        },
-        $expr: {
-          $eq: [
-            { $round: ["$total_amount", 2] },
-            { $round: [{ $add: ["$platform_fee_amount", "$worker_amount"] }, 2] }
-          ]
-        }
+        ]
       },
       validationLevel: "strict"
     });

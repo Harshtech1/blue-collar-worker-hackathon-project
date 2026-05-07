@@ -62,7 +62,7 @@ export function useWorkerProfile() {
         .collection('worker_profiles')
         .update({
           status,
-          last_online_at: status === 'online' ? new Date().toISOString() : undefined
+          last_online_at: new Date().toISOString()
         })
         .eq('user_id', workerProfile.user_id);
 

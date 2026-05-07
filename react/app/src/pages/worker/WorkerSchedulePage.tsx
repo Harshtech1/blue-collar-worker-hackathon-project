@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, Clock, MapPin, User, Phone, MessageCircle, Plus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/db';
+import { API_ROOT as API_BASE } from '@/lib/constants';
 // import { Database } from '@/integrations/supabase/types';
 
 interface Booking {
@@ -30,6 +30,7 @@ interface Booking {
 
 const WorkerSchedulePage = () => {
   const { user, profile } = useAuth();
+  const [allSchedule, setAllSchedule] = useState<Booking[]>([]);
   const [schedule, setSchedule] = useState<Booking[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +39,15 @@ const WorkerSchedulePage = () => {
     if (user && profile?.role === 'worker') {
       fetchSchedule();
     }
-  }, [user, profile, selectedDate]);
+  }, [user, profile]);
+
+  useEffect(() => {
+    const filteredSchedule = allSchedule.filter((job: any) => {
+      if (!job.scheduled_at) return false;
+      return new Date(job.scheduled_at).toISOString().split('T')[0] === selectedDate;
+    });
+    setSchedule(filteredSchedule);
+  }, [allSchedule, selectedDate]);
 
   const fetchSchedule = async () => {
     if (!user) return;
@@ -47,7 +56,6 @@ const WorkerSchedulePage = () => {
       setLoading(true);
 
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
       
       // Fetch all bookings for this worker via API
       const res = await fetch(`${API_BASE}/api/bookings?worker_user_id=${user.id || user._id}`, {
@@ -59,14 +67,7 @@ const WorkerSchedulePage = () => {
       }
 
       const allJobs = await res.json();
-      
-      // Filter by selected date
-      const scheduleData = allJobs.filter((job: any) => {
-        if (!job.scheduled_at) return false;
-        return new Date(job.scheduled_at).toISOString().split('T')[0] === selectedDate;
-      });
-
-      setSchedule(scheduleData);
+      setAllSchedule(allJobs || []);
     } catch (error) {
       console.error('Error fetching schedule:', error);
     } finally {
@@ -96,8 +97,6 @@ const WorkerSchedulePage = () => {
       if (!user) return;
 
       const token = localStorage.getItem('token');
-      const API_BASE = import.meta.env.PROD ? 'https://blue-collar-worker-hackathon-project.onrender.com' : (import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:5000');
-
       // Update job status based on action
       let newStatus = '';
       switch (action) {
@@ -323,7 +322,7 @@ const WorkerSchedulePage = () => {
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-7 gap-2">
               {getDateOptions().map((date) => {
-                const daySchedule = schedule.filter(job => job.scheduled_at?.startsWith(date));
+                const daySchedule = allSchedule.filter(job => job.scheduled_at?.startsWith(date));
                 return (
                   <div key={date} className="border rounded-lg p-3 text-center">
                     <div className="text-sm font-medium">

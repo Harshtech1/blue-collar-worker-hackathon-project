@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,9 +36,12 @@ export default function WorkerJobs() {
   const [loadingCompleted, setLoadingCompleted] = useState(true);
 
   // Fetch completed jobs
-  useState(() => {
+  useEffect(() => {
     const fetchCompletedJobs = async () => {
-      if (!user) return;
+      if (!user) {
+        setLoadingCompleted(false);
+        return;
+      }
       
       const { data } = await db
         .collection('bookings')
@@ -57,7 +60,7 @@ export default function WorkerJobs() {
     };
 
     fetchCompletedJobs();
-  });
+  }, [user]);
 
   // Redirect non-workers
   if (!authLoading && profile?.role !== 'worker') {
@@ -265,22 +268,22 @@ export default function WorkerJobs() {
         {/* OTP Dialog */}
         <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
           <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Enter Customer OTP</DialogTitle>
-              <DialogDescription>
-                Ask the customer for the 4-digit OTP to start the job
-              </DialogDescription>
-            </DialogHeader>
+              <DialogHeader>
+                <DialogTitle>Enter Customer OTP</DialogTitle>
+                <DialogDescription>
+                  Ask the customer for the start OTP to begin the job
+                </DialogDescription>
+              </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label htmlFor="otp">OTP Code</Label>
                 <Input
                   id="otp"
                   type="text"
-                  placeholder="Enter 4-digit OTP"
+                  placeholder="Enter OTP"
                   value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  maxLength={4}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  maxLength={6}
                   className="text-center text-2xl tracking-widest"
                 />
               </div>
@@ -289,7 +292,7 @@ export default function WorkerJobs() {
               <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
+              <Button onClick={handleVerifyOTP} disabled={!(otp.length === 4 || otp.length === 6)}>
                 Verify & Start
               </Button>
             </DialogFooter>

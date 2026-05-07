@@ -27,8 +27,9 @@ export const Notification = {
 
   createIndexes: async () => {
     const db = getDb();
-    await db.collection(COLLECTION).createIndex({ user: 1, createdAt: -1 });
     await db.collection(COLLECTION).createIndex({ recipient_user_id: 1, createdAt: -1 });
+    await db.collection(COLLECTION).createIndex({ recipient_user_id: 1, read: 1 });
+    await db.collection(COLLECTION).createIndex({ user: 1, createdAt: -1 });
     await db.collection(COLLECTION).createIndex({ user: 1, read: 1 });
   }
 };

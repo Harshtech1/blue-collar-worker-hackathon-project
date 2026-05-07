@@ -73,7 +73,10 @@ export const Payment = {
 
   createIndexes: async () => {
     const db = getDb();
-    await db.collection(COLLECTION).createIndex({ booking_id: 1 }, { unique: true });
+    await db.collection(COLLECTION).createIndex(
+      { booking_id: 1 },
+      { unique: true, partialFilterExpression: { booking_id: { $exists: true, $ne: null } } }
+    );
     await db.collection(COLLECTION).createIndex({ customer_id: 1, createdAt: -1 });
     await db.collection(COLLECTION).createIndex({ worker_id: 1, createdAt: -1 });
     await db.collection(COLLECTION).createIndex({ status: 1 });

@@ -6,8 +6,11 @@ export const protect = async (req, res, next) => {
   let token;
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
+      if (!process.env.JWT_SECRET) {
+        return res.status(500).json({ message: 'JWT_SECRET is not configured' });
+      }
       token = req.headers.authorization.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'changeme');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       if (decoded.role === 'admin') {
         req.user = { role: 'admin', email: decoded.email };
@@ -31,15 +34,15 @@ export const protect = async (req, res, next) => {
       const { password, ...userWithoutPassword } = user;
       req.user = userWithoutPassword;
 
-      next();
+      return next();
     } catch (err) {
       console.error(err);
-      res.status(401).json({ message: 'Not authorized, token failed' });
+      return res.status(401).json({ message: 'Not authorized, token failed' });
     }
   }
 
   if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token' });
+    return res.status(401).json({ message: 'Not authorized, no token' });
   }
 };
 

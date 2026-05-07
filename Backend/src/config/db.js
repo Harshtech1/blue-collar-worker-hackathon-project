@@ -65,21 +65,27 @@ const setupIndexes = async (database) => {
     await database.command({
       collMod: 'payments',
       validator: {
-        $jsonSchema: {
-          bsonType: "object",
-          required: ["booking_id", "total_amount", "platform_fee_amount", "worker_amount"],
-          properties: {
-            total_amount: { bsonType: ["number", "double", "int"] },
-            platform_fee_amount: { bsonType: ["number", "double", "int"] },
-            worker_amount: { bsonType: ["number", "double", "int"] }
+        $and: [
+          {
+            $jsonSchema: {
+              bsonType: "object",
+              required: ["booking_id", "total_amount", "platform_fee_amount", "worker_amount"],
+              properties: {
+                total_amount: { bsonType: ["number", "double", "int"] },
+                platform_fee_amount: { bsonType: ["number", "double", "int"] },
+                worker_amount: { bsonType: ["number", "double", "int"] }
+              }
+            }
+          },
+          {
+            $expr: {
+              $eq: [
+                { $round: ["$total_amount", 2] },
+                { $round: [{ $add: ["$platform_fee_amount", "$worker_amount"] }, 2] }
+              ]
+            }
           }
-        },
-        $expr: {
-          $eq: [
-            { $round: ["$total_amount", 2] },
-            { $round: [{ $add: ["$platform_fee_amount", "$worker_amount"] }, 2] }
-          ]
-        }
+        ]
       },
       validationLevel: "strict"
     });

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'fs';
 import { connectDB, getDb } from '../config/db.js';
 
 import { User } from '../models/User.js';
@@ -28,7 +29,9 @@ async function setupDatabase() {
         }
 
         console.log('Cleaning up invalid data...');
-        await db.collection('payments').deleteMany({ booking_id: null });
+        await db.collection('payments').deleteMany({
+            $or: [{ booking_id: null }, { booking_id: { $exists: false } }]
+        });
 
         console.log('Creating Indexes...');
         // Execute the generic createIndexes on all models
@@ -73,10 +76,8 @@ async function setupDatabase() {
         process.exit(0);
     } catch (error) {
         console.error('Failed to setup database:', error.message);
-        import('fs').then(fs => {
-            fs.writeFileSync('error_log.txt', JSON.stringify({ message: error.message, stack: error.stack, code: error.code, writeErrors: error.writeErrors }, null, 2), 'utf8');
-            process.exit(1);
-        });
+        fs.writeFileSync('error_log.txt', JSON.stringify({ message: error.message, stack: error.stack, code: error.code, writeErrors: error.writeErrors }, null, 2), 'utf8');
+        process.exit(1);
     }
 }
 

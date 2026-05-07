@@ -408,6 +408,7 @@ const WorkerEarningsPage = () => {
                   <TableBody>
                     {transactions.map((transaction, index) => {
                       const transactionDate = new Date(transaction.updatedAt || transaction.updated_at || transaction.completed_at || transaction.created_at);
+                      const transactionStatus = transaction.status || 'pending';
                       return (
                         <TableRow key={transaction.id || transaction._id || index}>
                           <TableCell className="font-medium">
@@ -417,8 +418,8 @@ const WorkerEarningsPage = () => {
                             {!isNaN(transactionDate.getTime()) ? transactionDate.toLocaleDateString() : 'Recent'}
                           </TableCell>
                           <TableCell>
-                            <Badge className={getTransactionStatusColor(transaction.status)}>
-                              {transaction.status.replace('_', ' ')}
+                            <Badge className={getTransactionStatusColor(transactionStatus)}>
+                              {transactionStatus.replace('_', ' ')}
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">

@@ -3,20 +3,46 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const getBrevoAddresses = () => {
+    const smtpLogin = process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SENDER_EMAIL;
+    const fromAddress = process.env.BREVO_SENDER_EMAIL || process.env.BREVO_SMTP_LOGIN;
+
+    if (!smtpLogin || !fromAddress) {
+        console.warn('[Email] BREVO_SMTP_LOGIN/BREVO_SENDER_EMAIL not configured');
+        return null;
+    }
+
+    return {
+        smtpLogin: smtpLogin.trim(),
+        fromAddress: fromAddress.trim(),
+    };
+};
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
+
 // ─── Brevo SMTP transporter (works on Render - port 587 is NOT blocked) ──────
 // This is the FALLBACK when Brevo HTTP API fails
 // Brevo SMTP relay: smtp-relay.brevo.com:587
 const createBrevoSmtpTransporter = () => {
     // Fallback logic: If BREVO_SMTP_KEY is missing, use BREVO_API_KEY
     const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
-    const smtpLogin = process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SENDER_EMAIL || '23100010042.uset@ltsu.ac.in';
+    const addresses = getBrevoAddresses();
+    if (!addresses) {
+        return null;
+    }
 
     return nodemailer.createTransport({
         host: 'smtp-relay.brevo.com',
         port: 587,
         secure: false, // STARTTLS
         auth: {
-            user: smtpLogin.trim(),
+            user: addresses.smtpLogin,
             pass: smtpKey ? smtpKey.trim() : '',
         },
         connectionTimeout: 30000, // Increased to 30s
@@ -39,7 +65,11 @@ const sendViaBrevoApi = async (to, subject, htmlBody) => {
         return false;
     }
 
-    const fromAddress = process.env.BREVO_SENDER_EMAIL || '23100010042.uset@ltsu.ac.in';
+    const addresses = getBrevoAddresses();
+    if (!addresses) {
+        return false;
+    }
+    const fromAddress = addresses.fromAddress;
     const recipientList = Array.isArray(to) ? to.map(email => ({ email })) : [{ email: to }];
 
     const maskedKey = apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 4);
@@ -80,10 +110,17 @@ const sendViaBrevoSmtp = async (to, subject, htmlBody) => {
         return false;
     }
 
-    const fromAddress = process.env.BREVO_SENDER_EMAIL || '23100010042.uset@ltsu.ac.in';
+    const addresses = getBrevoAddresses();
+    if (!addresses) {
+        return false;
+    }
+    const fromAddress = addresses.fromAddress;
     console.log(`[Email] Trying Brevo SMTP → to: ${to}, host: smtp-relay.brevo.com:587`);
 
     const transporter = createBrevoSmtpTransporter();
+    if (!transporter) {
+        return false;
+    }
     const info = await transporter.sendMail({
         from: `"RAHI Platform" <${fromAddress}>`,
         to,
@@ -99,7 +136,7 @@ const sendViaBrevoSmtp = async (to, subject, htmlBody) => {
 const buildHtmlEmail = (text) => `
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 8px;">
         <h2 style="color: #2563eb; margin-bottom: 20px;">RAHI Security</h2>
-        <p style="font-size: 16px; color: #333; line-height: 1.5;">${text}</p>
+        <p style="font-size: 16px; color: #333; line-height: 1.5;">${escapeHtml(text)}</p>
         <hr style="border: none; border-top: 1px solid #eaeaea; margin: 24px 0;" />
         <p style="font-size: 12px; color: #888;">
             This code expires in 10 minutes. If you didn't request this, please ignore this email.

@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env') });
+const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
+const DB_NAME = process.env.DB_NAME || process.env.MONGO_DB || 'test';
 
 const services = [
     { id: 'ac-repair', name: 'AC Repair', name_hi: 'एसी मरम्मत', icon: 'thermometer', color: '#3b82f6', description: 'AC installation, repair & servicing', is_active: true, display_order: 1 },
@@ -18,11 +20,15 @@ const services = [
 ];
 
 async function seed() {
-    const client = new MongoClient(process.env.MONGO_URI);
+    if (!MONGO_URI) {
+        throw new Error('MONGODB_URI or MONGO_URI is required to seed services');
+    }
+
+    const client = new MongoClient(MONGO_URI);
     try {
         await client.connect();
         console.log('Connected to MongoDB');
-        const db = client.db();
+        const db = client.db(DB_NAME);
 
         // Clear existing
         await db.collection('service_categories').deleteMany({});
