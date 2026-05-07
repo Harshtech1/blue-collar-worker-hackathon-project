@@ -41,6 +41,7 @@ import {
   Polygon,
   TileLayer,
   Tooltip as LeafletTooltip,
+  useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { toast } from "sonner";
@@ -715,21 +716,26 @@ const buildModeSignals = (
   }
 };
 
-export function IntelligenceTab() {
-  const [areaId, setAreaId] = useState("all");
-  const [analysis, setAnalysis] = useState<DensityAnalysis>(() => buildDemoAnalysis("all"));
+export function IntelligenceTab({
+  routeZoneId = "agra-cantt",
+  onZoneChange,
+}: IntelligenceTabProps) {
+  const initialZoneId = findSector(routeZoneId).id;
+  const [areaId, setAreaId] = useState(initialZoneId);
+  const [analysis, setAnalysis] = useState<DensityAnalysis>(() => buildDemoAnalysis(initialZoneId));
   const [investorAnalytics, setInvestorAnalytics] = useState<InvestorAnalytics>(demoInvestorAnalytics);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("Checking live density engine...");
   const [activeMode, setActiveMode] = useState<IntelligenceMode>("monitor");
   const [timeLens, setTimeLens] = useState<TimeLens>("7d");
   const [chartView, setChartView] = useState<ChartView>("comparison");
-  const [selectedSectorId, setSelectedSectorId] = useState("all");
+  const [selectedSectorId, setSelectedSectorId] = useState(initialZoneId);
   const [selectedWeek, setSelectedWeek] = useState(7);
   const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [resolvedEscalations, setResolvedEscalations] = useState<string[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [manualCoreWorkers, setManualCoreWorkers] = useState(4);
 
   const loadInvestorAnalytics = useCallback(async () => {
     try {
@@ -797,6 +803,13 @@ export function IntelligenceTab() {
   }, [loadInvestorAnalytics]);
 
   useEffect(() => {
+    const normalizedZoneId = findSector(routeZoneId).id;
+    setAreaId(normalizedZoneId);
+    setSelectedSectorId(normalizedZoneId);
+    void runAnalysis({ silent: true, nextAreaId: normalizedZoneId });
+  }, [routeZoneId, runAnalysis]);
+
+  useEffect(() => {
     void runAnalysis({ silent: true });
   }, [runAnalysis]);
 
@@ -822,6 +835,27 @@ export function IntelligenceTab() {
   const activeSector = useMemo(() => (
     sectorSignals.find((sector) => sector.id === selectedSectorId) || findSector(analysis.area_id || areaId)
   ), [analysis.area_id, areaId, selectedSectorId]);
+
+  const activeMapZone = useMemo(() => (
+    commandMapZones.find((zone) => zone.id === activeSector.id) || commandMapZones[0]
+  ), [activeSector.id]);
+
+  const zoneDensityMap = useMemo(() => {
+    const entries = sectorSignals
+      .filter((sector) => sector.id !== "all")
+      .map((sector) => [sector.id, Number((sector.predicted / Math.max(1, sector.workers)).toFixed(2))]);
+
+    return Object.fromEntries([
+      ...entries,
+      [analysis.area_id, analysis.density_score],
+    ]) as Record<string, number>;
+  }, [analysis.area_id, analysis.density_score]);
+
+  const visiblePreviewSignals = useMemo(() => (
+    previewSignals
+      .filter((point) => selectedSectorId === "all" || point.zoneId === activeSector.id)
+      .slice(0, selectedSectorId === "all" ? 72 : 24)
+  ), [activeSector.id, selectedSectorId]);
 
   const demandSeries = useMemo(() => (
     buildDemandSeries(investorAnalytics, timeLens, activeSector)
@@ -853,6 +887,35 @@ export function IntelligenceTab() {
   const heroSignals = useMemo(() => (
     buildModeSignals(activeMode, analysis, investorAnalytics, activeSector)
   ), [activeMode, activeSector, analysis, investorAnalytics]);
+
+  const currentCoreWorkers = useMemo(
+    () => Math.max(1, Math.round(analysis.current_workers * analysis.salaried_ratio)),
+    [analysis.current_workers, analysis.salaried_ratio],
+  );
+  const aiRecommendedCore = useMemo(
+    () => Math.max(
+      1,
+      currentCoreWorkers + (analysis.density_score >= 1.8 ? 4 : analysis.density_score >= 1.2 ? 2 : 0),
+    ),
+    [analysis.density_score, currentCoreWorkers],
+  );
+
+  useEffect(() => {
+    setManualCoreWorkers(aiRecommendedCore);
+  }, [aiRecommendedCore, analysis.area_id]);
+
+  const currentScenario = useMemo(
+    () => buildScenarioSnapshot(activeSector, analysis, currentCoreWorkers),
+    [activeSector, analysis, currentCoreWorkers],
+  );
+  const manualScenario = useMemo(
+    () => buildScenarioSnapshot(activeSector, analysis, manualCoreWorkers),
+    [activeSector, analysis, manualCoreWorkers],
+  );
+  const aiScenario = useMemo(
+    () => buildScenarioSnapshot(activeSector, analysis, aiRecommendedCore),
+    [activeSector, analysis, aiRecommendedCore],
+  );
 
   const zoneChecklist = useMemo(() => {
     const items = [
@@ -893,7 +956,12 @@ export function IntelligenceTab() {
   const handleZoneSelection = (zoneId: string) => {
     setAreaId(zoneId);
     setSelectedSectorId(zoneId);
+    onZoneChange?.(zoneId);
     void runAnalysis({ silent: false, nextAreaId: zoneId });
+  };
+
+  const jumpToSimulationLab = () => {
+    document.getElementById("simulation-lab")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const handleCopyBrief = async () => {
@@ -1081,6 +1149,215 @@ export function IntelligenceTab() {
         </div>
       </section>
 
+      <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-6 py-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Geospatial command map</p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">Sector shape map with route-aware density context</h3>
+                <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-500">
+                  Click any Agra zone to switch the route, fetch zone-specific density, and open the exact control surface for that geography.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Dynamic route</p>
+                <p className="mt-2 text-sm font-black text-slate-950">/admin-portal-2026/intelligence/{activeSector.id}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="relative h-[34rem]">
+            <MapContainer
+              center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
+              zoom={selectedSectorId === "all" ? 11 : 12}
+              scrollWheelZoom
+              className="h-full w-full"
+            >
+              <CommandMapView
+                center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
+                zoom={selectedSectorId === "all" ? 11 : 12}
+              />
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                attribution="&copy; CARTO"
+              />
+
+              {commandMapZones.map((zone) => {
+                const density = zoneDensityMap[zone.id] ?? 0;
+                const tone = getDensityTone(density);
+                const active = zone.id === activeSector.id;
+
+                return (
+                  <Polygon
+                    key={zone.id}
+                    positions={zone.polygon}
+                    pathOptions={{
+                      color: active ? "#0f172a" : tone.stroke,
+                      weight: active ? 3 : 2,
+                      fillColor: tone.fill,
+                      fillOpacity: active ? 0.44 : 0.2,
+                    }}
+                    eventHandlers={{ click: () => handleZoneSelection(zone.id) }}
+                  >
+                    <LeafletTooltip sticky>
+                      <div className="space-y-1">
+                        <p className="text-sm font-black text-slate-950">{zone.label}</p>
+                        <p className="text-xs font-bold text-slate-500">{tone.label}</p>
+                        <p className="text-xs font-bold text-slate-700">Density {density.toFixed(2)}</p>
+                      </div>
+                    </LeafletTooltip>
+                  </Polygon>
+                );
+              })}
+
+              {visiblePreviewSignals.map((signal) => (
+                <CircleMarker
+                  key={signal.id}
+                  center={signal.position}
+                  radius={signal.isEmergency ? 7 : 4}
+                  pathOptions={{
+                    color: signal.isEmergency ? "#b91c1c" : "#4338ca",
+                    fillColor: signal.isEmergency ? "#f97316" : "#6366f1",
+                    fillOpacity: signal.isEmergency ? 0.88 : 0.62,
+                    weight: signal.isEmergency ? 2 : 1,
+                  }}
+                >
+                  <LeafletTooltip>
+                    <div className="space-y-1">
+                      <p className="text-sm font-black text-slate-950">{signal.label}</p>
+                      <p className="text-xs font-bold text-slate-500">{signal.serviceType}</p>
+                      <p className="text-xs font-bold text-slate-700">{formatCurrency(signal.estimatedValue)}</p>
+                    </div>
+                  </LeafletTooltip>
+                </CircleMarker>
+              ))}
+            </MapContainer>
+
+            <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Legend</p>
+              <div className="mt-3 space-y-2 text-xs font-bold text-slate-600">
+                {[
+                  { label: "Critical density", color: "bg-rose-500" },
+                  { label: "High density", color: "bg-orange-500" },
+                  { label: "Balanced density", color: "bg-indigo-500" },
+                  { label: "Freelancer-led", color: "bg-sky-500" },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center gap-2">
+                    <span className={cn("h-2.5 w-2.5 rounded-full", item.color)} />
+                    {item.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Synthetic load sample</p>
+              <p className="mt-2 text-sm font-black text-slate-950">
+                {visiblePreviewSignals.length} preview points from the 400k simulation engine
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="rounded-[1.8rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Scenario console</p>
+                <h3 className="mt-2 text-2xl font-black text-slate-950">Workforce slider and AI comparison</h3>
+              </div>
+              <div className="rounded-2xl bg-slate-950 px-3 py-2 text-xs font-black uppercase tracking-[0.18em] text-white">
+                {strategyLabel[analysis.allocation_strategy]}
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Selected zone</p>
+                  <p className="mt-2 text-lg font-black text-slate-950">{activeSector.label}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Live density</p>
+                  <p className="mt-2 text-lg font-black text-slate-950">{analysis.density_score.toFixed(2)}</p>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <div className="mb-2 flex items-center justify-between text-sm font-black text-slate-700">
+                  <span>Salaried core override</span>
+                  <span>{manualCoreWorkers} workers</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={Math.max(18, aiRecommendedCore + 6)}
+                  value={manualCoreWorkers}
+                  onChange={(event) => setManualCoreWorkers(Number(event.target.value))}
+                  className="h-3 w-full accent-slate-950"
+                />
+                <div className="mt-3 flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                  <span>Current core {currentCoreWorkers}</span>
+                  <span>AI target {aiRecommendedCore}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-3">
+              <ScenarioCard
+                title="Current status"
+                tone="slate"
+                density={currentScenario.densityScore}
+                quality={currentScenario.qualityScore}
+                response={currentScenario.responseMinutes}
+                profit={currentScenario.projectedProfit}
+                workforce={`${currentScenario.salariedCore} salaried / ${currentScenario.freelancerPool} flex`}
+              />
+              <ScenarioCard
+                title="Manual scenario"
+                tone="indigo"
+                density={manualScenario.densityScore}
+                quality={manualScenario.qualityScore}
+                response={manualScenario.responseMinutes}
+                profit={manualScenario.projectedProfit}
+                workforce={`${manualScenario.salariedCore} salaried / ${manualScenario.freelancerPool} flex`}
+              />
+              <ScenarioCard
+                title="AI recommended"
+                tone="emerald"
+                density={aiScenario.densityScore}
+                quality={aiScenario.qualityScore}
+                response={aiScenario.responseMinutes}
+                profit={aiScenario.projectedProfit}
+                workforce={`${aiScenario.salariedCore} salaried / ${aiScenario.freelancerPool} flex`}
+              />
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <MonitoringStat label="Margin swing" value={formatCurrency(manualScenario.projectedProfit - currentScenario.projectedProfit)} hint="Projected lift from the manual workforce change" light />
+              <MonitoringStat label="Quality delta" value={`${manualScenario.qualityScore - currentScenario.qualityScore > 0 ? "+" : ""}${manualScenario.qualityScore - currentScenario.qualityScore}`} hint="Service score shift versus current state" light />
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <ActionButton label="Route to AI target" onClick={() => setManualCoreWorkers(aiRecommendedCore)} />
+              <ActionButton label="Open 400k stress lab" onClick={jumpToSimulationLab} />
+              <ActionButton label="Copy zone path" onClick={() => void navigator.clipboard.writeText(`/admin-portal-2026/intelligence/${activeSector.id}`)} />
+            </div>
+          </div>
+
+          <div className="rounded-[1.8rem] border border-slate-200 bg-slate-950 p-6 text-white shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Why this page matters</p>
+            <h3 className="mt-2 text-2xl font-black">This is now a zone operating system, not a poster.</h3>
+            <div className="mt-5 grid gap-3">
+              <MonitoringStat label="Route context" value={activeSector.id} hint="Every click can become a shareable zone URL." />
+              <MonitoringStat label="Map logic" value={`${commandMapZones.length} sectors`} hint="Density is visualized as shaped geography instead of generic cards." />
+              <MonitoringStat label="Stress path" value="400k simulation" hint="The load lab already runs against the analytics simulation endpoint." />
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-6 xl:grid-cols-[1fr_0.92fr]">
         <div className="rounded-[1.6rem] border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -1095,7 +1372,7 @@ export function IntelligenceTab() {
                   value={areaId}
                   onChange={(event) => setAreaId(event.target.value)}
                   className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-black text-slate-800 outline-none transition focus:border-slate-900 focus:bg-white sm:w-64"
-                  placeholder="all, sector-15-noida"
+                  placeholder="agra-cantt, taj-ganj, civil-lines"
                 />
               </div>
               <button
@@ -1413,7 +1690,7 @@ export function IntelligenceTab() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef" />
                     <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700 }} />
                     <YAxis tick={{ fontSize: 12, fontWeight: 700 }} />
-                    <Tooltip content={<DemandTooltip />} />
+                    <RechartsTooltip content={<DemandTooltip />} />
                     <Line
                       type="monotone"
                       dataKey="actual"
@@ -1443,7 +1720,7 @@ export function IntelligenceTab() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#dbe4ef" />
                     <XAxis dataKey="label" tick={{ fontSize: 12, fontWeight: 700 }} />
                     <YAxis tick={{ fontSize: 12, fontWeight: 700 }} />
-                    <Tooltip content={<GapTooltip />} />
+                    <RechartsTooltip content={<GapTooltip />} />
                     <Area
                       type="monotone"
                       dataKey="gap"
@@ -1652,7 +1929,9 @@ export function IntelligenceTab() {
         <LensCard title="Trust Lens" body="Worker quality and escalation actions sit inside the same surface, so service trust becomes something the admin can actively steer." icon={Clock3} />
       </section>
 
-      <SimulationEngine />
+      <section id="simulation-lab" className="scroll-mt-24">
+        <SimulationEngine />
+      </section>
     </div>
   );
 }
@@ -1750,6 +2029,52 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ScenarioCard({
+  title,
+  tone,
+  density,
+  quality,
+  response,
+  profit,
+  workforce,
+}: {
+  title: string;
+  tone: "slate" | "indigo" | "emerald";
+  density: number;
+  quality: number;
+  response: number;
+  profit: number;
+  workforce: string;
+}) {
+  const toneStyles = {
+    slate: "border-slate-200 bg-white text-slate-950",
+    indigo: "border-indigo-200 bg-indigo-50 text-indigo-950",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+  } as const;
+
+  return (
+    <div className={cn("rounded-[1.5rem] border p-4", toneStyles[tone])}>
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{title}</p>
+      <div className="mt-4 grid gap-3">
+        <ScenarioMetric label="Density" value={density.toFixed(2)} />
+        <ScenarioMetric label="Quality" value={`${quality}/100`} />
+        <ScenarioMetric label="Response" value={`${response} min`} />
+        <ScenarioMetric label="Profit" value={formatCurrency(profit)} />
+      </div>
+      <p className="mt-4 text-xs font-bold leading-5 text-slate-500">{workforce}</p>
+    </div>
+  );
+}
+
+function ScenarioMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-black/5 pb-2 last:border-b-0 last:pb-0">
+      <span className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{label}</span>
+      <span className="text-sm font-black text-current">{value}</span>
+    </div>
+  );
+}
+
 function ActionButton({
   label,
   onClick,
@@ -1837,6 +2162,16 @@ function LensCard({ title, body, icon: Icon }: { title: string; body: string; ic
       <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">{body}</p>
     </div>
   );
+}
+
+function CommandMapView({ center, zoom }: { center: [number, number]; zoom: number }) {
+  const map = useMap();
+
+  useEffect(() => {
+    map.setView(center, zoom, { animate: true });
+  }, [center, map, zoom]);
+
+  return null;
 }
 
 function DemandTooltip({ active, payload, label }: any) {

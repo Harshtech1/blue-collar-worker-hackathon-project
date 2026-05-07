@@ -5,6 +5,16 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+CURRENT_DIR = Path(__file__).resolve().parent
+for env_path in (
+    CURRENT_DIR.parent / ".env",
+    CURRENT_DIR.parent.parent.parent / ".env",
+):
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 # 1. Define state
 class ChatState(TypedDict):
