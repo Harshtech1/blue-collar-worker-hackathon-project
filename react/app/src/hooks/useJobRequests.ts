@@ -39,6 +39,17 @@ interface JobRequest {
   };
 }
 
+type ProofPhotoPayload = {
+  url?: string | null;
+  secure_url?: string | null;
+  public_id?: string | null;
+  format?: string | null;
+  version?: string | null;
+  width?: number | null;
+  height?: number | null;
+  visibility?: string | null;
+};
+
 const ACTIVE_STATUSES = ['accepted', 'arriving', 'otp_verify', 'in_progress'];
 
 const normalizeJob = (job: any) => ({
@@ -184,7 +195,7 @@ export function useJobRequests() {
     }
   };
 
-  const startJob = async (jobId: string, otp: string) => {
+  const startJob = async (jobId: string, otp: string, beforeWorkPhoto?: ProofPhotoPayload | null) => {
     if (!user) return { error: new Error('Not authenticated') };
 
     try {
@@ -192,7 +203,14 @@ export function useJobRequests() {
       const res = await fetch(`${API}/bookings/${jobId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'in_progress', otp, otp_verified: true, started_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          status: 'in_progress',
+          otp,
+          otp_verified: true,
+          beforeWorkPhoto,
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
       });
 
       if (!res.ok) {
@@ -224,7 +242,7 @@ export function useJobRequests() {
     }
   };
 
-  const completeJob = async (jobId: string, otp?: string) => {
+  const completeJob = async (jobId: string, otp?: string, afterWorkPhoto?: ProofPhotoPayload | null) => {
     if (!user) return { error: new Error('Not authenticated') };
 
     try {
@@ -232,7 +250,13 @@ export function useJobRequests() {
       const res = await fetch(`${API}/bookings/${jobId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ status: 'completed', otp, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          status: 'completed',
+          otp,
+          afterWorkPhoto,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
       });
 
       if (!res.ok) {

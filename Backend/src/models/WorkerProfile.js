@@ -17,6 +17,9 @@ const COLLECTION = 'worker_profiles';
  * isAvailable: Boolean
  * completed_jobs_count: Number
  * rating: Number
+ * aadhaar: { url, secure_url, public_id, format, version, visibility }
+ * pan: { url, secure_url, public_id, format, version, visibility }
+ * skillsDocument: { url, secure_url, public_id, format, version, visibility }
  */
 
 export const WorkerProfile = {

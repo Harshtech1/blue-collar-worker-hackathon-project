@@ -7,7 +7,12 @@ import {
   ChevronRight,
   Mail,
   KeyRound,
+  FileLock2,
+  ExternalLink,
+  Eye,
+  X,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { AdminSidebar, AdminTab } from "./components/AdminSidebar";
 import { OverviewTab } from "./components/OverviewTab";
@@ -96,6 +101,11 @@ export default function AdminDashboard() {
   const [usersList, setUsersList] = useState<any[]>([]);
   const [workersList, setWorkersList] = useState<any[]>([]);
   const [bookingsList, setBookingsList] = useState<Booking[]>([]);
+  const [verificationViewerOpen, setVerificationViewerOpen] = useState(false);
+  const [verificationViewerUrl, setVerificationViewerUrl] = useState("");
+  const [verificationViewerName, setVerificationViewerName] = useState("");
+  const [verificationViewerType, setVerificationViewerType] = useState("aadhaar");
+  const [verificationViewerLoadingId, setVerificationViewerLoadingId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -332,6 +342,35 @@ export default function AdminDashboard() {
     });
     setLoading(false);
     setError("");
+  };
+
+  const handleViewVerificationDocument = async (worker: any, type: "aadhaar" | "pan" = "aadhaar") => {
+    const token = localStorage.getItem("adminToken");
+    if (!token) {
+      setError("Admin session expired. Please log in again.");
+      return;
+    }
+
+    setVerificationViewerLoadingId(`${worker._id}:${type}`);
+    try {
+      const res = await fetch(`${API}/admin/workers/${worker._id}/verification-document?type=${type}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to load verification document");
+      }
+
+      setVerificationViewerUrl(data.url);
+      setVerificationViewerName(worker.name || "Worker");
+      setVerificationViewerType(type);
+      setVerificationViewerOpen(true);
+    } catch (err: any) {
+      setError(err.message || "Failed to load verification document");
+    } finally {
+      setVerificationViewerLoadingId(null);
+    }
   };
 
   /* ================= LOGIN UI ================= */
@@ -590,6 +629,30 @@ export default function AdminDashboard() {
                 } },
                 { key: 'status', label: 'Status', render: (val) => <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${val === 'verified' ? 'text-green-600 bg-green-50' : 'text-orange-600 bg-orange-50'}`}>{val}</span> },
                 { key: 'isAvailable', label: 'Availability', render: (val) => <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${val ? 'text-green-600 bg-green-50' : 'text-rose-600 bg-rose-50'}`}>{val ? 'Available' : 'Busy'}</span> },
+                {
+                  key: 'verificationDocument',
+                  label: 'Verification',
+                  render: (_val, row) => {
+                    const hasAadhaar = Boolean(row?.aadhaar?.public_id || row?.aadhaar?.url || row?.aadhaar_url);
+                    return hasAadhaar ? (
+                      <button
+                        type="button"
+                        onClick={() => handleViewVerificationDocument(row, 'aadhaar')}
+                        disabled={verificationViewerLoadingId === `${row._id}:aadhaar`}
+                        className="inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-black text-sky-700 transition hover:bg-sky-100 disabled:opacity-60"
+                      >
+                        {verificationViewerLoadingId === `${row._id}:aadhaar` ? (
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" />
+                        ) : (
+                          <FileLock2 size={14} />
+                        )}
+                        View Verification Document
+                      </button>
+                    ) : (
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Not uploaded</span>
+                    );
+                  }
+                },
               ]}
               loading={loading}
             />
@@ -609,6 +672,35 @@ export default function AdminDashboard() {
                   if (val === 'pending') color = 'text-orange-600 bg-orange-50';
                   if (val === 'matched' || val === 'in_progress') color = 'text-indigo-600 bg-indigo-50';
                   return <span className={`uppercase text-xs font-bold px-2 py-1 rounded ${color}`}>{val}</span>;
+                }},
+                { key: 'proofPhotos', label: 'RAHI Verified Job Proof', render: (_val, row) => {
+                  const beforeUrl = row?.beforeWorkPhoto?.url || row?.beforeWorkPhoto?.secure_url || null;
+                  const afterUrl = row?.afterWorkPhoto?.url || row?.afterWorkPhoto?.secure_url || null;
+                  if (!beforeUrl && !afterUrl) {
+                    return <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Pending proof</span>;
+                  }
+                  return (
+                    <div className="min-w-[190px]">
+                      <p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600">RAHI Verified Job Proof</p>
+                      <div className="flex gap-2">
+                        {[{ label: 'Before', url: beforeUrl }, { label: 'After', url: afterUrl }].map((item) => (
+                          item.url ? (
+                            <div key={item.label} className="w-20">
+                              <img src={item.url} alt={`${item.label} proof`} className="h-16 w-20 rounded-xl border border-slate-200 object-cover" />
+                              <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{item.label}</p>
+                            </div>
+                          ) : (
+                            <div key={item.label} className="flex w-20 flex-col items-center">
+                              <div className="flex h-16 w-20 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-400">
+                                Waiting
+                              </div>
+                              <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{item.label}</p>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    </div>
+                  );
                 }},
                 { key: 'createdAt', label: 'Date', render: (val) => new Date(val).toLocaleDateString() },
               ]}
@@ -633,6 +725,56 @@ export default function AdminDashboard() {
           )}
         </div>
       </main>
+
+      <Dialog open={verificationViewerOpen} onOpenChange={setVerificationViewerOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-sky-600" />
+              {verificationViewerName} · {verificationViewerType.toUpperCase()} Verification Document
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p className="text-sm font-semibold text-slate-600">
+                This preview uses a time-limited signed URL from the backend.
+              </p>
+              <a
+                href={verificationViewerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white transition hover:bg-slate-700"
+              >
+                <ExternalLink size={14} />
+                Open In New Tab
+              </a>
+            </div>
+
+            {verificationViewerUrl ? (
+              verificationViewerUrl.toLowerCase().includes(".pdf") ? (
+                <iframe
+                  src={verificationViewerUrl}
+                  title="Verification Document Preview"
+                  className="h-[70vh] w-full rounded-xl border border-slate-200 bg-white"
+                />
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                  <img
+                    src={verificationViewerUrl}
+                    alt={`${verificationViewerType} verification document`}
+                    className="max-h-[70vh] w-full object-contain"
+                  />
+                </div>
+              )
+            ) : (
+              <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm font-semibold text-slate-500">
+                Unable to preview this document right now.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

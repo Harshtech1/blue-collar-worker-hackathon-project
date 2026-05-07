@@ -1,5 +1,6 @@
 import { User } from '../models/User.js';
 import { ObjectId } from 'mongodb';
+import { getMediaUrl, normalizeMediaField } from '../utils/mediaStorage.js';
 
 export const updateUser = async (req, res) => {
   try {
@@ -11,6 +12,14 @@ export const updateUser = async (req, res) => {
     }
 
     const updates = req.body;
+
+    if (updates.avatar_url && !updates.avatar) {
+      updates.avatar = normalizeMediaField(updates.avatar_url);
+    }
+    if (updates.avatar) {
+      updates.avatar = normalizeMediaField(updates.avatar);
+      updates.avatar_url = getMediaUrl(updates.avatar);
+    }
 
     // Security: don't allow updating sensitive fields directly here if not needed
     delete updates.password;
@@ -41,7 +50,11 @@ export const updateUser = async (req, res) => {
 
     const user = result.value || result;
     const { password, ...safeUser } = user;
-    res.json(safeUser);
+    res.json({
+      ...safeUser,
+      avatar: normalizeMediaField(safeUser.avatar || safeUser.avatar_url),
+      avatar_url: getMediaUrl(safeUser.avatar || safeUser.avatar_url),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });

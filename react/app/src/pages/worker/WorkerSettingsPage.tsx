@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { API_ROOT as API_BASE } from '@/lib/constants';
-import { compressImageForUpload } from '@/lib/upload';
+import { compressImageForUpload, extractMediaUrl } from '@/lib/upload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -144,7 +144,10 @@ const WorkerSettingsPage = () => {
 
       if (res.ok) {
         const workerData = await res.json();
-        setProfileData({ avatar_url: profile?.avatar_url || workerData.avatar_url || null });
+        setProfileData({
+          avatar: workerData.avatar || null,
+          avatar_url: profile?.avatar_url || extractMediaUrl(workerData.avatar) || workerData.avatar_url || null
+        });
 
         reset({
           full_name: profile?.full_name || workerData.full_name || '',
@@ -189,6 +192,7 @@ const WorkerSettingsPage = () => {
       
       const formData = new FormData();
       formData.append('file', await compressImageForUpload(file));
+      formData.append('type', 'avatar');
 
       const uploadRes = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
@@ -204,14 +208,18 @@ const WorkerSettingsPage = () => {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({ avatar_url: uploadData.url })
+          body: JSON.stringify({ avatar: uploadData.media })
         });
 
         if (!profileRes.ok) {
           throw new Error('Failed to save avatar');
         }
 
-        setProfileData((prev: any) => ({ ...prev, avatar_url: uploadData.url }));
+        setProfileData((prev: any) => ({
+          ...prev,
+          avatar: uploadData.media,
+          avatar_url: extractMediaUrl(uploadData.media) || uploadData.url || null
+        }));
         toast.success('Profile picture updated!');
       } else {
         toast.error('Upload failed');
@@ -823,7 +831,7 @@ const WorkerSettingsPage = () => {
                             });
                             if (res.ok) {
                               const data = await res.json();
-                              setAadhaarUrl(data.url || 'uploaded');
+                              setAadhaarUrl(extractMediaUrl(data.media) || data.url || 'uploaded');
                               setAadhaarStatus('done');
                               toast.success('Aadhaar uploaded! Verification badge activated.');
                             } else {

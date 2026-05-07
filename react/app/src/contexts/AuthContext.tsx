@@ -1,11 +1,17 @@
 import React, { createContext, useContext, useCallback, useEffect, useState, ReactNode } from 'react';
 import { API } from '@/lib/constants';
+import { extractMediaUrl } from '@/lib/upload';
 
 interface Profile {
   id: string;
   full_name?: string;
   phone?: string;
   email?: string;
+  avatar?: {
+    url?: string | null;
+    public_id?: string | null;
+    format?: string | null;
+  };
   avatar_url?: string;
   socials?: {
     twitter?: string;
@@ -70,7 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           id: userId,
           full_name: user.full_name,
           email: user.email,
-          avatar_url: user.avatar_url,
+          avatar: user.avatar,
+          avatar_url: extractMediaUrl(user.avatar) || user.avatar_url,
           role: user.role,
           // Preserve other fields
           phone: user.phone,
@@ -225,7 +232,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             full_name: data.user.full_name,
             email: data.user.email,
             phone: data.user.phone,
-            avatar_url: data.user.avatar_url,
+            avatar: data.user.avatar,
+            avatar_url: extractMediaUrl(data.user.avatar) || data.user.avatar_url,
             socials: data.user.socials,
             role: data.user.role,
             preferred_language: data.user.preferred_language,

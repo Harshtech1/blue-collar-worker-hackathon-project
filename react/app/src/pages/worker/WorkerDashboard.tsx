@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
 import { db } from '@/lib/db';
 import ChatDrawer from '@/components/ChatDrawer';
+import { JobRequestCard } from '@/components/worker/JobRequestCard';
 import { toast } from 'sonner';
 import { useJobRequests } from '@/hooks/useJobRequests';
 import {
@@ -36,6 +37,7 @@ import {
   Cell,
   Legend
 } from 'recharts';
+import { UploadedMedia, extractMediaUrl, uploadFile } from '@/lib/upload';
 
 
 
@@ -46,7 +48,7 @@ const WorkerDashboard = () => {
   const { isOnline } = useOutletContext<{ isOnline: boolean }>();
   const { user, profile } = useAuth();
   const { socket } = useSocket();
-  const { activeJobs, pendingJobs, allJobs, updateJobStatus, startJob, completeJob, expirePendingJob, refreshJobs } = useJobRequests();
+  const { activeJobs, pendingJobs, allJobs, acceptJob, rejectJob, updateJobStatus, startJob, completeJob, expirePendingJob, refreshJobs } = useJobRequests();
 
   const [notifications, setNotifications] = useState<any[]>([]);
   const [reminders, setReminders] = useState<any[]>([]);
@@ -57,6 +59,8 @@ const WorkerDashboard = () => {
   const [otpType, setOtpType] = useState<'start' | 'finish'>('start');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
+  const [proofMedia, setProofMedia] = useState<UploadedMedia | null>(null);
+  const [proofUploading, setProofUploading] = useState(false);
   
   const [selectedChatJob, setSelectedChatJob] = useState<any>(null);
   const currentUserId = user?._id || localStorage.getItem('userId') || '';
@@ -200,30 +204,58 @@ const WorkerDashboard = () => {
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);
     setOtpType('start');
+    setOtp('');
+    setProofMedia(null);
     setOtpDialogOpen(true);
   };
 
   const handleCompleteJob = (jobId: string) => {
     setSelectedJobId(jobId);
     setOtpType('finish');
+    setOtp('');
+    setProofMedia(null);
     setOtpDialogOpen(true);
+  };
+
+  const handleProofUpload = async (file: File | undefined) => {
+    if (!file) return;
+
+    setProofUploading(true);
+    try {
+      const result = await uploadFile(file, 'bookingProof');
+      if (result.error || !result.media) {
+        throw new Error(result.error || 'Photo upload failed');
+      }
+      setProofMedia(result.media);
+      toast.success(otpType === 'start' ? 'Before photo uploaded' : 'After photo uploaded');
+    } catch (error: any) {
+      toast.error(error.message || 'Unable to upload proof photo');
+    } finally {
+      setProofUploading(false);
+    }
   };
 
   const handleVerifyOTP = async () => {
     if (!selectedJobId) return;
+    if (!proofMedia) {
+      toast.error(otpType === 'start' ? 'Upload a before-work photo first.' : 'Upload an after-work photo first.');
+      return;
+    }
     
     if (otpType === 'start') {
-      const result = await startJob(selectedJobId, otp);
+      const result = await startJob(selectedJobId, otp, proofMedia);
       if (!result.error) {
         setOtpDialogOpen(false);
         setOtp('');
+        setProofMedia(null);
         setSelectedJobId(null);
       }
     } else {
-      const result = await completeJob(selectedJobId, otp);
+      const result = await completeJob(selectedJobId, otp, proofMedia);
       if (!result.error) {
         setOtpDialogOpen(false);
         setOtp('');
+        setProofMedia(null);
         setSelectedJobId(null);
       }
     }
@@ -516,6 +548,49 @@ const WorkerDashboard = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Active Jobs */}
         <div className="lg:col-span-2">
+          <Card className="mb-6 overflow-hidden border-amber-300/30 bg-gradient-to-br from-white via-amber-50/40 to-indigo-50/40 shadow-sm transition-all duration-300 hover:shadow-lg">
+            <CardHeader className="border-b border-amber-200/50 bg-gradient-to-r from-amber-50 to-white">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-slate-900">
+                    <div className="rounded-lg bg-amber-100 p-2">
+                      <BellRing className="h-5 w-5 text-amber-600" />
+                    </div>
+                    Timed Offers
+                  </CardTitle>
+                  <CardDescription className="mt-1 text-slate-600">
+                    New waterfall requests stay with you for 15 seconds before moving to the next worker.
+                  </CardDescription>
+                </div>
+                <Badge className="bg-slate-900 text-white hover:bg-slate-900">
+                  {pendingJobs.length} live
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4">
+              {pendingJobs.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white/80 p-6 text-center">
+                  <p className="text-sm font-semibold text-slate-900">No timed offers right now</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Stay online and we&apos;ll surface the next nearby request here first.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pendingJobs.slice(0, 3).map((job) => (
+                    <JobRequestCard
+                      key={job.id}
+                      job={job}
+                      onAccept={acceptJob}
+                      onReject={rejectJob}
+                      variant="pending"
+                    />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card className="hover:shadow-lg transition-all duration-300 hover-lift border-worker-primary/10">
             <CardHeader className="bg-gradient-to-r from-worker-primary/5 to-worker-secondary/5">
               <CardTitle className="flex items-center gap-2 text-gray-900">
@@ -858,7 +933,15 @@ const WorkerDashboard = () => {
         </div>
       )}
       {/* OTP Dialog */}
-      <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
+      <Dialog open={otpDialogOpen} onOpenChange={(open) => {
+        setOtpDialogOpen(open);
+        if (!open) {
+          setOtp('');
+          setProofMedia(null);
+          setSelectedJobId(null);
+          setProofUploading(false);
+        }
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -866,11 +949,51 @@ const WorkerDashboard = () => {
             </DialogTitle>
             <DialogDescription>
               {otpType === 'start' 
-                ? 'Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
-                : 'Ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
+                ? 'Upload a photo of the work site, then ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
+                : 'Upload a photo of the finished work, then ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="dashboard-proof-photo">
+                {otpType === 'start' ? 'Take Photo of Work Site' : 'Take Photo of Finished Work'}
+              </Label>
+              <Input
+                id="dashboard-proof-photo"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                disabled={proofUploading}
+                onChange={(e) => handleProofUpload(e.target.files?.[0])}
+                className="h-12"
+              />
+              <p className="text-xs text-muted-foreground">
+                RAHI compresses the image under 500KB for faster upload in low-signal areas.
+              </p>
+              {proofUploading && (
+                <div className="flex items-center gap-2 text-sm font-medium text-indigo-600">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+                  Uploading proof photo...
+                </div>
+              )}
+              {proofMedia && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-800">Proof photo uploaded</p>
+                      <p className="text-xs text-emerald-700">RAHI verified job proof is attached to this OTP step.</p>
+                    </div>
+                    {extractMediaUrl(proofMedia) && (
+                      <img
+                        src={extractMediaUrl(proofMedia) || ''}
+                        alt="Proof preview"
+                        className="h-16 w-16 rounded-lg object-cover"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="space-y-2">
               <Label htmlFor="otp">OTP Code</Label>
               <Input
@@ -888,7 +1011,7 @@ const WorkerDashboard = () => {
             <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
+            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4 || !proofMedia || proofUploading}>
               {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
             </Button>
           </DialogFooter>

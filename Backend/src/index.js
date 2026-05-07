@@ -25,6 +25,8 @@ import {
   validateAdminCredentials,
 } from "./utils/adminAuth.js";
 import { appendStatusHistory } from "./utils/bookingWorkflow.js";
+import { upload } from "./middleware/upload.js";
+import { getSignedMediaUrl, normalizeMediaField, uploadMedia } from "./utils/mediaStorage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,6 +56,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
+// Kept only as a compatibility fallback when Cloudinary env vars are absent.
 app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
 app.use((req, res, next) => {
   const start = Date.now();
@@ -193,6 +196,48 @@ connectDB()
       }
     });
 
+    app.get("/api/admin/workers/:workerProfileId/verification-document", protect, authorize("admin"), async (req, res) => {
+      try {
+        const { workerProfileId } = req.params;
+        const type = String(req.query.type || "aadhaar").trim().toLowerCase();
+        const { ObjectId } = await import("mongodb");
+        const db = getDb();
+
+        const workerProfile = await db.collection("worker_profiles").findOne({ _id: new ObjectId(workerProfileId) });
+        if (!workerProfile) {
+          return res.status(404).json({ message: "Worker profile not found" });
+        }
+
+        const fieldMap = {
+          aadhaar: workerProfile.aadhaar || workerProfile.aadhaar_url,
+          pan: workerProfile.pan || workerProfile.pan_url,
+          skill: workerProfile.skillsDocument || workerProfile.skills_url,
+          skills: workerProfile.skillsDocument || workerProfile.skills_url,
+        };
+
+        const media = normalizeMediaField(fieldMap[type]);
+        if (!media?.url) {
+          return res.status(404).json({ message: "Verification document not available" });
+        }
+
+        const signedUrl = getSignedMediaUrl(media, { ttlSeconds: 600 });
+        const absoluteFallbackUrl = media.url.startsWith("http")
+          ? media.url
+          : `${req.protocol}://${req.get("host")}${media.url}`;
+
+        res.json({
+          url: signedUrl || absoluteFallbackUrl,
+          media: {
+            ...media,
+            url: signedUrl || absoluteFallbackUrl,
+          },
+        });
+      } catch (err) {
+        console.error("[admin verification document]", err);
+        res.status(500).json({ message: "Failed to generate verification document link" });
+      }
+    });
+
     app.get("/api/admin/heatmap", protect, authorize("admin"), async (_req, res) => {
       try {
         const db = getDb();
@@ -321,39 +366,73 @@ connectDB()
       }
     });
 
-    app.post("/api/worker/profile/aadhaar", protect, authorize("worker"), async (req, res) => {
+    app.post("/api/worker/profile/aadhaar", protect, authorize("worker"), upload.single("file"), async (req, res) => {
       try {
-        const multer = (await import("multer")).default;
-        const fs = await import("fs");
         const { ObjectId } = await import("mongodb");
-        const uploadDir = path.join(__dirname, "../public/uploads/aadhaar");
-        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+        if (!req.file) return res.status(400).json({ message: "No file provided" });
 
-        const storage = multer.diskStorage({
-          destination: (_req, _file, cb) => cb(null, uploadDir),
-          filename: (_req, file, cb) => {
-            const ext = path.extname(file.originalname);
-            cb(null, `aadhaar-${req.user._id}-${Date.now()}${ext}`);
+        const media = await uploadMedia(req.file, "aadhaar");
+        const db = getDb();
+        await db.collection("worker_profiles").updateOne(
+          { user: new ObjectId(req.user._id) },
+          {
+            $set: {
+              aadhaar: media,
+              aadhaar_url: media.url,
+              is_verified: true,
+              updatedAt: new Date(),
+              "verificationStatus.aadhaar": "verified",
+            },
           },
-        });
+        );
 
-        const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }).single("file");
-
-        upload(req, res, async (err) => {
-          if (err) return res.status(400).json({ message: `Upload error: ${err.message}` });
-          if (!req.file) return res.status(400).json({ message: "No file provided" });
-
-          const fileUrl = `/uploads/aadhaar/${req.file.filename}`;
-          const db = getDb();
-          await db.collection("worker_profiles").updateOne(
-            { user: new ObjectId(req.user._id) },
-            { $set: { aadhaar_url: fileUrl, is_verified: true, updatedAt: new Date() } },
-          );
-
-          res.json({ success: true, url: fileUrl, message: "Aadhaar uploaded successfully" });
-        });
+        res.json({ success: true, url: media.url, media, message: "Aadhaar uploaded successfully" });
       } catch (err) {
         console.error("[aadhaar upload]", err);
+        res.status(500).json({ message: "Server error during upload" });
+      }
+    });
+
+    app.post("/api/worker/documents", protect, authorize("worker"), upload.single("file"), async (req, res) => {
+      try {
+        if (!req.file) return res.status(400).json({ message: "No file provided" });
+
+        const { ObjectId } = await import("mongodb");
+        const type = String(req.body.type || "").trim().toLowerCase();
+        const kindMap = {
+          aadhaar: { mediaKind: "aadhaar", field: "aadhaar", statusPath: "verificationStatus.aadhaar" },
+          pan: { mediaKind: "pan", field: "pan", statusPath: "verificationStatus.pan" },
+          skill: { mediaKind: "skill", field: "skillsDocument", statusPath: "verificationStatus.skills" },
+          skills: { mediaKind: "skill", field: "skillsDocument", statusPath: "verificationStatus.skills" },
+        };
+        const target = kindMap[type];
+
+        if (!target) {
+          return res.status(400).json({ message: "Unsupported document type" });
+        }
+
+        const media = await uploadMedia(req.file, target.mediaKind);
+        const legacyField = target.field === "skillsDocument" ? "skills_url" : `${target.field}_url`;
+        const updateSet = {
+          [target.field]: media,
+          [legacyField]: media.url,
+          updatedAt: new Date(),
+          [target.statusPath]: "verified",
+        };
+
+        if (target.field === "aadhaar") {
+          updateSet.is_verified = true;
+        }
+
+        const db = getDb();
+        await db.collection("worker_profiles").updateOne(
+          { user: new ObjectId(req.user._id) },
+          { $set: updateSet },
+        );
+
+        res.json({ success: true, media, url: media.url, message: `${type.toUpperCase()} uploaded successfully` });
+      } catch (err) {
+        console.error("[worker document upload]", err);
         res.status(500).json({ message: "Server error during upload" });
       }
     });

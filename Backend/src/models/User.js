@@ -12,6 +12,7 @@ const COLLECTION = 'users';
  * role: Enum ["customer", "worker", "thekedar", "admin"]
  * isVerified: Boolean
  * socials: { twitter: String, linkedin: String }
+ * avatar: { url, secure_url, public_id, format, version, visibility }
  * createdAt / updatedAt: Date
  */
 

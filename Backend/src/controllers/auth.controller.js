@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { ObjectId } from 'mongodb';
 import { sendEmail } from '../utils/emailService.js';
+import { getMediaUrl, normalizeMediaField } from '../utils/mediaStorage.js';
 
 const generateToken = (user) => {
   return jwt.sign({ id: user._id.toString(), email: user.email, role: user.role }, process.env.JWT_SECRET || 'changeme', { expiresIn: '7d' });
@@ -147,7 +148,8 @@ export const verifyOtp = async (req, res) => {
         phone: user.phone,
         full_name: user.full_name,
         role: user.role,
-        avatar_url: user.avatar_url || null,
+        avatar: normalizeMediaField(user.avatar || user.avatar_url),
+        avatar_url: getMediaUrl(user.avatar || user.avatar_url),
         socials: user.socials || {},
         preferred_language: user.preferred_language,
         city: user.city,
@@ -268,7 +270,13 @@ export const getMe = async (req, res) => {
 
     // Remove password from response
     const { password, ...userWithoutPassword } = user;
-    res.json({ user: userWithoutPassword });
+    res.json({
+      user: {
+        ...userWithoutPassword,
+        avatar: normalizeMediaField(userWithoutPassword.avatar || userWithoutPassword.avatar_url),
+        avatar_url: getMediaUrl(userWithoutPassword.avatar || userWithoutPassword.avatar_url),
+      }
+    });
   } catch (err) {
     console.error(err);
     res.status(401).json({ message: 'Not authorized' });

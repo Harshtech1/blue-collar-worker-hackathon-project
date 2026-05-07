@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { API as API_BASE_FROM_ENV } from '@/lib/constants';
+import { UploadedMedia, extractMediaUrl, uploadFile } from '@/lib/upload';
 
 // Remove '/api' from the end of the constant if present to match the expected format in this file
 const API_BASE = API_BASE_FROM_ENV.replace(/\/api$/, '');
@@ -36,35 +37,65 @@ const WorkerJobsPage = () => {
   const [otpType, setOtpType] = useState<'start' | 'finish'>('start');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
+  const [proofMedia, setProofMedia] = useState<UploadedMedia | null>(null);
+  const [proofUploading, setProofUploading] = useState(false);
 
   const handleStartJob = (jobId: string) => {
     setSelectedJobId(jobId);
     setOtpType('start');
+    setOtp('');
+    setProofMedia(null);
     setOtpDialogOpen(true);
   };
 
   const handleCompleteJob = (jobId: string) => {
     setSelectedJobId(jobId);
     setOtpType('finish');
+    setOtp('');
+    setProofMedia(null);
     setOtpDialogOpen(true);
+  };
+
+  const handleProofUpload = async (file: File | undefined) => {
+    if (!file) return;
+
+    setProofUploading(true);
+    try {
+      const result = await uploadFile(file, 'bookingProof');
+      if (result.error || !result.media) {
+        throw new Error(result.error || 'Photo upload failed');
+      }
+      setProofMedia(result.media);
+      toast.success(otpType === 'start' ? 'Before photo uploaded' : 'After photo uploaded');
+    } catch (error: any) {
+      toast.error(error.message || 'Unable to upload proof photo');
+    } finally {
+      setProofUploading(false);
+    }
   };
 
   const handleVerifyOTP = async () => {
     if (!selectedJobId) return;
+    if (!proofMedia) {
+      toast.error(otpType === 'start' ? 'Upload a before-work photo first.' : 'Upload an after-work photo first.');
+      return;
+    }
     
     if (otpType === 'start') {
-      const result = await startJob(selectedJobId, otp);
+      const result = await startJob(selectedJobId, otp, proofMedia);
       if (!result.error) {
         setOtpDialogOpen(false);
         setOtp('');
+        setProofMedia(null);
         setSelectedJobId(null);
         fetchJobs(); // Refresh list
       }
     } else {
-      const result = await completeJob(selectedJobId, otp);
+      const result = await completeJob(selectedJobId, otp, proofMedia);
       if (!result.error) {
         setOtpDialogOpen(false);
         setOtp('');
+        setProofMedia(null);
         setSelectedJobId(null);
         fetchJobs(); // Refresh list
       }
@@ -636,7 +667,15 @@ const WorkerJobsPage = () => {
         </Card>
       </div>
 
-      <Dialog open={otpDialogOpen} onOpenChange={setOtpDialogOpen}>
+      <Dialog open={otpDialogOpen} onOpenChange={(open) => {
+        setOtpDialogOpen(open);
+        if (!open) {
+          setOtp('');
+          setProofMedia(null);
+          setSelectedJobId(null);
+          setProofUploading(false);
+        }
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -644,11 +683,51 @@ const WorkerJobsPage = () => {
             </DialogTitle>
             <DialogDescription>
               {otpType === 'start' 
-                ? 'Ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
-                : 'Ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
+                ? 'Upload a photo of the work site, then ask the customer for the 4-digit OTP shown on their tracking screen to start the job.' 
+                : 'Upload a photo of the finished work, then ask the customer for the 4-digit completion OTP to finish the job and process payment.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="proof-photo">
+                {otpType === 'start' ? 'Take Photo of Work Site' : 'Take Photo of Finished Work'}
+              </Label>
+              <Input
+                id="proof-photo"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                disabled={proofUploading}
+                onChange={(e) => handleProofUpload(e.target.files?.[0])}
+                className="h-12"
+              />
+              <p className="text-xs text-muted-foreground">
+                RAHI compresses the image under 500KB for faster upload in low-signal areas.
+              </p>
+              {proofUploading && (
+                <div className="flex items-center gap-2 text-sm font-medium text-indigo-600">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+                  Uploading proof photo...
+                </div>
+              )}
+              {proofMedia && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-emerald-800">Proof photo uploaded</p>
+                      <p className="text-xs text-emerald-700">RAHI verified job proof is attached to this OTP step.</p>
+                    </div>
+                    {extractMediaUrl(proofMedia) && (
+                      <img
+                        src={extractMediaUrl(proofMedia) || ''}
+                        alt="Proof preview"
+                        className="h-16 w-16 rounded-lg object-cover"
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="space-y-2">
               <Label htmlFor="otp">OTP Code</Label>
               <Input
@@ -666,7 +745,7 @@ const WorkerJobsPage = () => {
             <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4}>
+            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4 || !proofMedia || proofUploading}>
               {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
             </Button>
           </DialogFooter>

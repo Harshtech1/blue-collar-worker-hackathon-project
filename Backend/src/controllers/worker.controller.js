@@ -1,6 +1,7 @@
 import { WorkerProfile } from '../models/WorkerProfile.js';
 import { User } from '../models/User.js';
 import { ObjectId } from 'mongodb';
+import { getMediaUrl, normalizeMediaField, withLegacyMediaAliases } from '../utils/mediaStorage.js';
 
 export const createProfile = async (req, res) => {
   try {
@@ -42,7 +43,20 @@ export const getByUserId = async (req, res) => {
       { projection: { email: 1, full_name: 1, role: 1, socials: 1 } }
     );
 
-    res.json({ ...profile, avatar_url: user?.avatar_url || null, user });
+    const normalizedUser = user
+      ? {
+          ...user,
+          avatar: normalizeMediaField(user.avatar || user.avatar_url),
+          avatar_url: getMediaUrl(user.avatar || user.avatar_url),
+        }
+      : null;
+
+    res.json(withLegacyMediaAliases({
+      ...profile,
+      avatar: normalizedUser?.avatar || null,
+      avatar_url: normalizedUser?.avatar_url || null,
+      user: normalizedUser,
+    }));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -67,7 +81,7 @@ export const updateByUserId = async (req, res) => {
 
     // Separate User fields vs Worker fields
     const userUpdates = {};
-    const userFields = ['full_name', 'phone', 'socials', 'avatar_url'];
+    const userFields = ['full_name', 'phone', 'socials', 'avatar', 'avatar_url'];
     for (const field of userFields) {
       if (updates[field] !== undefined) {
         userUpdates[field] = updates[field];
@@ -76,6 +90,15 @@ export const updateByUserId = async (req, res) => {
     }
 
     if (Object.keys(userUpdates).length > 0) {
+      if (userUpdates.avatar_url && !userUpdates.avatar) {
+        userUpdates.avatar = normalizeMediaField(userUpdates.avatar_url);
+      }
+
+      if (userUpdates.avatar) {
+        userUpdates.avatar = normalizeMediaField(userUpdates.avatar);
+        userUpdates.avatar_url = userUpdates.avatar?.url || null;
+      }
+
       const flattenedUserUpdates = {};
       for (const [key, value] of Object.entries(userUpdates)) {
         if (typeof value === 'object' && value !== null && key === 'socials') {
@@ -93,7 +116,25 @@ export const updateByUserId = async (req, res) => {
     }
 
     // Handle document verification status updates if files are uploaded
-    if (updates.aadhaar_url || updates.pan_url || updates.skills_url) {
+    if (updates.aadhaar || updates.pan || updates.skillsDocument || updates.aadhaar_url || updates.pan_url || updates.skills_url) {
+      if (updates.aadhaar_url && !updates.aadhaar) {
+        updates.aadhaar = normalizeMediaField(updates.aadhaar_url);
+      }
+      if (updates.pan_url && !updates.pan) {
+        updates.pan = normalizeMediaField(updates.pan_url);
+      }
+      if (updates.skills_url && !updates.skillsDocument) {
+        updates.skillsDocument = normalizeMediaField(updates.skills_url);
+      }
+
+      if (updates.aadhaar) updates.aadhaar = normalizeMediaField(updates.aadhaar);
+      if (updates.pan) updates.pan = normalizeMediaField(updates.pan);
+      if (updates.skillsDocument) updates.skillsDocument = normalizeMediaField(updates.skillsDocument);
+
+      updates.aadhaar_url = getMediaUrl(updates.aadhaar) || updates.aadhaar_url || null;
+      updates.pan_url = getMediaUrl(updates.pan) || updates.pan_url || null;
+      updates.skills_url = getMediaUrl(updates.skillsDocument) || updates.skills_url || null;
+
       if (!updates.verificationStatus) {
         // If not provided, initialize it
         const current = await WorkerProfile.collection().findOne({ user: new ObjectId(userId) });
@@ -104,9 +145,9 @@ export const updateByUserId = async (req, res) => {
         };
       }
       
-      if (updates.aadhaar_url) updates.verificationStatus.aadhaar = "verified";
-      if (updates.pan_url) updates.verificationStatus.pan = "verified";
-      if (updates.skills_url) updates.verificationStatus.skills = "verified";
+      if (updates.aadhaar || updates.aadhaar_url) updates.verificationStatus.aadhaar = "verified";
+      if (updates.pan || updates.pan_url) updates.verificationStatus.pan = "verified";
+      if (updates.skillsDocument || updates.skills_url) updates.verificationStatus.skills = "verified";
     }
 
     const result = await WorkerProfile.collection().findOneAndUpdate(
@@ -117,7 +158,7 @@ export const updateByUserId = async (req, res) => {
 
     if (!result.value && !result) return res.status(404).json({ message: 'Not found' });
 
-    res.json(result.value || result);
+    res.json(withLegacyMediaAliases(result.value || result));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -128,7 +169,7 @@ export const listWorkerProfiles = async (req, res) => {
   try {
     const query = req.mongoQuery || {};
     const profiles = await WorkerProfile.collection().find(query).toArray();
-    res.json(profiles);
+    res.json(profiles.map(withLegacyMediaAliases));
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error' });
@@ -241,7 +282,7 @@ export const getNearbyWorkers = async (req, res) => {
         { _id: w.user },
         { projection: { full_name: 1, phone: 1, email: 1 } }
       );
-      return { ...w, user };
+      return withLegacyMediaAliases({ ...w, user });
     }));
 
     res.json(populatedWorkers);

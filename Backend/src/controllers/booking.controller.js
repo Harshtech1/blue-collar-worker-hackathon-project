@@ -11,6 +11,7 @@ import {
   isDemoOtp,
   normalizePaymentStatus,
 } from '../utils/bookingWorkflow.js';
+import { normalizeMediaField } from '../utils/mediaStorage.js';
 
 const toObjectId = (id) => {
   try {
@@ -49,6 +50,16 @@ const activeWaterfallTimers = new Map();
 const toNumber = (value, fallback = 0) => {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : fallback;
+};
+
+const buildProofPhotoRecord = (value) => {
+  const media = normalizeMediaField(value);
+  if (!media?.url) return null;
+
+  return {
+    ...media,
+    timestamp: new Date(),
+  };
 };
 
 const haversineKm = ([lng1, lat1], [lng2, lat2]) => {
@@ -812,6 +823,11 @@ export const updateBooking = async (req, res) => {
       if (existing.otp_start !== updates.otp && !isDemoOtp(updates.otp)) {
         return res.status(400).json({ message: 'Invalid OTP' });
       }
+      const beforeWorkPhoto = buildProofPhotoRecord(updates.beforeWorkPhoto);
+      if (!beforeWorkPhoto) {
+        return res.status(400).json({ message: 'Before work photo is required to start the job.' });
+      }
+      updates.beforeWorkPhoto = beforeWorkPhoto;
       updates.otp_verified = true;
       updates.started_at = new Date();
     }
@@ -824,6 +840,12 @@ export const updateBooking = async (req, res) => {
       if (updates.otp) {
         updates.otp_finish_verified = true;
       }
+
+      const afterWorkPhoto = buildProofPhotoRecord(updates.afterWorkPhoto);
+      if (!afterWorkPhoto) {
+        return res.status(400).json({ message: 'After work photo is required to complete the job.' });
+      }
+      updates.afterWorkPhoto = afterWorkPhoto;
 
       const amount = existing.amount || 0;
       const commissionRate = 0.15;

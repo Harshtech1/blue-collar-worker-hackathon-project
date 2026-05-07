@@ -49,7 +49,28 @@ export const compressImageForUpload = async (file: File): Promise<File> => {
     });
 };
 
-export const uploadFile = async (file: File): Promise<{ url?: string; error?: string }> => {
+export interface UploadedMedia {
+    url: string | null;
+    secure_url?: string | null;
+    public_id?: string | null;
+    format?: string | null;
+    version?: string | null;
+    width?: number | null;
+    height?: number | null;
+    visibility?: string | null;
+}
+
+export const extractMediaUrl = (value: unknown): string | null => {
+    if (!value) return null;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object') {
+        const media = value as UploadedMedia;
+        return media.url || media.secure_url || null;
+    }
+    return null;
+};
+
+export const uploadFile = async (file: File, type = 'avatar'): Promise<{ url?: string | null; media?: UploadedMedia; error?: string }> => {
     const token = localStorage.getItem('token');
 
     if (!token) {
@@ -60,6 +81,7 @@ export const uploadFile = async (file: File): Promise<{ url?: string; error?: st
         const formData = new FormData();
         const optimizedFile = await compressImageForUpload(file);
         formData.append('file', optimizedFile);
+        formData.append('type', type);
 
         const response = await fetch(`${API_BASE}/api/upload`, {
             method: 'POST',
@@ -77,8 +99,7 @@ export const uploadFile = async (file: File): Promise<{ url?: string; error?: st
         }
 
         const data = await response.json();
-        // Return full url format just in case
-        return { url: `${API_BASE}${data.url}` };
+        return { url: extractMediaUrl(data.media) || data.url || null, media: data.media };
     } catch (error: any) {
         console.error('Error uploading file:', error);
         return { error: error.message || 'Unknown error occurred during upload' };

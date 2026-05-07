@@ -16,6 +16,7 @@ import { useNotifications } from '@/contexts/NotificationContext';
 import { useSocket } from '@/hooks/useSocket';
 import { toast } from 'sonner';
 import { API } from '@/lib/constants';
+import { extractMediaUrl } from '@/lib/upload';
 import { cn } from '@/lib/utils';
 import { Layout } from '@/components/layout/Layout';
 import TrackingMap from '@/components/TrackingMap';
@@ -364,6 +365,8 @@ export default function Tracking() {
   const lastSyncLabel = lastSyncedAt
     ? lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'syncing';
+  const beforeProofUrl = extractMediaUrl(bookingData?.beforeWorkPhoto);
+  const afterProofUrl = extractMediaUrl(bookingData?.afterWorkPhoto);
 
   if (loading) {
     return (
@@ -706,6 +709,42 @@ export default function Tracking() {
                   </div>
                 </CardContent>
               </Card>
+
+              {(beforeProofUrl || afterProofUrl) && (
+                <Card className="overflow-hidden rounded-[2.5rem] border-slate-100 shadow-lg">
+                  <CardContent className="p-8">
+                    <div className="mb-5 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">RAHI Verified Job Proof</p>
+                        <h4 className="text-xl font-black text-slate-900">Before & After work photos</h4>
+                      </div>
+                      <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">Trust trail</Badge>
+                    </div>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
+                        <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Before Photo</p>
+                        {beforeProofUrl ? (
+                          <img src={beforeProofUrl} alt="Before work proof" className="h-48 w-full rounded-2xl object-cover" />
+                        ) : (
+                          <div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm font-medium text-slate-400">
+                            Waiting for worker arrival proof
+                          </div>
+                        )}
+                      </div>
+                      <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
+                        <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">After Photo</p>
+                        {afterProofUrl ? (
+                          <img src={afterProofUrl} alt="After work proof" className="h-48 w-full rounded-2xl object-cover" />
+                        ) : (
+                          <div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm font-medium text-slate-400">
+                            Waiting for completion proof
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
         </div>

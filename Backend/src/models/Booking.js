@@ -14,6 +14,8 @@ const COLLECTION = 'bookings';
  * statusHistory: Array of Objects { status: String, timestamp: Date }
  * otp_start: String
  * otp_finish: String
+ * beforeWorkPhoto: Object { url, secure_url, public_id, format, timestamp }
+ * afterWorkPhoto: Object { url, secure_url, public_id, format, timestamp }
  * workStartedAt: Date
  * workCompletedAt: Date
  * cancelReason: String

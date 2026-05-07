@@ -10,7 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Camera, MapPin, Phone, Mail, Calendar, IndianRupee, ShieldCheck, Clock, Edit3, Upload } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/db';
-import { compressImageForUpload, uploadFile } from '@/lib/upload';
+import { compressImageForUpload, extractMediaUrl } from '@/lib/upload';
 import { z } from 'zod';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -188,7 +188,7 @@ const WorkerProfilePage = () => {
           <Card>
             <CardHeader className="items-center">
               <Avatar className="h-24 w-24">
-                <AvatarImage src="/placeholder-avatar.jpg" alt="Profile" />
+                <AvatarImage src={extractMediaUrl(workerProfile?.avatar) || workerProfile?.avatar_url || profile?.avatar_url || "/placeholder-avatar.jpg"} alt="Profile" />
                 <AvatarFallback>
                   {profile?.full_name?.charAt(0) || 'W'}
                 </AvatarFallback>
