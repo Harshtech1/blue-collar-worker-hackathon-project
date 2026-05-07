@@ -4,6 +4,28 @@ export const SIMULATION_TOTAL_POINTS = 400_000;
 export const SIMULATION_BATCH_SIZE = 10_000;
 export const SIMULATION_BATCH_COUNT = SIMULATION_TOTAL_POINTS / SIMULATION_BATCH_SIZE;
 export const SIMULATION_SEED = 20260507;
+export type SimulationScenario = "baseline" | "monsoon" | "supply_crunch";
+export const SIMULATION_SCENARIOS: Array<{
+  id: SimulationScenario;
+  label: string;
+  blurb: string;
+}> = [
+  {
+    id: "baseline",
+    label: "Baseline",
+    blurb: "Normal operating conditions with standard workforce mobility and balanced service demand.",
+  },
+  {
+    id: "monsoon",
+    label: "Monsoon Stress Test",
+    blurb: "Emergency repair demand surges while transport friction and burnout pressure hit the city.",
+  },
+  {
+    id: "supply_crunch",
+    label: "Supply Shortage",
+    blurb: "Worker availability crashes while high-priority service demand doubles across the command zone.",
+  },
+];
 
 export interface SectorSeed {
   id: string;
@@ -68,6 +90,7 @@ export interface SimulationBookingRequest {
 const SERVICE_VALUE_BANDS: Record<string, [number, number]> = {
   Plumbing: [450, 1800],
   Electrical: [550, 2200],
+  Roofing: [1100, 5200],
   Cleaning: [300, 1200],
   Carpentry: [650, 2600],
   Painting: [900, 4200],
@@ -79,6 +102,7 @@ const SERVICE_VALUE_BANDS: Record<string, [number, number]> = {
 const DEFAULT_SERVICE_MIX = [
   { type: "Plumbing", weight: 18 },
   { type: "Electrical", weight: 17 },
+  { type: "Roofing", weight: 4 },
   { type: "Cleaning", weight: 19 },
   { type: "Carpentry", weight: 12 },
   { type: "Painting", weight: 9 },
@@ -456,12 +480,49 @@ export const sectorSeeds: SectorSeed[] = [
 const emergencyBiasByService: Record<string, number> = {
   Plumbing: 0.18,
   Electrical: 0.15,
+  Roofing: 0.22,
   Cleaning: 0.05,
   Carpentry: 0.06,
   Painting: 0.04,
   Appliance: 0.11,
   DeepCleaning: 0.03,
   PestControl: 0.08,
+};
+
+const monsoonServiceMultiplier: Record<string, number> = {
+  Plumbing: 2,
+  Roofing: 2,
+  Electrical: 2,
+  Appliance: 1.2,
+  PestControl: 1.12,
+  Cleaning: 0.72,
+  DeepCleaning: 0.66,
+  Painting: 0.52,
+  Carpentry: 0.82,
+};
+
+const supplyCrunchServiceMultiplier: Record<string, number> = {
+  Plumbing: 2.2,
+  Electrical: 2.05,
+  Roofing: 1.9,
+  Appliance: 1.8,
+  PestControl: 1.45,
+  DeepCleaning: 0.78,
+  Cleaning: 0.74,
+  Painting: 0.58,
+  Carpentry: 0.72,
+};
+
+const priceWarServiceMultiplier: Record<string, number> = {
+  Cleaning: 1.34,
+  DeepCleaning: 1.48,
+  Appliance: 1.22,
+  PestControl: 1.16,
+  Carpentry: 1.08,
+  Plumbing: 0.96,
+  Electrical: 0.94,
+  Roofing: 0.84,
+  Painting: 0.9,
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -534,6 +595,46 @@ const offsetCoordinate = (lat: number, lng: number, distanceKm: number, bearingD
 };
 
 const getDefaultServiceMix = () => DEFAULT_SERVICE_MIX.map((service) => ({ ...service }));
+
+const getScenarioServiceMix = (
+  serviceMix: Array<{ type: string; weight: number }>,
+  scenario: SimulationScenario,
+) => {
+  if (scenario === "baseline") {
+    return serviceMix.map((service) => ({ ...service }));
+  }
+
+  if (scenario === "supply_crunch") {
+    const weightedMix = serviceMix.map((service) => ({
+      type: service.type,
+      weight: Number((service.weight * (supplyCrunchServiceMultiplier[service.type] ?? 1)).toFixed(2)),
+    }));
+
+    if (!weightedMix.some((service) => service.type === "Roofing")) {
+      weightedMix.push({ type: "Roofing", weight: 12 });
+    }
+
+    return weightedMix;
+  }
+
+  if (scenario === "price_war") {
+    return serviceMix.map((service) => ({
+      type: service.type,
+      weight: Number((service.weight * (priceWarServiceMultiplier[service.type] ?? 1)).toFixed(2)),
+    }));
+  }
+
+  const weightedMix = serviceMix.map((service) => ({
+    type: service.type,
+    weight: Number((service.weight * (monsoonServiceMultiplier[service.type] ?? 1)).toFixed(2)),
+  }));
+
+  if (!weightedMix.some((service) => service.type === "Roofing")) {
+    weightedMix.push({ type: "Roofing", weight: 10 });
+  }
+
+  return weightedMix;
+};
 
 export const getGlobalSimulationCity = (cityId: string) => (
   GLOBAL_SIMULATION_CITIES.find((city) => city.id === cityId)
@@ -684,38 +785,57 @@ export const generateSimulationBatch = ({
   batchIndex,
   batchSize = SIMULATION_BATCH_SIZE,
   geoConfig,
+  scenario = "baseline",
 }: {
   batchIndex: number;
   batchSize?: number;
   geoConfig?: SimulationGeoConfig;
+  scenario?: SimulationScenario;
 }) => {
   const geoSeed = geoConfig
-    ? hashString(`${geoConfig.cityId}:${geoConfig.center.lat.toFixed(4)}:${geoConfig.center.lng.toFixed(4)}:${geoConfig.radiusKm.toFixed(1)}`)
+    ? hashString(`${geoConfig.cityId}:${geoConfig.center.lat.toFixed(4)}:${geoConfig.center.lng.toFixed(4)}:${geoConfig.radiusKm.toFixed(1)}:${scenario}`)
     : 0;
   faker.seed(SIMULATION_SEED + batchIndex + geoSeed);
+  const isMonsoon = scenario === "monsoon";
+  const isSupplyCrunch = scenario === "supply_crunch";
+  const isPriceWar = scenario === "price_war";
 
   if (!geoConfig) {
     return Array.from({ length: batchSize }, () => {
       const sector = pickSector(batchIndex);
+      const serviceMix = getScenarioServiceMix(sector.serviceMix, scenario);
       const serviceType = pickWeighted(
-        sector.serviceMix.map((service) => ({ value: service.type, weight: service.weight })),
+        serviceMix.map((service) => ({ value: service.type, weight: service.weight })),
       );
       const estimatedValue = toEstimatedValue(serviceType);
       const activeWorkersHint = Math.max(
         12,
-        sector.baseWorkers + faker.number.int({ min: -12, max: 16 }),
+        Math.round((sector.baseWorkers + faker.number.int({ min: -12, max: 16 })) * (isSupplyCrunch ? 0.52 : 1)),
       );
       const churnRisk = clamp(
-        0.11 + ((1.05 - sector.historicalTraffic) * 0.12) + faker.number.float({ min: -0.02, max: 0.07 }),
+        0.11
+        + ((1.05 - sector.historicalTraffic) * 0.12)
+        + faker.number.float({ min: -0.02, max: 0.07 })
+        + (isMonsoon ? 0.03 : 0)
+        + (isSupplyCrunch ? 0.08 : 0),
+        + (isPriceWar ? 0.12 : 0),
         0.06,
-        0.42,
+        isPriceWar ? 0.68 : isSupplyCrunch ? 0.58 : isMonsoon ? 0.46 : 0.42,
       );
       const acquisitionCost = Math.round(
-        sector.marketingEffort / 110
+        (isPriceWar ? 2.75 : isSupplyCrunch ? 1.18 : isMonsoon ? 1.08 : 1) * (
+          sector.marketingEffort / 110
         + estimatedValue * 0.045
-        + faker.number.float({ min: 25, max: 95 }),
+        + faker.number.float({ min: 25, max: 95 })
+        ),
       );
-      const emergencyBias = emergencyBiasByService[serviceType] ?? 0.06;
+      const emergencyBias = clamp(
+        (emergencyBiasByService[serviceType] ?? 0.06)
+        + (isMonsoon ? 0.12 : 0)
+        + (isSupplyCrunch ? 0.08 : 0),
+        0.04,
+        isSupplyCrunch ? 0.6 : 0.52,
+      );
 
       return {
         lat: Number(faker.location.latitude({ min: sector.latRange[0], max: sector.latRange[1], precision: 0.0001 })),
@@ -724,9 +844,9 @@ export const generateSimulationBatch = ({
         timestamp: buildTimestamp(batchIndex),
         estimatedValue,
         areaSector: sector.label,
-        marketingEffort: sector.marketingEffort + faker.number.int({ min: -450, max: 650 }),
+        marketingEffort: Math.round((sector.marketingEffort + faker.number.int({ min: -450, max: 650 })) * (isPriceWar ? 1.55 : isSupplyCrunch ? 1.2 : isMonsoon ? 1.08 : 1)),
         activeWorkersHint,
-        historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.08, max: 0.11 })).toFixed(3)),
+        historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.08, max: 0.11 }) + (isMonsoon ? 0.04 : 0) + (isSupplyCrunch ? 0.06 : 0) + (isPriceWar ? 0.05 : 0)).toFixed(3)),
         acquisitionCost,
         churnRisk: Number(churnRisk.toFixed(3)),
         isEmergency: faker.number.float({ min: 0, max: 1 }) < emergencyBias,
@@ -738,13 +858,14 @@ export const generateSimulationBatch = ({
 
   return Array.from({ length: batchSize }, () => {
     const sector = pickVirtualSector(batchIndex, virtualSectors);
+    const serviceMix = getScenarioServiceMix(sector.serviceMix, scenario);
     const serviceType = pickWeighted(
-      sector.serviceMix.map((service) => ({ value: service.type, weight: service.weight })),
+      serviceMix.map((service) => ({ value: service.type, weight: service.weight })),
     );
     const estimatedValue = toEstimatedValue(serviceType);
     const activeWorkersHint = Math.max(
       18,
-      Math.round(sector.baseWorkers + faker.number.int({ min: -14, max: 22 })),
+      Math.round((sector.baseWorkers + faker.number.int({ min: -14, max: 22 })) * (isSupplyCrunch ? 0.5 : 1)),
     );
     const distanceKm = sampleDistanceInBand(sector.radiusBandKm);
     const bearingDeg = randomBearingInBand(sector.bearingBand);
@@ -753,19 +874,32 @@ export const generateSimulationBatch = ({
       0.1
       + ((1.08 - sector.historicalTraffic) * 0.12)
       + ((1.05 - geoConfig.workerScale) * 0.06)
-      + faker.number.float({ min: -0.02, max: 0.08 }),
+      + faker.number.float({ min: -0.02, max: 0.08 })
+      + (isMonsoon ? 0.03 : 0)
+      + (isSupplyCrunch ? 0.08 : 0),
+      + (isPriceWar ? 0.12 : 0),
       0.05,
-      0.46,
+      isPriceWar ? 0.68 : isSupplyCrunch ? 0.58 : 0.46,
+    );
+    const normalizedChurnRisk = clamp(
+      churnRisk,
+      0.05,
+      isPriceWar ? 0.7 : isSupplyCrunch ? 0.6 : isMonsoon ? 0.5 : 0.46,
     );
     const acquisitionCost = Math.round(
-      (sector.marketingEffort / (115 + (geoConfig.workerScale * 18)))
+      (isPriceWar ? 2.75 : isSupplyCrunch ? 1.18 : isMonsoon ? 1.08 : 1) * (
+        (sector.marketingEffort / (115 + (geoConfig.workerScale * 18)))
       + (estimatedValue * 0.045)
-      + faker.number.float({ min: 25, max: 105 }),
+      + faker.number.float({ min: 25, max: 105 })
+      ),
     );
     const emergencyBias = clamp(
-      (emergencyBiasByService[serviceType] ?? 0.06) + geoConfig.emergencyScale,
+      (emergencyBiasByService[serviceType] ?? 0.06)
+      + geoConfig.emergencyScale
+      + (isMonsoon ? 0.14 : 0)
+      + (isSupplyCrunch ? 0.1 : 0),
       0.04,
-      0.34,
+      isSupplyCrunch ? 0.62 : isMonsoon ? 0.58 : 0.34,
     );
 
     return {
@@ -775,11 +909,11 @@ export const generateSimulationBatch = ({
       timestamp: buildTimestamp(batchIndex),
       estimatedValue,
       areaSector: sector.label,
-      marketingEffort: Math.round(sector.marketingEffort + faker.number.int({ min: -520, max: 760 })),
+      marketingEffort: Math.round((sector.marketingEffort + faker.number.int({ min: -520, max: 760 })) * (isPriceWar ? 1.58 : isSupplyCrunch ? 1.22 : isMonsoon ? 1.08 : 1)),
       activeWorkersHint,
-      historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.06, max: 0.1 })).toFixed(3)),
+      historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.06, max: 0.1 }) + (isMonsoon ? 0.04 : 0) + (isSupplyCrunch ? 0.08 : 0) + (isPriceWar ? 0.05 : 0)).toFixed(3)),
       acquisitionCost,
-      churnRisk: Number(churnRisk.toFixed(3)),
+      churnRisk: Number(normalizedChurnRisk.toFixed(3)),
       isEmergency: faker.number.float({ min: 0, max: 1 }) < emergencyBias,
     } satisfies SimulationBookingRequest;
   });

@@ -13,6 +13,13 @@ You are the senior strategic advisor for RAHI, a density-optimized blue-collar m
 - Predictive Data: 12-week Demand Forecast from the Random Forest model.
 - Audit Data: Before/After photo verification success rates from Cloudinary.
 - Financials: Acquisition cost vs. Churn rate.
+- Environmental Data: Weather or monsoon shocks that change worker mobility, burn, and repair demand.
+
+### STRESS-SCENARIO TACTICAL LOGIC
+- In a monsoon scenario, prioritize Plumbing, Roofing, and Electrical jobs first.
+- If supply drops while density rises, recommend tactical surge pricing and emergency salaried redeployment.
+- In a price war, protect high-LTV sectors, slow broad discounting, and favor loyalty/retention moves over city-wide price cuts.
+- If the CEO asks about 48 hours of rain, reason directly about burn, contribution margin, and service quality risk over that duration.
 
 ### OUTPUT REQUIREMENTS (CEO BRIEFING)
 Return valid JSON with:
@@ -32,10 +39,13 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-pro";
 
 const StrategyPayloadSchema = z.object({
   analysisMode: z.enum(["strategy_brief", "financial_audit", "investor_summary"]).optional().default("strategy_brief"),
+  scenarioType: z.enum(["baseline", "monsoon", "supply_crunch", "price_war"]).optional().default("baseline"),
   routePath: z.string().optional().default("/admin-portal-2026/intelligence"),
   zoneId: z.string().optional().default("unknown-zone"),
   zoneLabel: z.string().optional().default("Unknown Zone"),
   city: z.string().optional().default("Unknown City"),
+  scenario: z.enum(["baseline", "monsoon", "supply_crunch", "price_war"]).optional().default("baseline"),
+  weatherSignal: z.string().optional().default("Normal weather operating window."),
   radiusKm: z.number().nonnegative().optional().default(4),
   timeLens: z.string().optional().default("7d"),
   userQuestion: z.string().optional().default(""),
@@ -95,6 +105,9 @@ const StrategyPayloadSchema = z.object({
       projectedOrders: z.number().optional().default(0),
       burnRisk: z.number().optional().default(0),
       churnRisk: z.number().optional().default(0),
+      supplyGapRatio: z.number().optional().default(0),
+      recommendedShift: z.number().optional().default(0),
+      activeWorkers: z.number().optional().default(0),
     })).optional().default([]),
   }).optional().default({}),
   deepDive: z.boolean().optional().default(false),
@@ -157,6 +170,13 @@ const pickWorstBurnZone = (zoneEconomics = []) => {
     .sort((left, right) => (right.dailyBurn || 0) - (left.dailyBurn || 0))[0] || null;
 };
 
+const resolveScenario = (payload) => {
+  if (payload?.scenarioType && payload.scenarioType !== "baseline") {
+    return payload.scenarioType;
+  }
+  return payload?.scenario || "baseline";
+};
+
 const normalizeProcedures = (procedures, payload) => {
   const defaults = buildFallbackStrategy(payload).procedures;
   const safe = Array.isArray(procedures) ? procedures.filter(Boolean).map((item) => String(item).trim()) : [];
@@ -164,6 +184,7 @@ const normalizeProcedures = (procedures, payload) => {
 };
 
 const buildPrompt = (payload) => {
+  const activeScenario = resolveScenario(payload);
   const topGap = pickTopForecastGap(payload.forecast);
   const worstBurnZone = pickWorstBurnZone(payload.zoneEconomics);
   const modeInstruction = payload.analysisMode === "investor_summary"
@@ -171,30 +192,44 @@ const buildPrompt = (payload) => {
     : payload.analysisMode === "financial_audit"
       ? "You are running a unit-economics audit. Focus on CAC vs LTV, contribution margin, daily burn, and the correct salaried-to-freelancer mix."
       : "You are generating an operating brief for the command center.";
+  const scenarioInstruction = activeScenario === "supply_crunch"
+    ? "A supply crunch stress test is active. Prioritize service preservation over growth. Your plan should suspend non-essential bookings, reroute salaried core into high-density zones, and treat 1.5x payout protection as acceptable."
+    : activeScenario === "monsoon"
+      ? "A weather-led monsoon disruption is active. Prioritize repair continuity, field safety, and emergency response."
+      : activeScenario === "price_war"
+        ? "A competitor-led price war is active. Prioritize LTV retention, margin defense, and trusted-sector protection over blanket discounting."
+      : "No crisis scenario override is active.";
 
   return [
     "Analyze this RAHI zone and return JSON only.",
     modeInstruction,
+    scenarioInstruction,
     payload.userQuestion ? `CEO Question: ${payload.userQuestion}` : "CEO Question: none",
     "",
     "Zone Context:",
     JSON.stringify({
       analysisMode: payload.analysisMode,
+      scenarioType: activeScenario,
       routePath: payload.routePath,
       zoneId: payload.zoneId,
       zoneLabel: payload.zoneLabel,
       city: payload.city,
+      scenario: activeScenario,
+      weatherSignal: payload.weatherSignal,
       radiusKm: payload.radiusKm,
       timeLens: payload.timeLens,
     }, null, 2),
     "",
     "Operational Signals:",
     JSON.stringify({
+      scenarioType: activeScenario,
       densityScore: payload.densityScore,
       predictedDemand: payload.predictedDemand,
       currentOrders: payload.currentOrders,
       currentWorkers: payload.currentWorkers,
       emergencyOrders: payload.emergencyOrders,
+      scenario: activeScenario,
+      weatherSignal: payload.weatherSignal,
       allocationStrategy: payload.allocationStrategy,
       priceMultiplier: payload.priceMultiplier,
       pricingSignal: payload.pricingSignal,
@@ -340,13 +375,140 @@ const callGeminiStrategy = async (payload) => {
 
 export const buildFallbackStrategy = (input) => {
   const payload = StrategyPayloadSchema.parse(input);
+  const activeScenario = resolveScenario(payload);
   const densityBand = getDensityBand(payload.densityScore);
+  const isMonsoon = activeScenario === "monsoon";
   const topGap = pickTopForecastGap(payload.forecast);
   const hottestSector = payload.simulationSummary?.hottestSector || payload.zoneLabel;
   const marginLift = Number(payload.financials?.marginLift || payload.simulationSummary?.marginLift || 0);
   const worstBurnZone = pickWorstBurnZone(payload.zoneEconomics);
   const overallBurn = Number(payload.zoneEconomics?.reduce((sum, zone) => sum + Number(zone.dailyBurn || 0), 0) || 0);
   const topUnitEconomics = payload.zoneEconomics?.[0];
+  const isRainRunwayQuestion = /48|two\s*days|rain|monsoon/i.test(payload.userQuestion || "");
+  const isPriceWarQuestion = /price\s*war|discount|competitor|month|30/i.test(payload.userQuestion || "");
+  const twoDayBurn = overallBurn * 2;
+  const oneMonthBurn = overallBurn * 30;
+
+  if (activeScenario === "monsoon" && payload.analysisMode === "investor_summary") {
+    return {
+      signal: `${payload.zoneLabel} stayed operational through the monsoon stress window while the engine re-optimized around repair-heavy demand and weaker worker mobility.`,
+      reasoning: `The Density Rule still governed staffing, but the storm scenario forced the platform to protect reliability by shifting salaried response into urgent repair lanes and absorbing a temporarily higher burn profile. That is the investor proof: the platform did not panic, it re-optimized.`,
+      procedures: [
+        `Scalability Proof: The monsoon run held across ${Number(payload.simulationSummary.totalPoints || 0).toLocaleString("en-IN")} synthetic requests without losing density control.`,
+        `Density Optimization Result: ${hottestSector} surfaced as the highest-pressure repair lane, so the engine shifted workforce mix and tactical pricing instead of treating the storm like normal demand.`,
+        `Profitability Path: Keep salaried emergency coverage concentrated in flooded sectors first, then let verified freelancers cover the lower-priority perimeter lanes.`,
+      ],
+    };
+  }
+
+  if (activeScenario === "monsoon" && payload.analysisMode === "financial_audit") {
+    return {
+      signal: `${payload.zoneLabel} is in weather shock; burn is being driven by slower worker movement, emergency repairs, and reduced usable supply.`,
+      reasoning: isRainRunwayQuestion
+        ? `If rain continues for 48 hours, the command zone is on track to burn roughly ${formatCurrency(twoDayBurn)} while contribution margin weakens fastest in ${worstBurnZone?.sector || payload.zoneLabel}. The winning move is to narrow service focus and price tactically where supply is collapsing.`
+        : `The financial burn audit shows that monsoon conditions changed the unit economics. Reduced field mobility and concentrated repair demand are inflating burn in ${worstBurnZone?.sector || payload.zoneLabel}, so workforce mix matters as much as CAC discipline.`,
+      procedures: [
+        `Prioritize high-value Plumbing, Roofing, and Electrical queues in ${worstBurnZone?.sector || hottestSector} so scarce capacity protects the best LTV lanes first.`,
+        `Activate 15-20% tactical surge pricing in the worst-affected sectors where density and emergency demand are rising faster than worker mobility can recover.`,
+        `Move salaried workers into an emergency-response roster immediately and pause low-urgency jobs until daily burn falls below ${formatCurrency(Math.max(0, overallBurn * 0.7))}.`,
+      ],
+    };
+  }
+
+  if (activeScenario === "monsoon") {
+    return {
+      signal: `${payload.zoneLabel} has entered a monsoon deployment state; repair demand is accelerating while available worker mobility is falling.`,
+      reasoning: `RAHI should treat this as an emergency operating window rather than a normal density cycle. The Density Rule still applies, but storm conditions make response speed and repair prioritization more important than flat city-wide coverage.`,
+      procedures: [
+        `Prioritize Plumbing, Roofing, and Electrical queues around ${hottestSector} before expanding capacity into lower-urgency categories.`,
+        `Raise payout or pricing selectively in the worst-affected sectors so acceptance speed improves without triggering city-wide burn.`,
+        `Shift salaried workers into an emergency-response lane until density and response times normalize after the weather event.`,
+      ],
+    };
+  }
+
+  if (activeScenario === "price_war" && payload.analysisMode === "investor_summary") {
+    return {
+      signal: `${payload.zoneLabel} held the contested-market simulation while CAC spiked and the engine protected its profitability floor instead of matching blanket discounts.`,
+      reasoning: `The investor proof is that RAHI did not chase vanity growth. The system isolated ${worstBurnZone?.sector || hottestSector} as the most margin-sensitive lane, preserved density where LTV was strongest, and kept margin defense ahead of discount reflexes.`,
+      procedures: [
+        `Scalability Proof: The price-war run held across ${Number(payload.simulationSummary.totalPoints || 0).toLocaleString("en-IN")} synthetic requests while CAC and churn pressure were artificially elevated.`,
+        `Density Optimization Result: ${hottestSector} remained the trusted high-LTV sector, so the engine defended it instead of applying city-wide discounting.`,
+        `Profitability Path: Preserve the margin floor by attacking ${worstBurnZone?.sector || payload.zoneLabel} burn first and shifting retention spend toward repeat-demand sectors only.`,
+      ],
+    };
+  }
+
+  if (activeScenario === "price_war" && payload.analysisMode === "financial_audit") {
+    return {
+      signal: `${payload.zoneLabel} is in a price-war burn cycle; acquisition cost and churn are rising faster than broad discounting can sustainably absorb.`,
+      reasoning: isPriceWarQuestion
+        ? `If the competitor sustains discounts for a month, the command zone is on track to burn roughly ${formatCurrency(oneMonthBurn)} at the current pace unless RAHI narrows spend to high-LTV sectors and shifts the offer from price to trust.`
+        : `The financial audit says this is not a volume problem first, it is a margin-defense problem. ${worstBurnZone?.sector || payload.zoneLabel} is weakest because CAC has inflated relative to LTV while churn keeps fixed labor and discount pressure elevated.`,
+      procedures: [
+        `Freeze city-wide discounts and move retention spend into ${topUnitEconomics?.sector || hottestSector}, where LTV can still outrun CAC.`,
+        `Launch a loyalty or trusted-neighbor offer for repeat customers before spending another rupee on broad acquisition recovery.`,
+        `Reduce salaried expansion in ${worstBurnZone?.sector || payload.zoneLabel} until daily burn falls below ${formatCurrency(Math.max(0, Number(worstBurnZone?.dailyBurn || 0) * 0.45))}.`,
+      ],
+    };
+  }
+
+  if (activeScenario === "price_war") {
+    return {
+      signal: `${payload.zoneLabel} has entered a contested-market state; margin protection now matters more than headline order growth.`,
+      reasoning: `The Density Rule still matters, but price-war conditions change the order of operations. RAHI should protect trusted, repeatable demand first because CAC inflation and churn punish blanket growth strategies.`,
+      procedures: [
+        `Protect high-LTV sectors around ${hottestSector} and stop matching discounts in low-trust, low-repeat lanes.`,
+        `Shift the customer message from lowest price to verified service, on-time arrival, and audit-backed proof of work.`,
+        `Re-run the burn audit daily until contribution margin stabilizes and CAC falls back below the current LTV floor.`,
+      ],
+    };
+  }
+
+  if (activeScenario === "supply_crunch") {
+    const criticalSector = [...(payload.simulationSummary?.sectors || [])]
+      .sort((left, right) => (Number(right.supplyGapRatio || 0) - Number(left.supplyGapRatio || 0)) || (Number(right.densityScore || 0) - Number(left.densityScore || 0)))[0];
+    const gapPercent = Math.round(Number(criticalSector?.supplyGapRatio || 0) * 100);
+    const targetSector = criticalSector?.sector || worstBurnZone?.sector || hottestSector;
+    const rerouteWorkers = Math.max(
+      6,
+      Math.round((Number(criticalSector?.recommendedShift || 0) * 0.8) || (payload.currentWorkers * 0.35)),
+    );
+
+    if (payload.analysisMode === "investor_summary") {
+      return {
+        signal: `${payload.zoneLabel} survived the 50% supply shortage drill by exposing the first breaking sector and rerouting the salaried core before service quality collapsed.`,
+        reasoning: `The investor proof here is resilience. The engine identified ${targetSector} as the first critical gap, switched from growth to service preservation, and kept the density model explainable under extreme supply loss.`,
+        procedures: [
+          `Scalability Proof: The supply shortage run held across ${Number(payload.simulationSummary.totalPoints || 0).toLocaleString("en-IN")} synthetic requests while workforce availability was halved.`,
+          `Density Optimization Result: ${targetSector} surfaced as the first breaking lane, so the engine redirected its salaried core and contained the service gap.`,
+          `Profitability Path: Preserve high-density service lanes first, then reopen the outer perimeter only after the supply gap falls below 30%.`,
+        ],
+      };
+    }
+
+    if (payload.analysisMode === "financial_audit") {
+      return {
+        signal: `Emergency preservation mode: ${targetSector} is running a ${gapPercent}% supply-demand gap and must be stabilized before growth resumes.`,
+        reasoning: `The supply shortage flag overrides normal growth posture. RAHI should preserve service because density is ${payload.densityScore.toFixed(2)} and ${targetSector} is critically under-supplied against live projected demand.`,
+        procedures: [
+          `Suspend non-essential bookings outside ${targetSector} until the supply gap drops below 30%.`,
+          `Re-route at least ${rerouteWorkers} salaried-core workers into ${targetSector} and keep freelancers as overflow only.`,
+          `Activate 1.50x payout protection immediately so high-density service lanes keep filling during the crunch window.`,
+        ],
+      };
+    }
+
+    return {
+      signal: `Emergency preservation mode: ${targetSector} is running a ${gapPercent}% supply-demand gap and must be stabilized before growth resumes.`,
+      reasoning: `The supply shortage flag overrides normal growth posture. RAHI should preserve service because density is ${payload.densityScore.toFixed(2)} and ${targetSector} is critically under-supplied against live projected demand.`,
+      procedures: [
+        `Suspend non-essential bookings outside ${targetSector} until the supply gap drops below 30%.`,
+        `Re-route at least ${rerouteWorkers} salaried-core workers into ${targetSector} and keep freelancers as overflow only.`,
+        `Activate 1.50x payout protection immediately so high-density service lanes keep filling during the crunch window.`,
+      ],
+    };
+  }
 
   if (payload.analysisMode === "investor_summary") {
     return {
@@ -361,6 +523,18 @@ export const buildFallbackStrategy = (input) => {
   }
 
   if (payload.analysisMode === "financial_audit") {
+    if (isMonsoon) {
+      return {
+        signal: `${payload.zoneLabel} is running an active monsoon stress test; supply is compressed while repair demand is climbing, so contribution margin is at risk if the city keeps operating like a sunny-day network.`,
+        reasoning: `The weather-aware Density Rule says ${payload.zoneLabel} must act like an emergency lane first. Density is ${payload.densityScore.toFixed(2)}, daily burn is ${formatCurrency(overallBurn)}, and the current signal "${payload.weatherSignal}" means workforce mobility and service reliability will deteriorate before fixed cost pressure relaxes.`,
+        procedures: [
+          `Deprioritize cosmetic services across ${payload.zoneLabel} and redeploy salaried workers into Plumbing, Roofing, and Electrical lanes for the next 48 hours.`,
+          `Lift pricing to at least ${Math.max(1.25, Number(payload.priceMultiplier || 1)).toFixed(2)}x in flooded or delayed sectors so the weather response does not turn into pure burn.`,
+          `Track ${worstBurnZone?.sector || payload.zoneLabel} hourly and freeze non-essential acquisition until the monsoon burn falls below ${formatCurrency(Math.max(0, overallBurn * 0.55))}.`,
+        ],
+      };
+    }
+
     return {
       signal: `${payload.zoneLabel} unit economics ${overallBurn > 0 ? `show active daily burn of ${formatCurrency(overallBurn)}` : "are currently contribution-positive"} with the sharpest pressure concentrated in ${worstBurnZone?.sector || payload.zoneLabel}.`,
       reasoning: `The burn audit reads CAC vs LTV first. ${worstBurnZone?.sector || payload.zoneLabel} is the weakest zone because CAC is ${formatCurrency(worstBurnZone?.acquisitionCost || payload.financials.acquisitionCost)} against LTV ${formatCurrency(worstBurnZone?.estimatedLtv || 0)}, while the current salaried mix and churn of ${Number(worstBurnZone?.churnRisk || payload.financials.churnRate || 0).toFixed(2)} keep fixed labor pressure elevated.`,
@@ -368,6 +542,18 @@ export const buildFallbackStrategy = (input) => {
         `Reduce salaried exposure in ${worstBurnZone?.sector || payload.zoneLabel} until daily burn falls below ${formatCurrency(Math.max(0, Number(worstBurnZone?.dailyBurn || 0) * 0.4))}.`,
         `Only scale acquisition in zones where LTV stays above CAC by at least 3x; current best candidate is ${topUnitEconomics?.sector || hottestSector}.`,
         `Reinvest the recovered margin lift of ${formatCurrency(marginLift)} into higher-density service lanes instead of flat city-wide hiring.`,
+      ],
+    };
+  }
+
+  if (isMonsoon) {
+    return {
+      signal: `${payload.zoneLabel} is under active monsoon deployment protocol; density ${payload.densityScore.toFixed(2)} and weather friction are pushing the zone into emergency-repair mode.`,
+      reasoning: `The Density Rule becomes weather-aware in this case: with ${payload.weatherSignal} and ${payload.emergencyOrders} emergency jobs, RAHI should treat Plumbing, Roofing, and Electrical as the operating core and protect reliability before broad service coverage.`,
+      procedures: [
+        `Deploy salaried core workers into emergency repair lanes in ${payload.zoneLabel} and pause low-urgency cosmetic work until the rain window clears.`,
+        `Apply a ${Math.max(1.25, Number(payload.priceMultiplier || 1)).toFixed(2)}x weather multiplier in the slowest sectors to offset transport delays and incentive burn.`,
+        `Re-run the simulation every 6 hours and only reopen general-service growth if audit coverage stays above 80% while density drops below 2.3.`,
       ],
     };
   }

@@ -14,6 +14,8 @@ export const buildSimulationHistoryDocument = ({
   logicSignals: Array.isArray(requestPayload?.logicSignals)
     ? requestPayload.logicSignals.slice(0, 3)
     : [],
+  scenario: requestPayload?.scenarioType || requestPayload?.scenario || "baseline",
+  analysisMode: requestPayload?.analysisMode || "strategy_brief",
   zoneId: zoneId || "unknown-zone",
   zoneLabel: zoneLabel || zoneId || "Unknown Zone",
   city: city || "Unknown City",

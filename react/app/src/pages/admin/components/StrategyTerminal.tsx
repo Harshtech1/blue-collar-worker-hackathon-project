@@ -104,7 +104,7 @@ export function StrategyTerminal({
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em]", tone.pill)}>
-          <span className={cn("h-2.5 w-2.5 rounded-full", tone.dot, tacticalState === "analyzing" && "motion-safe:animate-pulse")} />
+          <span className={cn("h-2.5 w-2.5 rounded-full", tone.dot, tacticalState !== "steady" && "motion-safe:animate-pulse")} />
           {tone.label}
         </div>
         <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.22em] text-emerald-100">

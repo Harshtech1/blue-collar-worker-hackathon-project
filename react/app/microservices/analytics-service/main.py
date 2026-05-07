@@ -48,6 +48,7 @@ class DensityResponse(BaseModel):
 
 
 DensityCluster = Literal["low_density", "balanced_density", "high_density", "surge_density"]
+SimulationScenario = Literal["baseline", "monsoon", "supply_crunch", "price_war"]
 
 
 class SimulationBookingRequest(BaseModel):
@@ -69,6 +70,7 @@ class SimulationBatchRequest(BaseModel):
     batch_id: int = Field(ge=1)
     total_batches: int = Field(ge=1)
     total_points: int = Field(ge=1)
+    scenario: SimulationScenario = "baseline"
     bookings: List[SimulationBookingRequest]
 
 
@@ -92,6 +94,7 @@ class SimulationSectorSummary(BaseModel):
     daily_burn: float
     burn_risk: float
     churn_risk: float
+    supply_gap_ratio: float
     centroid_lat: float
     centroid_lng: float
 
@@ -104,6 +107,7 @@ class SimulationBatchResponse(BaseModel):
     cluster_distribution: Dict[str, int]
     sector_summaries: List[SimulationSectorSummary]
     model_version: str
+    scenario: SimulationScenario
 
 
 FEATURE_COLUMNS = [
@@ -140,6 +144,14 @@ WORKFORCE_BOUNDS = {
     "balanced_density": (0.3, 0.48, 1.2),
     "high_density": (0.65, 0.82, 1.6),
     "surge_density": (0.82, 0.92, 1.95),
+}
+
+HIGH_PRIORITY_SERVICE_TYPES = {
+    "Plumbing",
+    "Electrical",
+    "Appliance",
+    "DeepCleaning",
+    "PestControl",
 }
 
 
@@ -298,6 +310,51 @@ def _estimate_ltv(avg_value: float, churn_risk: float, historical_traction: floa
     return avg_value * retention_multiplier * 1.04
 
 
+def _apply_simulation_scenario(grouped: pd.DataFrame, scenario: SimulationScenario) -> pd.DataFrame:
+    adjusted = grouped.copy()
+
+    if scenario == "baseline":
+        return adjusted
+
+    repair_pressure = adjusted.get("repair_pressure", pd.Series(0, index=adjusted.index)).fillna(0)
+    priority_pressure = adjusted.get("priority_pressure", pd.Series(0, index=adjusted.index)).fillna(0)
+    emergency_share = adjusted.get("emergency_share", pd.Series(0, index=adjusted.index)).fillna(0)
+    historical_traction = adjusted.get("historical_traction", pd.Series(1, index=adjusted.index)).fillna(1)
+
+    if scenario == "monsoon":
+        adjusted["batch_orders"] = np.ceil(adjusted["batch_orders"] * (1 + repair_pressure)).astype(int)
+        adjusted["orders_count"] = adjusted["batch_orders"]
+        adjusted["active_workers"] = np.maximum(1, np.floor(adjusted["active_workers"] * 0.6))
+        adjusted["marketing_effort"] = adjusted["marketing_effort"] * (1.08 + (repair_pressure * 0.12))
+        adjusted["historical_traction"] = historical_traction * (1.04 + (repair_pressure * 0.2))
+        adjusted["emergency_share"] = np.clip(emergency_share + 0.09 + (repair_pressure * 0.18), 0.08, 0.82)
+        adjusted["avg_value"] = adjusted["avg_value"] * (1.05 + (repair_pressure * 0.1))
+        adjusted["acquisition_cost"] = adjusted["acquisition_cost"] * (1.1 + (repair_pressure * 0.06))
+        return adjusted
+
+    if scenario == "price_war":
+        adjusted["batch_orders"] = np.ceil(adjusted["batch_orders"] * (1.08 + (priority_pressure * 0.22))).astype(int)
+        adjusted["orders_count"] = adjusted["batch_orders"]
+        adjusted["marketing_effort"] = adjusted["marketing_effort"] * (1.42 + (priority_pressure * 0.16))
+        adjusted["historical_traction"] = historical_traction * (0.94 + (priority_pressure * 0.05))
+        adjusted["emergency_share"] = np.clip(emergency_share + 0.04 + (priority_pressure * 0.06), 0.06, 0.42)
+        adjusted["avg_value"] = adjusted["avg_value"] * 0.82
+        adjusted["acquisition_cost"] = adjusted["acquisition_cost"] * 3.0
+        adjusted["churn_risk"] = np.clip(adjusted["churn_risk"] + 0.2, 0.12, 0.88)
+        return adjusted
+
+    adjusted["active_workers"] = np.maximum(1, np.floor(adjusted["active_workers"] * 0.5))
+    adjusted["batch_orders"] = np.ceil(adjusted["batch_orders"] * (1.12 + (priority_pressure * 0.88))).astype(int)
+    adjusted["orders_count"] = adjusted["batch_orders"]
+    adjusted["marketing_effort"] = adjusted["marketing_effort"] * (1.16 + (priority_pressure * 0.14))
+    adjusted["historical_traction"] = historical_traction * (1.08 + (priority_pressure * 0.16))
+    adjusted["emergency_share"] = np.clip(emergency_share + 0.14 + (priority_pressure * 0.22), 0.14, 0.96)
+    adjusted["avg_value"] = adjusted["avg_value"] * (1.08 + (priority_pressure * 0.12))
+    adjusted["acquisition_cost"] = adjusted["acquisition_cost"] * (1.18 + (priority_pressure * 0.12))
+
+    return adjusted
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "rahi-analytics"}
@@ -380,6 +437,8 @@ def simulate_density_batch(payload: SimulationBatchRequest):
             acquisition_cost=("acquisitionCost", "mean"),
             churn_risk=("churnRisk", "mean"),
             service_diversity=("serviceType", "nunique"),
+            repair_pressure=("serviceType", lambda values: float(values.isin(["Plumbing", "Electrical", "Roofing"]).mean())),
+            priority_pressure=("serviceType", lambda values: float(values.isin(HIGH_PRIORITY_SERVICE_TYPES).mean())),
             centroid_lat=("lat", "mean"),
             centroid_lng=("lng", "mean"),
             weekend_share=("timestamp", lambda values: float((values.dt.dayofweek >= 5).mean())),
@@ -387,6 +446,8 @@ def simulate_density_batch(payload: SimulationBatchRequest):
         ).reset_index()
 
         grouped["active_workers"] = grouped["active_workers"].clip(lower=1)
+        grouped["orders_count"] = grouped["batch_orders"]
+        grouped = _apply_simulation_scenario(grouped, payload.scenario)
 
         feature_frame = grouped[SIMULATION_FEATURE_COLUMNS].copy()
         cluster_model, demand_model, salary_ratio_model = get_simulation_models()
@@ -405,37 +466,90 @@ def simulate_density_batch(payload: SimulationBatchRequest):
         }
 
         for index, row in grouped.iterrows():
-            cluster_label = CLUSTER_CODE_TO_LABEL[int(cluster_codes[index])]
-            lower_ratio, upper_ratio, target_density = WORKFORCE_BOUNDS[cluster_label]
             active_workers = max(1, int(round(row["active_workers"])))
-            density_score = float(projected_orders[index] / max(1, active_workers))
+            priority_pressure = float(row.get("priority_pressure", 0))
+            projected_order_count = int(projected_orders[index])
+
+            if payload.scenario == "supply_crunch":
+                surge_multiplier = 2.0 if priority_pressure >= 0.24 or float(row["emergency_share"]) >= 0.16 else 1.28
+                projected_order_count = max(
+                    projected_order_count,
+                    int(np.ceil(float(row["batch_orders"]) * surge_multiplier)),
+                )
+            elif payload.scenario == "price_war":
+                projected_order_count = max(
+                    projected_order_count,
+                    int(np.ceil(float(row["batch_orders"]) * (1.06 + (priority_pressure * 0.1)))),
+                )
+
+            density_score = float(projected_order_count / max(1, active_workers))
+            if payload.scenario == "supply_crunch" and (priority_pressure >= 0.24 or float(row["emergency_share"]) >= 0.16):
+                density_score = max(density_score, 4.05)
+                projected_order_count = max(projected_order_count, int(np.ceil(active_workers * density_score)))
+
+            cluster_label = CLUSTER_CODE_TO_LABEL[_cluster_from_density(density_score)]
+            lower_ratio, upper_ratio, target_density = WORKFORCE_BOUNDS[cluster_label]
             salaried_ratio = float(_clamp(predicted_salary_ratio[index], lower_ratio, upper_ratio))
+            if payload.scenario == "supply_crunch":
+                salaried_ratio = float(max(salaried_ratio, 0.84 if density_score >= 4 else 0.76))
             freelancer_ratio = float(round(1 - salaried_ratio, 4))
-            recommended_shift = max(0, int(np.ceil(projected_orders[index] / target_density) - active_workers))
+            recommended_shift = max(0, int(np.ceil(projected_order_count / target_density) - active_workers))
             projected_revenue, traditional_cost, optimized_cost, burn_risk = _cost_profile(
-                int(projected_orders[index]),
+                projected_order_count,
                 active_workers,
                 float(row["avg_value"]),
                 float(row["acquisition_cost"]),
                 density_score,
                 salaried_ratio,
             )
+            if payload.scenario == "monsoon":
+                traditional_cost *= 1.16 + (float(row["repair_pressure"]) * 0.08)
+                optimized_cost *= 1.12 + (float(row["repair_pressure"]) * 0.1)
+            elif payload.scenario == "price_war":
+                projected_revenue *= 0.84
+                traditional_cost *= 1.14 + (priority_pressure * 0.08)
+                optimized_cost *= 1.1 + (priority_pressure * 0.06)
+            elif payload.scenario == "supply_crunch":
+                traditional_cost *= 1.24 + (priority_pressure * 0.14)
+                optimized_cost *= 1.18 + (priority_pressure * 0.18)
             confidence_score = float(np.max(cluster_probabilities[index]))
             churn_risk = float(_clamp(
-                float(row["churn_risk"]) + (0.08 if cluster_label in {"high_density", "surge_density"} else 0) + (float(row["emergency_share"]) * 0.16),
+                float(row["churn_risk"])
+                + (0.08 if cluster_label in {"high_density", "surge_density"} else 0)
+                + (float(row["emergency_share"]) * 0.16)
+                + (0.05 if payload.scenario == "monsoon" else 0)
+                + (0.2 + (priority_pressure * 0.04) if payload.scenario == "price_war" else 0)
+                + (0.1 + (priority_pressure * 0.08) if payload.scenario == "supply_crunch" else 0),
                 0.08,
-                0.48,
+                0.72 if payload.scenario == "supply_crunch" else 0.66 if payload.scenario == "price_war" else 0.56 if payload.scenario == "monsoon" else 0.48,
             ))
             acquisition_cost = float(row["acquisition_cost"])
             estimated_ltv = _estimate_ltv(float(row["avg_value"]), churn_risk, float(row["historical_traction"]))
-            contribution_margin = projected_revenue - optimized_cost
             daily_burn = max(0.0, optimized_cost - projected_revenue)
+            if payload.scenario == "monsoon":
+                daily_burn *= 1.5
+                if daily_burn > 0:
+                    optimized_cost = projected_revenue + daily_burn
+                burn_risk = _clamp(burn_risk + 0.11 + (float(row["repair_pressure"]) * 0.08), 0.08, 0.99)
+            elif payload.scenario == "price_war":
+                daily_burn *= 1.32 + (priority_pressure * 0.06)
+                if daily_burn > 0:
+                    optimized_cost = projected_revenue + daily_burn
+                burn_risk = _clamp(burn_risk + 0.18 + (priority_pressure * 0.08), 0.12, 0.99)
+            elif payload.scenario == "supply_crunch":
+                daily_burn *= 1.95 + (priority_pressure * 0.22)
+                if daily_burn > 0:
+                    optimized_cost = projected_revenue + daily_burn
+                burn_risk = _clamp(burn_risk + 0.22 + (priority_pressure * 0.14), 0.18, 0.99)
+            contribution_margin = projected_revenue - optimized_cost
+
+            supply_gap_ratio = max(0.0, (projected_order_count - active_workers) / max(projected_order_count, 1))
 
             cluster_distribution[cluster_label] += 1
             sector_summaries.append(SimulationSectorSummary(
                 area_sector=str(row["areaSector"]),
                 batch_orders=int(row["batch_orders"]),
-                projected_orders=int(projected_orders[index]),
+                projected_orders=projected_order_count,
                 active_workers=active_workers,
                 density_score=round(density_score, 2),
                 density_cluster=cluster_label,
@@ -452,6 +566,7 @@ def simulate_density_batch(payload: SimulationBatchRequest):
                 daily_burn=round(daily_burn, 2),
                 burn_risk=round(burn_risk, 4),
                 churn_risk=round(churn_risk, 4),
+                supply_gap_ratio=round(supply_gap_ratio, 4),
                 centroid_lat=round(float(row["centroid_lat"]), 5),
                 centroid_lng=round(float(row["centroid_lng"]), 5),
             ))
@@ -464,7 +579,16 @@ def simulate_density_batch(payload: SimulationBatchRequest):
             processing_ms=processing_ms,
             cluster_distribution=cluster_distribution,
             sector_summaries=sector_summaries,
-            model_version="simulation-rf-v2",
+            model_version=(
+                "simulation-rf-v3-supply-crunch"
+                if payload.scenario == "supply_crunch"
+                else "simulation-rf-v3-price-war"
+                if payload.scenario == "price_war"
+                else "simulation-rf-v3-monsoon"
+                if payload.scenario == "monsoon"
+                else "simulation-rf-v3"
+            ),
+            scenario=payload.scenario,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -593,6 +593,7 @@ const buildStrategyFallback = ({
   acquisitionCost,
   churnRate,
   marginLift,
+  scenario = "baseline",
 }: {
   zoneLabel: string;
   city: string;
@@ -606,7 +607,56 @@ const buildStrategyFallback = ({
   acquisitionCost: number;
   churnRate: number;
   marginLift: number;
+  scenario?: SimulationCompletionPayload["scenario"];
 }): StrategyBrief => {
+  if (scenario === "price_war") {
+    return {
+      signal: `${zoneLabel} is in a contested-market state; margin protection matters more than matching blanket discounts right now.`,
+      reasoning: `The price war override prioritizes profitability-floor defense. Density is ${densityScore.toFixed(2)}, projected demand is ${predictedDemand}, and CAC plus churn pressure will punish broad discounting unless RAHI protects trusted high-LTV sectors first.`,
+      procedures: [
+        `Freeze city-wide discount matching in ${zoneLabel} and defend trusted sectors like ${hottestSector} with retention-led offers instead.`,
+        `Keep pricing discipline near the current ${priceMultiplier.toFixed(2)}x level and shift spend toward repeat-demand lanes in ${city}.`,
+        `Re-run the price-war simulation after the next ${timeLens} cycle and scale only where LTV still outruns CAC by a healthy margin.`,
+      ],
+      provider: "rule_engine",
+      model: "density-rule-fallback",
+      saved: false,
+      fallback: true,
+    };
+  }
+
+  if (scenario === "supply_crunch") {
+    return {
+      signal: `${zoneLabel} has entered amber-alert preservation mode; supply is collapsing faster than the current field plan can recover on its own.`,
+      reasoning: `The supply crunch override prioritizes service preservation over growth. Density is ${densityScore.toFixed(2)}, ${predictedDemand} jobs are in the forecast, and the current ${currentWorkers}-worker field base cannot absorb the shortage without suspending lower-priority demand.`,
+      procedures: [
+        `Suspend non-essential bookings in ${zoneLabel} and keep salaried workers focused on high-priority jobs for the next ${timeLens} window.`,
+        `Activate a temporary ${Math.max(1.5, priceMultiplier).toFixed(2)}x payout shield so emergency acceptance does not collapse in ${city}.`,
+        `Re-route the core team toward ${hottestSector} and re-run the shortage simulation before reopening growth lanes.`,
+      ],
+      provider: "rule_engine",
+      model: "density-rule-fallback",
+      saved: false,
+      fallback: true,
+    };
+  }
+
+  if (scenario === "monsoon") {
+    return {
+      signal: `${zoneLabel} is under active monsoon deployment protocol; emergency repair density is rising faster than a normal-day workforce plan can absorb.`,
+      reasoning: `The weather-aware Density Rule treats ${zoneLabel} as an emergency reliability lane first. Density is ${densityScore.toFixed(2)}, there are ${emergencyOrders} emergency jobs in the current signal stack, and pricing or staffing delays will turn directly into burn and service-quality erosion.`,
+      procedures: [
+        `Shift salaried workers into Plumbing, Roofing, and Electrical lanes in ${zoneLabel} for the next ${timeLens} window.`,
+        `Hold a weather multiplier near ${Math.max(1.25, priceMultiplier).toFixed(2)}x so response incentives do not collapse contribution margin in ${city}.`,
+        `Pause low-priority cosmetic work and re-run the storm simulation before reopening general-service growth in ${hottestSector}.`,
+      ],
+      provider: "rule_engine",
+      model: "density-rule-fallback",
+      saved: false,
+      fallback: true,
+    };
+  }
+
   if (densityScore > 2.5) {
     return {
       signal: `${zoneLabel} is overheating; density ${densityScore.toFixed(2)} is outpacing the current ${currentWorkers}-worker field capacity.`,
@@ -667,6 +717,33 @@ const buildSimulationLogicSignals = (
   const topSignals = simulation.topSignals.slice(0, 3).map((signal) => (
     `${signal.sector}: density ${signal.densityScore.toFixed(2)} with ${signal.projectedOrders.toLocaleString("en-IN")} projected orders across ${signal.activeWorkers} active workers.`
   ));
+
+  if (simulation.scenario === "price_war") {
+    return [
+      `${simulation.hottestSector} is holding the top-value lane while the contested-market model defends the profitability floor.`,
+      `Price war stress is active across ${simulation.zone.city}; ${simulation.totalProjectedOrders.toLocaleString("en-IN")} projected orders are being filtered through elevated CAC and churn pressure.`,
+      ...topSignals,
+    ].slice(0, 3);
+  }
+
+  if (simulation.scenario === "monsoon") {
+    return [
+      `${simulation.hottestSector} is carrying the heaviest repair pressure in the active monsoon deployment window.`,
+      `Storm operations are live across ${simulation.zone.city}; ${simulation.totalProjectedOrders.toLocaleString("en-IN")} projected orders are being re-ranked for mobility shock and emergency demand.`,
+      ...topSignals,
+    ].slice(0, 3);
+  }
+
+  if (simulation.scenario === "supply_crunch") {
+    const gapPercent = Math.round(simulation.highestSupplyGap * 100);
+    return [
+      simulation.criticalGapSector
+        ? `ALERT: Supply-Demand Gap in ${simulation.criticalGapSector} is ${gapPercent}%. Critical failure risk.`
+        : `${simulation.hottestSector} is carrying the worst amber-load condition in the latest shortage run.`,
+      `Service preservation mode is active across ${simulation.zone.city} with ${simulation.totalProjectedOrders.toLocaleString("en-IN")} projected orders and only ${simulation.totals.activeWorkers.toLocaleString("en-IN")} active workers in the evidence pack.`,
+      ...topSignals,
+    ].slice(0, 3);
+  }
 
   return [
     `${simulation.hottestSector} emerged as the hottest sector in the latest ${simulation.totalPoints.toLocaleString("en-IN")} point run.`,
@@ -740,6 +817,9 @@ const buildInterventionState = ({
   emergencyOrders,
   marginLift,
   priceMultiplier,
+  scenario,
+  highestSupplyGap,
+  criticalGapSector,
 }: {
   zoneLabel: string;
   densityScore: number;
@@ -748,7 +828,21 @@ const buildInterventionState = ({
   emergencyOrders: number;
   marginLift: number;
   priceMultiplier: number;
+  scenario?: SimulationCompletionPayload["scenario"];
+  highestSupplyGap?: number;
+  criticalGapSector?: string | null;
 }): InterventionState => {
+  if (scenario === "supply_crunch" && (highestSupplyGap ?? 0) >= 0.4) {
+    return {
+      badge: "Amber alert",
+      headline: `Preserve service in ${criticalGapSector || zoneLabel} before the shortage spills into a fill-rate collapse.`,
+      summary: `Supply is failing faster than growth can help. The current gap is ${Math.round((highestSupplyGap ?? 0) * 100)}%, so the next move must protect essential bookings and core reliability.`,
+      tone: "amber",
+      primaryAction: { key: "deploy_core", label: "Deploy Amber Plan" },
+      secondaryAction: { key: "adjust_payout", label: "Activate 1.50x Shield" },
+    };
+  }
+
   if (densityScore >= 2.1 || demandGap >= 9) {
     return {
       badge: "Zone overheating",
@@ -1174,12 +1268,31 @@ export function IntelligenceTab({
     () => Math.max(1, Math.round(analysis.current_workers * analysis.salaried_ratio)),
     [analysis.current_workers, analysis.salaried_ratio],
   );
+  const criticalSimulationSector = useMemo(
+    () => latestSimulation?.sectors.find((sector) => sector.sector === latestSimulation.criticalGapSector)
+      || latestSimulation?.sectors[0]
+      || null,
+    [latestSimulation],
+  );
   const aiRecommendedCore = useMemo(
     () => Math.max(
       1,
-      currentCoreWorkers + (analysis.density_score >= 1.8 ? 4 : analysis.density_score >= 1.2 ? 2 : 0),
+      currentCoreWorkers
+      + (
+        latestSimulation?.scenario === "supply_crunch"
+          ? Math.max(
+            6,
+            Math.round((criticalSimulationSector?.recommendedShift || 0) * 0.8),
+            Math.round(currentCoreWorkers * 0.35),
+          )
+          : analysis.density_score >= 1.8
+            ? 4
+            : analysis.density_score >= 1.2
+              ? 2
+              : 0
+      ),
     ),
-    [analysis.density_score, currentCoreWorkers],
+    [analysis.density_score, criticalSimulationSector?.recommendedShift, currentCoreWorkers, latestSimulation?.scenario],
   );
 
   useEffect(() => {
@@ -1266,6 +1379,9 @@ export function IntelligenceTab({
       emergencyOrders: analysis.emergency_orders,
       marginLift: projectedMarginLift,
       priceMultiplier,
+      scenario: latestSimulation?.scenario,
+      highestSupplyGap: latestSimulation?.highestSupplyGap,
+      criticalGapSector: latestSimulation?.criticalGapSector,
     })
   ), [
     activeSector.label,
@@ -1273,9 +1389,13 @@ export function IntelligenceTab({
     analysis.emergency_orders,
     auditSignals.beforeAfterCoverage,
     liveDemandGap,
+    latestSimulation?.criticalGapSector,
+    latestSimulation?.highestSupplyGap,
+    latestSimulation?.scenario,
     priceMultiplier,
     projectedMarginLift,
   ]);
+  const isSupplyCrunchAlert = latestSimulation?.scenario === "supply_crunch" && (latestSimulation.highestSupplyGap ?? 0) >= 0.4;
 
   const auditPulseSignals = useMemo(
     () => visiblePreviewSignals.filter((_, index) => index % 7 === 0).slice(0, 8),
@@ -1303,6 +1423,7 @@ export function IntelligenceTab({
   const highlightedZoneId = useMemo(() => {
     const referencePool = [
       lastExecutedStrategy?.zoneLabel || "",
+      latestSimulation?.criticalGapSector || "",
       latestSimulation?.hottestSector || "",
       strategyBrief?.signal || "",
       strategyBrief?.reasoning || "",
@@ -1318,7 +1439,7 @@ export function IntelligenceTab({
     }
 
     return activeSector.id;
-  }, [activeSector.id, lastExecutedStrategy?.zoneLabel, latestSimulation?.hottestSector, logicLog, strategyBrief]);
+  }, [activeSector.id, lastExecutedStrategy?.zoneLabel, latestSimulation?.criticalGapSector, latestSimulation?.hottestSector, logicLog, strategyBrief]);
 
   const highlightedMapZone = useMemo(() => (
     commandMapZones.find((zone) => zone.id === highlightedZoneId) || activeMapZone
@@ -1329,12 +1450,16 @@ export function IntelligenceTab({
       return "analyzing" as const;
     }
 
-    if (analysis.density_score >= 1.8 || (latestSimulation?.hottestSector && highlightedZoneId !== activeSector.id)) {
+    if (
+      (latestSimulation?.scenario === "supply_crunch" && (latestSimulation.highestSupplyGap ?? 0) >= 0.4)
+      || analysis.density_score >= 1.8
+      || (latestSimulation?.hottestSector && highlightedZoneId !== activeSector.id)
+    ) {
       return "surge" as const;
     }
 
     return "steady" as const;
-  }, [activeSector.id, analysis.density_score, highlightedZoneId, latestSimulation?.hottestSector, simulationRunning, strategyStatus]);
+  }, [activeSector.id, analysis.density_score, highlightedZoneId, latestSimulation?.highestSupplyGap, latestSimulation?.hottestSector, latestSimulation?.scenario, simulationRunning, strategyStatus]);
 
   const canExecuteAiStrategy = Boolean(strategyBrief && latestSimulation);
 
@@ -1361,6 +1486,15 @@ export function IntelligenceTab({
       zoneId: activeSector.id,
       zoneLabel: activeSector.label,
       city: activeSector.city,
+      scenarioType: simulation?.scenario ?? "baseline",
+      scenario: simulation?.scenario ?? "baseline",
+      weatherSignal: simulation?.scenario === "monsoon"
+        ? "Active monsoon deployment protocol. Repair demand is elevated, worker mobility is constrained, and burn pressure is above baseline."
+        : simulation?.scenario === "supply_crunch"
+          ? "Active supply crunch protocol. Worker availability is halved and the command lane is preserving essential service."
+          : simulation?.scenario === "price_war"
+            ? "Active price war protocol. CAC is inflated, churn is elevated, and the command lane is protecting the profitability floor."
+            : "Normal weather operating window.",
       radiusKm: simulation?.zone.radiusKm ?? 4,
       timeLens: timeLensLabel,
       densityScore: analysis.density_score,
@@ -1405,24 +1539,39 @@ export function IntelligenceTab({
             projectedOrders: sector.projectedOrders,
             burnRisk: sector.burnRisk,
             churnRisk: sector.churnRisk,
+            supplyGapRatio: sector.supplyGapRatio,
+            recommendedShift: sector.recommendedShift,
+            activeWorkers: sector.activeWorkers,
           })),
         }
         : undefined,
       deepDive,
-      providerPreference: deepDive ? "gemini" : "groq",
+      providerPreference: deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "gemini" : "groq",
     };
 
     setStrategyStatus("thinking");
     setStrategyMessage(
       deepDive
         ? `Deep strategy scan running for ${activeSector.label}. Gemini is drafting the CEO briefing.`
-        : `Fast zone analysis running for ${activeSector.label}. Groq is reading the density stack.`,
+        : simulation?.scenario === "price_war"
+          ? `Contested-market scan running for ${activeSector.label}. Gemini is drafting the margin-defense plan.`
+        : simulation?.scenario === "supply_crunch"
+          ? `Amber-alert strategy scan running for ${activeSector.label}. Gemini is drafting the preservation plan.`
+          : `Fast zone analysis running for ${activeSector.label}. Groq is reading the density stack.`,
     );
     appendLogicEntry(
       deepDive
         ? `Churn risk detected in ${activeSector.label}. Querying Gemini for an investor-grade retention and staffing strategy.`
-        : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift.`,
-      { tone: deepDive ? "warning" : "info", source: "strategy", tag: deepDive ? "LLM_GEMINI" : "LLM_GROQ" },
+        : simulation?.scenario === "price_war"
+          ? `Price war detected in ${activeSector.label}. Querying Gemini for a profitability-floor intervention plan.`
+        : simulation?.scenario === "supply_crunch"
+          ? `Supply crunch detected in ${activeSector.label}. Querying Gemini for a service-preservation intervention plan.`
+          : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift.`,
+      {
+        tone: deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "warning" : "info",
+        source: "strategy",
+        tag: deepDive || simulation?.scenario === "supply_crunch" || simulation?.scenario === "price_war" ? "LLM_GEMINI" : "LLM_GROQ",
+      },
     );
     logicSignals.slice(0, 2).forEach((signal) => {
       appendLogicEntry(signal, { tone: "info", source: "simulation", tag: "RF_MODEL" });
@@ -1479,6 +1628,7 @@ export function IntelligenceTab({
         acquisitionCost: activeSector.spend,
         churnRate: investorAnalytics.summary.churnRate,
         marginLift: simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit),
+        scenario: simulation?.scenario ?? "baseline",
       });
 
       setStrategyBrief(fallbackBrief);
@@ -1523,9 +1673,14 @@ export function IntelligenceTab({
   const handleSimulationComplete = useCallback((summary: SimulationCompletionPayload) => {
     setLatestSimulation(summary);
     buildSimulationLogicSignals(summary, activeSector.label).forEach((signal, index) => {
+      const isAlertSignal = signal.startsWith("ALERT:");
       appendLogicEntry(
         index === 0 ? `Random Forest summary ready. ${signal}` : signal,
-        { tone: index === 0 ? "success" : "info", source: "simulation", tag: "RF_MODEL" },
+        {
+          tone: isAlertSignal ? "critical" : index === 0 ? "success" : "info",
+          source: "simulation",
+          tag: "RF_MODEL",
+        },
       );
     });
   }, [activeSector.label, appendLogicEntry]);
@@ -1540,6 +1695,7 @@ export function IntelligenceTab({
     }
 
     lastTelemetryMessageRef.current = latestMessage;
+    const isAlertMessage = latestMessage.startsWith("ALERT:");
     const logTag = telemetry.phase === "generating"
       ? "SYNC"
       : telemetry.phase === "inferencing"
@@ -1551,7 +1707,9 @@ export function IntelligenceTab({
             : "SYNC";
 
     appendLogicEntry(latestMessage, {
-      tone: telemetry.phase === "error"
+      tone: isAlertMessage
+        ? "critical"
+        : telemetry.phase === "error"
         ? "critical"
         : telemetry.phase === "complete"
           ? "success"
@@ -1626,13 +1784,19 @@ export function IntelligenceTab({
 
     const targetZoneId = highlightedZoneId || activeSector.id;
     const targetZone = sectorSignals.find((sector) => sector.id === targetZoneId) || activeSector;
+    const emergencyTarget = latestSimulation?.scenario === "supply_crunch"
+      ? Math.max(
+        aiRecommendedCore,
+        currentCoreWorkers + Math.max(4, Math.round((criticalSimulationSector?.recommendedShift || 0) * 0.8)),
+      )
+      : aiRecommendedCore;
 
-    setManualCoreWorkers(aiRecommendedCore);
+    setManualCoreWorkers(emergencyTarget);
     setActiveMode("monitor");
     setLastExecutedStrategy({
       zoneId: targetZone.id,
       zoneLabel: targetZone.label,
-      coreWorkers: aiRecommendedCore,
+      coreWorkers: emergencyTarget,
       appliedAt: formatAuditTimestamp(),
     });
 
@@ -1641,11 +1805,17 @@ export function IntelligenceTab({
     }
 
     appendLogicEntry(
-      `Recommendation executed. Shifted the simulated salaried core to ${aiRecommendedCore} workers in ${targetZone.label}.`,
+      latestSimulation?.scenario === "supply_crunch"
+        ? `Recommendation executed. Amber plan shifted the simulated salaried core to ${emergencyTarget} workers in ${targetZone.label}.`
+        : `Recommendation executed. Shifted the simulated salaried core to ${emergencyTarget} workers in ${targetZone.label}.`,
       { tone: "success", source: "strategy", tag: "DECISION" },
     );
-    toast.success(`AI workforce deployment applied for ${targetZone.label}.`);
-  }, [activeSector, aiRecommendedCore, appendLogicEntry, handleZoneSelection, highlightedZoneId, strategyBrief]);
+    toast.success(
+      latestSimulation?.scenario === "supply_crunch"
+        ? `Amber preservation plan applied for ${targetZone.label}.`
+        : `AI workforce deployment applied for ${targetZone.label}.`,
+    );
+  }, [activeSector, aiRecommendedCore, appendLogicEntry, criticalSimulationSector?.recommendedShift, currentCoreWorkers, handleZoneSelection, highlightedZoneId, latestSimulation?.scenario, strategyBrief]);
 
   const jumpToSimulationLab = () => {
     document.getElementById("simulation-lab")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2091,8 +2261,8 @@ export function IntelligenceTab({
                     center={signal.position}
                     radius={185}
                     pathOptions={{
-                      color: "#34d399",
-                      fillColor: "#34d399",
+                      color: isSupplyCrunchAlert ? "#f59e0b" : "#34d399",
+                      fillColor: isSupplyCrunchAlert ? "#f59e0b" : "#34d399",
                       fillOpacity: 0.03,
                       opacity: 0.7,
                       weight: 1,
@@ -2105,10 +2275,10 @@ export function IntelligenceTab({
                     center={highlightedMapZone.center}
                     radius={18}
                     pathOptions={{
-                      className: "rahi-map-focus-ring",
-                      color: "#4f46e5",
+                      className: isSupplyCrunchAlert ? "rahi-map-focus-ring-amber" : "rahi-map-focus-ring",
+                      color: isSupplyCrunchAlert ? "#f59e0b" : "#4f46e5",
                       weight: 2,
-                      fillColor: "#4f46e5",
+                      fillColor: isSupplyCrunchAlert ? "#f59e0b" : "#4f46e5",
                       fillOpacity: 0.08,
                     }}
                   >
@@ -2151,15 +2321,31 @@ export function IntelligenceTab({
 
               {(simulationRunning || strategyStatus === "thinking") && (
                 <>
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(79,70,229,0.12),_transparent_55%)]" />
-                  <div className="rahi-scanline pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-transparent via-indigo-400/25 to-transparent" />
+                  <div className={cn(
+                    "pointer-events-none absolute inset-0",
+                    isSupplyCrunchAlert
+                      ? "bg-[radial-gradient(circle_at_center,_rgba(245,158,11,0.16),_transparent_55%)]"
+                      : "bg-[radial-gradient(circle_at_center,_rgba(79,70,229,0.12),_transparent_55%)]",
+                  )} />
+                  <div className={cn(
+                    "rahi-scanline pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-transparent to-transparent",
+                    isSupplyCrunchAlert ? "via-amber-400/30" : "via-indigo-400/25",
+                  )} />
                   <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-                    <div className="rahi-command-pin relative h-4 w-4 rounded-full bg-indigo-600 shadow-[0_0_0_8px_rgba(79,70,229,0.18)]">
+                    <div className={cn(
+                      "rahi-command-pin relative h-4 w-4 rounded-full",
+                      isSupplyCrunchAlert
+                        ? "bg-amber-500 shadow-[0_0_0_8px_rgba(245,158,11,0.18)]"
+                        : "bg-indigo-600 shadow-[0_0_0_8px_rgba(79,70,229,0.18)]",
+                    )}>
                       <span className="absolute inset-0 rounded-full border border-white/90" />
                     </div>
                   </div>
-                  <div className="pointer-events-none absolute right-4 top-4 rounded-2xl border border-indigo-300/40 bg-slate-950/85 px-4 py-3 text-white shadow-xl shadow-indigo-950/20 backdrop-blur">
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-200">AI overlay</p>
+                  <div className={cn(
+                    "pointer-events-none absolute right-4 top-4 rounded-2xl bg-slate-950/85 px-4 py-3 text-white shadow-xl backdrop-blur",
+                    isSupplyCrunchAlert ? "border border-amber-300/40 shadow-amber-950/20" : "border border-indigo-300/40 shadow-indigo-950/20",
+                  )}>
+                    <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", isSupplyCrunchAlert ? "text-amber-200" : "text-indigo-200")}>AI overlay</p>
                     <p className="mt-2 text-sm font-black">
                       {simulationRunning
                         ? "Random Forest is scanning the heatmap in live batches."
@@ -2979,6 +3165,11 @@ function CommandCenterMotionStyles() {
         animation: rahi-map-focus 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
       }
 
+      .rahi-map-focus-ring-amber {
+        transform-origin: center;
+        animation: rahi-map-focus 1.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      }
+
       .rahi-terminal-shell {
         box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 24px 50px rgba(15,23,42,0.2);
       }
@@ -3002,6 +3193,7 @@ function CommandCenterMotionStyles() {
         .rahi-scanline,
         .rahi-command-pin,
         .rahi-map-focus-ring,
+        .rahi-map-focus-ring-amber,
         .rahi-terminal-caret {
           animation: none !important;
         }

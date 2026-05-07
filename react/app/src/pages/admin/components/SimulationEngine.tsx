@@ -54,10 +54,12 @@ import {
   buildSimulationGeoConfig,
   DEFAULT_SIMULATION_CITY_ID,
   GLOBAL_SIMULATION_CITIES,
+  SIMULATION_SCENARIOS,
   SIMULATION_BATCH_COUNT,
   SIMULATION_BATCH_SIZE,
   SIMULATION_TOTAL_POINTS,
   type SimulationGeoConfig,
+  type SimulationScenario,
   generateSimulationBatch,
 } from "@/utils/simulationData";
 import { downloadSimulationReport } from "@/utils/simulationReport";
@@ -86,6 +88,7 @@ interface SimulationSectorSummary {
   daily_burn: number;
   burn_risk: number;
   churn_risk: number;
+  supply_gap_ratio: number;
   centroid_lat: number;
   centroid_lng: number;
 }
@@ -98,6 +101,7 @@ interface SimulationBatchResponse {
   cluster_distribution: Record<string, number>;
   sector_summaries: SimulationSectorSummary[];
   model_version: string;
+  scenario: SimulationScenario;
 }
 
 interface AggregatedSector {
@@ -120,6 +124,7 @@ interface AggregatedSector {
   dailyBurn: number;
   burnRisk: number;
   churnRisk: number;
+  supplyGapRatio: number;
   centroidLat: number;
   centroidLng: number;
   sampleCount: number;
@@ -159,6 +164,10 @@ interface SelectedLocation {
 }
 
 interface StrategySummary {
+  scenario: {
+    id: SimulationScenario;
+    label: string;
+  };
   zone: {
     city: string;
     country: string;
@@ -198,6 +207,8 @@ interface StrategyAgentResponse {
 
 export interface SimulationCompletionPayload {
   generatedAt: string;
+  scenario: SimulationScenario;
+  scenarioLabel: string;
   modelVersion: string;
   totalPoints: number;
   totalProjectedOrders: number;
@@ -206,6 +217,8 @@ export interface SimulationCompletionPayload {
   marginLift: number;
   averageSalariedRatio: number;
   hottestSector: string;
+  criticalGapSector: string | null;
+  highestSupplyGap: number;
   zone: StrategySummary["zone"];
   totals: StrategySummary["totals"];
   densityBuckets: StrategySummary["densityBuckets"];
@@ -215,12 +228,14 @@ export interface SimulationCompletionPayload {
     densityScore: number;
     salariedRatio: number;
     projectedOrders: number;
+    recommendedShift: number;
     acquisitionCost: number;
     estimatedLtv: number;
     contributionMargin: number;
     dailyBurn: number;
     burnRisk: number;
     churnRisk: number;
+    supplyGapRatio: number;
     activeWorkers: number;
   }>;
 }
@@ -256,10 +271,178 @@ const formatCurrency = (value: number) => `INR ${Math.round(value).toLocaleStrin
 const formatRadius = (value: number) => `${value.toFixed(0)} km`;
 const formatCoordinates = (lat: number, lng: number) => `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
 const formatPercent = (value: number) => `${value.toFixed(1)}%`;
+const SIMULATION_SCENARIO_STORAGE_KEY = "rahi-simulation-scenario";
+
+const scenarioMeta: Record<SimulationScenario, {
+  label: string;
+  badge: string;
+  summary: string;
+  ribbon: string;
+  iconTone: string;
+}> = {
+  baseline: {
+    label: "Baseline Command",
+    badge: "NORMAL OPERATIONS",
+    summary: "Standard demand curve, normal worker mobility, and the default density-optimization engine.",
+    ribbon: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    iconTone: "text-emerald-600",
+  },
+  monsoon: {
+    label: "Monsoon Stress Test",
+    badge: "ACTIVE EMERGENCY DEPLOYMENT",
+    summary: "Repair demand spikes, field mobility drops, and burn pressure rises while the AI re-optimizes in real time.",
+    ribbon: "border-amber-300 bg-[linear-gradient(135deg,_rgba(251,191,36,0.18),_rgba(249,115,22,0.16))] text-amber-900",
+    iconTone: "text-amber-600",
+  },
+  supply_crunch: {
+    label: "Supply Shortage Drill",
+    badge: "50% SUPPLY SHORTAGE",
+    summary: "Worker availability collapses by 50% while high-priority demand doubles, forcing the engine into service-preservation mode.",
+    ribbon: "border-rose-300 bg-[linear-gradient(135deg,_rgba(251,113,133,0.16),_rgba(190,24,93,0.14))] text-rose-950",
+    iconTone: "text-rose-600",
+  },
+};
 
 const getGeoConfigKey = (config: SimulationGeoConfig) => (
   `${config.cityId}:${config.center.lat.toFixed(4)}:${config.center.lng.toFixed(4)}:${config.radiusKm.toFixed(1)}`
 );
+
+const validSimulationScenarios: SimulationScenario[] = SIMULATION_SCENARIOS.map((scenario) => scenario.id);
+
+const getStoredScenario = (value: string | null): SimulationScenario => (
+  validSimulationScenarios.find((scenario) => scenario === value) || "baseline"
+);
+
+const getScenarioWeatherSignal = (scenario: SimulationScenario) => {
+  switch (scenario) {
+    case "monsoon":
+      return "Monsoon scenario active: repair demand is upweighted, worker mobility is reduced, and cash burn is elevated.";
+    case "supply_crunch":
+      return "Supply shortage scenario active: worker availability is down 50% while priority demand is surging across the zone.";
+    default:
+      return "Normal operating window with standard workforce mobility, demand shape, and acquisition pressure.";
+  }
+};
+
+const getScenarioLogicSignals = ({
+  scenario,
+  hottestSector,
+  totalDailyBurn,
+  marginLift,
+}: {
+  scenario: SimulationScenario;
+  hottestSector?: string;
+  totalDailyBurn: number;
+  marginLift: number;
+}) => {
+  switch (scenario) {
+    case "monsoon":
+      return [
+        "Monsoon stress test active: worker availability has been cut to simulate transport delays and route friction.",
+        "Repair-heavy categories like Plumbing, Roofing, and Electrical are receiving higher traffic weight in the current run.",
+        `Projected 48-hour burn runway at current pace is ${formatCurrency(totalDailyBurn * 2)}.`,
+      ];
+    case "supply_crunch":
+      return [
+        "Supply shortage drill active: active workers are halved so the engine can expose the first zone that breaks under pressure.",
+        `Critical service preservation is being routed toward ${hottestSector || "the highest-pressure sector"} while low-priority lanes are deprioritized.`,
+        `The intervention target is to recover ${formatCurrency(marginLift)} of margin without letting the supply gap widen further.`,
+      ];
+    default:
+      return [
+        "Baseline simulation active: standard workforce mobility and cost assumptions are in effect.",
+        `Hottest sector right now is ${hottestSector || "not yet available"} inside the active command ring.`,
+        `Current radius mix implies a ${formatCurrency(marginLift)} margin lift versus the flat staffing model.`,
+      ];
+  }
+};
+
+const getScenarioRequestDescriptor = (scenario: SimulationScenario) => {
+  switch (scenario) {
+    case "monsoon":
+      return "storm-adjusted";
+    case "supply_crunch":
+      return "shortage-adjusted";
+    default:
+      return "synthetic";
+  }
+};
+
+const getScenarioInferenceSuffix = (scenario: SimulationScenario) => {
+  switch (scenario) {
+    case "monsoon":
+      return "under weather stress";
+    case "supply_crunch":
+      return "under supply preservation pressure";
+    default:
+      return "in the active zone";
+  }
+};
+
+const getScenarioVisualizationMessage = (scenario: SimulationScenario) => {
+  switch (scenario) {
+    case "monsoon":
+      return "Inference complete. Rendering the storm command map, emergency staffing shifts, and burn-response plan.";
+    case "supply_crunch":
+      return "Inference complete. Rendering the supply-gap heatmap, redeployment orders, and service-preservation ladder.";
+    default:
+      return "Inference complete. Rendering the geo heatmap and workforce recommendations.";
+  }
+};
+
+const getScenarioCompletionToast = (scenario: SimulationScenario) => {
+  switch (scenario) {
+    case "monsoon":
+      return "RAHI monsoon stress test finished successfully.";
+    case "supply_crunch":
+      return "RAHI supply shortage drill finished successfully.";
+    default:
+      return "RAHI global intelligence simulation finished successfully.";
+  }
+};
+
+const getScenarioLaunchLabel = (scenario: SimulationScenario) => {
+  switch (scenario) {
+    case "monsoon":
+      return "Launch Monsoon Stress Test";
+    case "supply_crunch":
+      return "Launch 50% Supply Shortage";
+    default:
+      return "Launch 400k Simulation";
+  }
+};
+
+const getScenarioPhaseCopy = (scenario: SimulationScenario): Record<SimulationPhase, string> => {
+  switch (scenario) {
+    case "monsoon":
+      return {
+        idle: "Select a city, pin the zone, and trigger the monsoon scenario to simulate repair surges and mobility shock.",
+        generating: "Generating storm-adjusted booking traffic with faker.js around the selected map center.",
+        inferencing: "Streaming each batch into the Random Forest engine with monsoon supply-friction assumptions.",
+        visualizing: "Packaging emergency staffing shifts, amber alerts, and burn-pressure signals for the command map.",
+        complete: "Monsoon simulation complete. The command map, economics, and storm playbook are ready for review.",
+        error: "Simulation paused because a batch failed. Fix the service and launch again.",
+      };
+    case "supply_crunch":
+      return {
+        idle: "Select a city, pin the zone, and trigger the 50% supply shortage to see which sector breaks first.",
+        generating: "Generating shortage-adjusted booking traffic with workforce availability compressed by half.",
+        inferencing: "Streaming each batch into the Random Forest engine with service-preservation assumptions.",
+        visualizing: "Packaging shortage heatmaps, redeployment orders, and supply-gap warnings for the command map.",
+        complete: "Supply shortage drill complete. The gap map, redeployment plan, and preservation logic are ready for review.",
+        error: "Simulation paused because a batch failed. Fix the service and launch again.",
+      };
+    default:
+      return {
+        idle: "Select a city, drop a command pin, and define the radius ring for the next 400k simulation.",
+        generating: "Generating synthetic booking traffic with faker.js around the selected map center.",
+        inferencing: "Streaming each batch into the Random Forest density engine.",
+        visualizing: "Packaging density buckets, workforce shifts, and geo signals for the command map.",
+        complete: "Simulation complete. The map and economics panels are ready for export.",
+        error: "Simulation paused because a batch failed. Fix the service and launch again.",
+      };
+  }
+};
 
 const phaseStatus = (phase: SimulationPhase, target: Exclude<SimulationPhase, "idle" | "error" | "complete">) => {
   const order = ["generating", "inferencing", "visualizing"];
@@ -303,6 +486,7 @@ const mergeSummaries = (
         dailyBurn: summary.daily_burn,
         burnRisk: summary.burn_risk,
         churnRisk: summary.churn_risk,
+        supplyGapRatio: summary.supply_gap_ratio,
         centroidLat: summary.centroid_lat,
         centroidLng: summary.centroid_lng,
         sampleCount: 1,
@@ -333,6 +517,7 @@ const mergeSummaries = (
       dailyBurn: current.dailyBurn + summary.daily_burn,
       burnRisk: (((current.burnRisk * current.sampleCount) + summary.burn_risk) / sampleCount),
       churnRisk: (((current.churnRisk * current.sampleCount) + summary.churn_risk) / sampleCount),
+      supplyGapRatio: (((current.supplyGapRatio * current.sampleCount) + summary.supply_gap_ratio) / sampleCount),
       centroidLat: summary.centroid_lat,
       centroidLng: summary.centroid_lng,
       sampleCount,
@@ -384,9 +569,14 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   const [selectedCityId, setSelectedCityId] = useState(initialGeoConfig.cityId);
   const [analysisCenter, setAnalysisCenter] = useState(initialGeoConfig.center);
   const [radiusKm, setRadiusKm] = useState(initialGeoConfig.radiusKm);
+  const [selectedScenario, setSelectedScenario] = useState<SimulationScenario>(() => {
+    if (typeof window === "undefined") return "baseline";
+    return getStoredScenario(window.localStorage.getItem(SIMULATION_SCENARIO_STORAGE_KEY));
+  });
   const [isLocationPickerOpen, setIsLocationPickerOpen] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState(`${initialGeoConfig.cityLabel}, ${initialGeoConfig.country}`);
   const [lastRunConfig, setLastRunConfig] = useState<SimulationGeoConfig | null>(null);
+  const [lastRunScenario, setLastRunScenario] = useState<SimulationScenario | null>(null);
   const [strategyLoading, setStrategyLoading] = useState<false | "financial_audit" | "investor_summary" | "deep_dive">(false);
   const [strategyResponse, setStrategyResponse] = useState<StrategyAgentResponse | null>(null);
   const [investorSummary, setInvestorSummary] = useState<StrategyAgentResponse | null>(null);
@@ -406,18 +596,24 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     || GLOBAL_SIMULATION_CITIES[0]
   ), [selectedCityId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SIMULATION_SCENARIO_STORAGE_KEY, selectedScenario);
+  }, [selectedScenario]);
+
   const previewSignals = useMemo<PreviewPoint[]>(() => (
     generateSimulationBatch({
       batchIndex: 0,
       batchSize: 320,
       geoConfig: draftGeoConfig,
+      scenario: selectedScenario,
     }).map((point, index) => ({
       id: `preview-${index}`,
       position: [point.lat, point.lng] as [number, number],
       serviceType: point.serviceType,
       isEmergency: point.isEmergency,
     }))
-  ), [draftGeoConfig]);
+  ), [draftGeoConfig, selectedScenario]);
 
   const aggregatedSectors = useMemo(() => (
     Object.values(sectorMap)
@@ -431,7 +627,10 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   const hasPendingZoneChanges = Boolean(
     lastRunConfig
       && !isRunning
-      && getGeoConfigKey(lastRunConfig) !== getGeoConfigKey(draftGeoConfig),
+      && (
+        getGeoConfigKey(lastRunConfig) !== getGeoConfigKey(draftGeoConfig)
+        || lastRunScenario !== selectedScenario
+      ),
   );
 
   const effectivePhase = hasPendingZoneChanges ? "idle" : phase;
@@ -441,7 +640,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   const effectiveAggregatedSectors = hasPendingZoneChanges ? [] : aggregatedSectors;
   const effectiveStatusFeed = hasPendingZoneChanges
     ? [
-      "Analysis zone changed. Launch the simulation again to regenerate the density map for the new pin and radius.",
+      `Scenario parameters changed. Launch the ${scenarioMeta[selectedScenario].label.toLowerCase()} again to regenerate the heatmap, logic trail, and response plan.`,
     ]
     : statusFeed;
 
@@ -466,6 +665,11 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     [effectiveAggregatedSectors],
   );
   const hottestSector = effectiveAggregatedSectors[0];
+  const criticalSupplyGapSector = useMemo(
+    () => [...effectiveAggregatedSectors].sort((left, right) => right.supplyGapRatio - left.supplyGapRatio)[0] || null,
+    [effectiveAggregatedSectors],
+  );
+  const highestSupplyGap = criticalSupplyGapSector?.supplyGapRatio ?? 0;
   const averageSalariedRatio = useMemo(() => {
     if (effectiveAggregatedSectors.length === 0) return 0;
     const totalWeightedRatio = effectiveAggregatedSectors.reduce(
@@ -514,6 +718,10 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     });
 
     return {
+      scenario: {
+        id: selectedScenario,
+        label: scenarioMeta[selectedScenario].label,
+      },
       zone: {
         city: draftGeoConfig.cityLabel,
         country: draftGeoConfig.country,
@@ -533,7 +741,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         activeWorkers: sector.activeWorkers,
       })),
     };
-  }, [draftGeoConfig, effectiveAggregatedSectors, totalActiveWorkers, totalProjectedOrders]);
+  }, [draftGeoConfig, effectiveAggregatedSectors, selectedScenario, totalActiveWorkers, totalProjectedOrders]);
 
   const zoneEconomics = useMemo<ZoneEconomicsRow[]>(() => (
     effectiveAggregatedSectors
@@ -586,6 +794,8 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
 
   const completionPayload = useMemo<SimulationCompletionPayload>(() => ({
     generatedAt: new Date().toISOString(),
+    scenario: selectedScenario,
+    scenarioLabel: scenarioMeta[selectedScenario].label,
     modelVersion,
     totalPoints: effectiveProcessedPoints || SIMULATION_TOTAL_POINTS,
     totalProjectedOrders,
@@ -594,6 +804,8 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     marginLift: totalTraditionalCost - totalOptimizedCost,
     averageSalariedRatio: Number(averageSalariedRatio.toFixed(2)),
     hottestSector: hottestSector?.areaSector || "NA",
+    criticalGapSector: criticalSupplyGapSector?.areaSector || null,
+    highestSupplyGap: Number(highestSupplyGap.toFixed(3)),
     zone: strategySummary.zone,
     totals: strategySummary.totals,
     densityBuckets: strategySummary.densityBuckets,
@@ -603,20 +815,25 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       densityScore: Number(sector.densityScore.toFixed(2)),
       salariedRatio: Number(sector.salariedRatio.toFixed(2)),
       projectedOrders: sector.projectedOrders,
+      recommendedShift: sector.recommendedShift,
       acquisitionCost: Number(sector.acquisitionCost.toFixed(2)),
       estimatedLtv: Number(sector.estimatedLtv.toFixed(2)),
       contributionMargin: Number(sector.contributionMargin.toFixed(2)),
       dailyBurn: Number(sector.dailyBurn.toFixed(2)),
       burnRisk: Number(sector.burnRisk.toFixed(2)),
       churnRisk: Number(sector.churnRisk.toFixed(2)),
+      supplyGapRatio: Number(sector.supplyGapRatio.toFixed(3)),
       activeWorkers: sector.activeWorkers,
     })),
   }), [
     averageSalariedRatio,
+    criticalSupplyGapSector?.areaSector,
     effectiveAggregatedSectors,
     effectiveProcessedPoints,
+    highestSupplyGap,
     hottestSector?.areaSector,
     modelVersion,
+    selectedScenario,
     strategySummary,
     totalOptimizedCost,
     totalProjectedOrders,
@@ -701,7 +918,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       marginLift: totalTraditionalCost - totalOptimizedCost,
       averageSalariedRatio,
       hottestSector: hottestSector?.areaSector || "NA",
-      zoneLabel: `${draftGeoConfig.cityLabel}, ${draftGeoConfig.country}`,
+      zoneLabel: `${draftGeoConfig.cityLabel}, ${draftGeoConfig.country} - ${scenarioMeta[selectedScenario].label}`,
       radiusKm: draftGeoConfig.radiusKm,
       centerCoordinates: formatCoordinates(draftGeoConfig.center.lat, draftGeoConfig.center.lng),
       sectors: effectiveAggregatedSectors.map((sector) => ({
@@ -726,6 +943,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     effectiveAggregatedSectors,
     effectiveProcessedPoints,
     hottestSector?.areaSector,
+    selectedScenario,
     totalOptimizedCost,
     totalProjectedOrders,
     totalTraditionalCost,
@@ -736,6 +954,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       ? 0
       : zoneEconomics.reduce((sum, zone) => sum + zone.churnRisk, 0) / zoneEconomics.length;
     const priceMultiplier = Number(Math.min(1.5, Math.max(0.85, 1 + (0.25 * (((hottestSector?.densityScore ?? 1.2) - 1.2))))).toFixed(2));
+    const marginLift = Number((totalTraditionalCost - totalOptimizedCost).toFixed(2));
 
     return {
       analysisMode,
@@ -743,6 +962,9 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       zoneId: draftGeoConfig.cityId,
       zoneLabel: `${draftGeoConfig.cityLabel} ${formatRadius(draftGeoConfig.radiusKm)} command zone`,
       city: `${draftGeoConfig.cityLabel}, ${draftGeoConfig.country}`,
+      scenarioType: selectedScenario,
+      scenario: selectedScenario,
+      weatherSignal: getScenarioWeatherSignal(selectedScenario),
       radiusKm: draftGeoConfig.radiusKm,
       userQuestion,
       densityScore: hottestSector?.densityScore ?? 0,
@@ -753,13 +975,19 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
       allocationStrategy: inferredAllocationStrategy,
       priceMultiplier,
       pricingSignal: financialOverview.totalDailyBurn > 0 ? "protect margin with targeted pricing" : "pricing stable",
+      logicSignals: getScenarioLogicSignals({
+        scenario: selectedScenario,
+        hottestSector: completionPayload.criticalGapSector || hottestSector?.areaSector,
+        totalDailyBurn: financialOverview.totalDailyBurn,
+        marginLift,
+      }),
       financials: {
         acquisitionCost: Number(financialOverview.averageCac.toFixed(2)),
         churnRate: Number(churnRate.toFixed(3)),
         projectedRevenue: Number(totalProjectedRevenue.toFixed(2)),
         projectedProfit: Number((totalProjectedRevenue - totalOptimizedCost).toFixed(2)),
         platformCommission: Number((totalProjectedRevenue * 0.12).toFixed(2)),
-        marginLift: Number((totalTraditionalCost - totalOptimizedCost).toFixed(2)),
+        marginLift,
       },
       zoneEconomics: zoneEconomics.map((zone) => ({
         sector: zone.sector,
@@ -788,6 +1016,9 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
           projectedOrders: sector.projectedOrders,
           burnRisk: sector.burnRisk,
           churnRisk: sector.churnRisk,
+          supplyGapRatio: sector.supplyGapRatio,
+          recommendedShift: sector.recommendedShift,
+          activeWorkers: sector.activeWorkers,
         })),
       },
       auditData: {
@@ -796,10 +1027,12 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         cloudinaryVerifiedUploads: 0,
       },
       deepDive: Boolean(userQuestion),
-      providerPreference: userQuestion ? "gemini" : "groq",
+      providerPreference: userQuestion || selectedScenario !== "baseline" ? "gemini" : "groq",
     };
   }, [
     averageSalariedRatio,
+    completionPayload.criticalGapSector,
+    completionPayload.highestSupplyGap,
     completionPayload.sectors,
     draftGeoConfig.cityId,
     draftGeoConfig.cityLabel,
@@ -812,6 +1045,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     hottestSector?.densityScore,
     inferredAllocationStrategy,
     modelVersion,
+    selectedScenario,
     totalActiveWorkers,
     totalOptimizedCost,
     totalProjectedOrders,
@@ -885,6 +1119,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
 
     setIsRunning(true);
     setLastRunConfig(runConfig);
+    setLastRunScenario(selectedScenario);
     setPhase("generating");
     setProcessedPoints(0);
     setCompletedBatches(0);
@@ -897,7 +1132,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     setFinishedAt(null);
     lastReportedRunRef.current = null;
     appendFeed(
-      `Simulation booted for ${runConfig.cityLabel}, ${runConfig.country}. Locked radius at ${formatRadius(runConfig.radiusKm)} around ${formatCoordinates(runConfig.center.lat, runConfig.center.lng)}.`,
+      `${scenarioMeta[selectedScenario].label} booted for ${runConfig.cityLabel}, ${runConfig.country}. Locked radius at ${formatRadius(runConfig.radiusKm)} around ${formatCoordinates(runConfig.center.lat, runConfig.center.lng)}.`,
     );
 
     try {
@@ -906,9 +1141,10 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         const bookings = generateSimulationBatch({
           batchIndex,
           geoConfig: runConfig,
+          scenario: selectedScenario,
         });
         appendFeed(
-          `Batch ${batchIndex + 1}/${SIMULATION_BATCH_COUNT}: generated ${bookings.length.toLocaleString("en-IN")} synthetic requests inside the active radius ring.`,
+          `Batch ${batchIndex + 1}/${SIMULATION_BATCH_COUNT}: generated ${bookings.length.toLocaleString("en-IN")} ${getScenarioRequestDescriptor(selectedScenario)} requests inside the active radius ring.`,
         );
         await new Promise((resolve) => window.setTimeout(resolve, 0));
 
@@ -923,6 +1159,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
             batch_id: batchIndex + 1,
             total_batches: SIMULATION_BATCH_COUNT,
             total_points: SIMULATION_TOTAL_POINTS,
+            scenario: selectedScenario,
             bookings,
           }),
         });
@@ -950,17 +1187,27 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
         });
 
         appendFeed(
-          `Batch ${batchPayload.batch_id}: Random Forest closed in ${Math.round(batchPayload.processing_ms)} ms with ${batchPayload.cluster_distribution.surge_density || 0} surge sectors.`,
+          `Batch ${batchPayload.batch_id}: Random Forest closed in ${Math.round(batchPayload.processing_ms)} ms with ${batchPayload.cluster_distribution.surge_density || 0} surge sectors ${getScenarioInferenceSuffix(selectedScenario)}.`,
         );
+        if (selectedScenario === "supply_crunch") {
+          const criticalSector = [...batchPayload.sector_summaries]
+            .sort((left, right) => right.supply_gap_ratio - left.supply_gap_ratio)[0];
+
+          if (criticalSector && criticalSector.supply_gap_ratio >= 0.4) {
+            appendFeed(
+              `ALERT: Supply-Demand Gap in ${criticalSector.area_sector} is ${Math.round(criticalSector.supply_gap_ratio * 100)}%. Critical failure risk.`,
+            );
+          }
+        }
         await new Promise((resolve) => window.setTimeout(resolve, 16));
       }
 
       setPhase("visualizing");
-      appendFeed("Inference complete. Rendering the geo heatmap and workforce recommendations.");
+      appendFeed(getScenarioVisualizationMessage(selectedScenario));
       await new Promise((resolve) => window.setTimeout(resolve, 250));
       setPhase("complete");
       setFinishedAt(performance.now());
-      toast.success("RAHI global intelligence simulation finished successfully.");
+      toast.success(getScenarioCompletionToast(selectedScenario));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Simulation failed";
       setPhase("error");
@@ -969,33 +1216,83 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
     } finally {
       setIsRunning(false);
     }
-  }, [appendFeed, draftGeoConfig, isRunning]);
+  }, [appendFeed, draftGeoConfig, isRunning, selectedScenario]);
 
-  const phaseCopy = {
-    idle: "Select a city, drop a command pin, and define the radius ring for the next 400k simulation.",
-    generating: "Generating synthetic booking traffic with faker.js around the selected map center.",
-    inferencing: "Streaming each batch into the Random Forest density engine.",
-    visualizing: "Packaging density buckets, workforce shifts, and geo signals for the command map.",
-    complete: "Simulation complete. The map and economics panels are ready for export.",
-    error: "Simulation paused because a batch failed. Fix the service and launch again.",
-  } satisfies Record<SimulationPhase, string>;
+  const phaseCopy = useMemo(
+    () => getScenarioPhaseCopy(selectedScenario),
+    [selectedScenario],
+  );
 
   return (
     <section className="rounded-[2rem] border border-indigo-200 bg-[linear-gradient(135deg,_rgba(79,70,229,0.06),_rgba(15,23,42,0.02)_44%,_rgba(14,165,233,0.05))] p-6 shadow-sm md:p-7">
+      <style>{`
+        @keyframes rahi-storm-sweep {
+          0% { transform: translateX(-140%); opacity: 0; }
+          18% { opacity: 0.42; }
+          50% { opacity: 0.22; }
+          100% { transform: translateX(300%); opacity: 0; }
+        }
+      `}</style>
       <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div className="max-w-3xl">
           <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-indigo-700">
-            <Sparkles className="h-4 w-4" />
-            RAHI Global Simulation
+            <Sparkles className={cn("h-4 w-4", scenarioMeta[selectedScenario].iconTone)} />
+            {scenarioMeta[selectedScenario].label}
           </div>
-          <h3 className="mt-4 text-3xl font-black text-slate-950">Launch a 400k geo-relative workforce simulation from any command pin on the map.</h3>
+          <h3 className="mt-4 text-3xl font-black text-slate-950">
+            Launch a 400k geo-relative workforce simulation and pressure-test the command zone before reality does.
+          </h3>
           <p className="mt-3 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
             The admin can choose a city, move the command center anywhere in the world, set a radius ring from 1 to 50 km,
             and stream synthetic traffic into the Python Random Forest service without losing dashboard responsiveness.
           </p>
+          <div className={cn("mt-4 inline-flex max-w-full items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-bold", scenarioMeta[selectedScenario].ribbon)}>
+            <Radar className={cn("h-4 w-4", selectedScenario !== "baseline" && "animate-pulse")} />
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.18em]">{scenarioMeta[selectedScenario].badge}</p>
+              <p className="mt-1 max-w-2xl text-sm font-semibold">{scenarioMeta[selectedScenario].summary}</p>
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-col items-stretch gap-3 sm:flex-row xl:flex-col">
+          <div className="grid grid-cols-3 gap-2 rounded-[1.4rem] border border-slate-200 bg-white p-2">
+            {(["baseline", "monsoon", "supply_crunch"] as const).map((scenario) => (
+              <button
+                key={scenario}
+                type="button"
+                onClick={() => setSelectedScenario(scenario)}
+                disabled={isRunning}
+                className={cn(
+                  "rounded-[1rem] px-4 py-3 text-left text-xs font-black uppercase tracking-[0.16em] transition",
+                  selectedScenario === scenario
+                    ? scenario === "monsoon"
+                      ? "bg-amber-500 text-slate-950 shadow-sm"
+                      : scenario === "supply_crunch"
+                        ? "bg-[linear-gradient(135deg,_#fb7185,_#be123c)] text-white shadow-sm"
+                      : "bg-indigo-600 text-white shadow-sm"
+                    : "bg-slate-50 text-slate-500 hover:bg-slate-100",
+                  isRunning && "cursor-not-allowed opacity-70",
+                )}
+              >
+                <span className="block">
+                  {scenario === "baseline"
+                    ? "Baseline"
+                    : scenario === "monsoon"
+                      ? "Monsoon"
+                        : "Shortage"}
+                </span>
+                <span className="mt-1 block text-[10px] font-bold normal-case tracking-normal opacity-80">
+                  {scenario === "baseline"
+                    ? "Normal ops"
+                    : scenario === "monsoon"
+                      ? "Weather shock"
+                        : "Supply -50%"}
+                </span>
+              </button>
+            ))}
+          </div>
+
           <button
             type="button"
             onClick={() => void launchSimulation()}
@@ -1004,11 +1301,15 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
               "inline-flex min-w-[240px] items-center justify-center gap-3 rounded-2xl px-5 py-4 text-sm font-black uppercase tracking-[0.18em] transition",
               isRunning
                 ? "cursor-not-allowed bg-slate-300 text-slate-600"
-                : "bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:-translate-y-0.5 hover:bg-indigo-500",
+                : selectedScenario === "monsoon"
+                  ? "bg-[linear-gradient(135deg,_#f59e0b,_#ea580c)] text-slate-950 shadow-lg shadow-amber-200 hover:-translate-y-0.5 hover:brightness-105"
+                  : selectedScenario === "supply_crunch"
+                    ? "bg-[linear-gradient(135deg,_#fb7185,_#be123c)] text-white shadow-lg shadow-rose-200 hover:-translate-y-0.5 hover:brightness-105"
+                  : "bg-indigo-600 text-white shadow-lg shadow-indigo-200 hover:-translate-y-0.5 hover:bg-indigo-500",
             )}
           >
             {isRunning ? <Loader2 className="h-5 w-5 animate-spin" /> : <BrainCircuit className="h-5 w-5" />}
-            {isRunning ? "Simulation Running" : "Launch 400k Simulation"}
+            {isRunning ? "Simulation Running" : getScenarioLaunchLabel(selectedScenario)}
           </button>
 
           <button
@@ -1056,6 +1357,43 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className={cn(
+              "rounded-[1.4rem] border px-4 py-4",
+              selectedScenario === "monsoon"
+                ? "border-amber-200 bg-[linear-gradient(135deg,_rgba(251,191,36,0.14),_rgba(249,115,22,0.08))]"
+                : selectedScenario === "supply_crunch"
+                  ? "border-rose-300 bg-[linear-gradient(135deg,_rgba(251,113,133,0.14),_rgba(190,24,93,0.08))]"
+                : "border-emerald-200 bg-emerald-50",
+            )}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Scenario injector</p>
+                  <p className="mt-2 text-lg font-black text-slate-950">{scenarioMeta[selectedScenario].label}</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                    {selectedScenario === "monsoon"
+                      ? "Repair traffic is doubled, field supply is reduced by 40%, and burn pressure is increased so the platform can rehearse a storm response."
+                      : selectedScenario === "supply_crunch"
+                        ? "Active worker availability is cut by 50%, high-priority demand is doubled, and the engine is forced into amber-alert preservation mode."
+                      : "The engine runs with standard mobility, service demand, and acquisition assumptions for a clean profitability baseline."}
+                  </p>
+                </div>
+                <div className={cn(
+                  "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]",
+                  selectedScenario === "monsoon"
+                    ? "bg-amber-200 text-amber-950"
+                    : selectedScenario === "supply_crunch"
+                      ? "bg-rose-200 text-rose-950"
+                    : "bg-emerald-200 text-emerald-900",
+                )}>
+                  {selectedScenario === "monsoon"
+                    ? "Mobility: -40%"
+                    : selectedScenario === "supply_crunch"
+                      ? "Supply: -50%"
+                      : "Supply normal"}
+                </div>
+              </div>
             </div>
 
             <div className="grid gap-3 rounded-[1.4rem] border border-slate-200 bg-slate-50 p-4">
@@ -1141,7 +1479,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
             <Layers3 className="h-6 w-6 text-indigo-500" />
           </div>
 
-          <div className="mt-5 h-[420px] overflow-hidden rounded-[1.5rem] border border-slate-200">
+          <div className="relative mt-5 h-[420px] overflow-hidden rounded-[1.5rem] border border-slate-200">
             <MapContainer
               center={[draftGeoConfig.center.lat, draftGeoConfig.center.lng]}
               zoom={11}
@@ -1229,12 +1567,56 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                 ))
               )}
             </MapContainer>
+
+            {selectedScenario !== "baseline" && (
+              <>
+                <div className="pointer-events-none absolute inset-x-5 top-5 z-[500] flex items-center justify-between rounded-2xl border border-amber-300/70 bg-slate-950/78 px-4 py-3 text-amber-100 shadow-lg shadow-amber-950/15 backdrop-blur">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.22em] text-amber-200">
+                      {selectedScenario === "monsoon"
+                        ? "Monsoon emergency deployment"
+                        : "Supply shortage amber alert"}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-white">
+                      {selectedScenario === "monsoon"
+                        ? "Repair lanes are being re-ranked while worker mobility is under simulated weather stress."
+                        : "Critical sectors are being re-ranked while the engine searches for the largest supply-demand gap."}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-amber-400 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-slate-950 animate-pulse">
+                    amber alert
+                  </span>
+                </div>
+                <div
+                  className="pointer-events-none absolute inset-0 z-[450] opacity-75"
+                  style={{
+                    backgroundImage: [
+                      "repeating-linear-gradient(115deg, rgba(15,23,42,0) 0px, rgba(15,23,42,0) 14px, rgba(255,255,255,0.08) 15px, rgba(255,255,255,0.02) 17px)",
+                      "radial-gradient(circle at 20% 15%, rgba(251,191,36,0.16), transparent 28%)",
+                      "radial-gradient(circle at 80% 35%, rgba(249,115,22,0.16), transparent 30%)",
+                    ].join(", "),
+                  }}
+                />
+                <div
+                  className="pointer-events-none absolute inset-y-0 left-[-30%] z-[460] w-[32%] bg-gradient-to-r from-transparent via-white/35 to-transparent"
+                  style={{ animation: "rahi-storm-sweep 3.4s linear infinite" }}
+                />
+              </>
+            )}
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <MapLegendSwatch color="#4f46e5" label="Command radius" note="Current analysis zone" />
-            <MapLegendSwatch color="#8b5cf6" label="High / surge" note="Worker pressure" />
-            <MapLegendSwatch color="#38bdf8" label="Preview cloud" note="Pre-run sample points" />
+            <MapLegendSwatch
+              color={selectedScenario === "baseline" ? "#8b5cf6" : "#f59e0b"}
+              label={selectedScenario === "monsoon" ? "Storm response" : selectedScenario === "supply_crunch" ? "Amber shortage" : "High / surge"}
+              note={selectedScenario === "monsoon" ? "Emergency deployment lanes" : selectedScenario === "supply_crunch" ? "Critical preservation lanes" : "Worker pressure"}
+            />
+            <MapLegendSwatch
+              color={selectedScenario === "baseline" ? "#38bdf8" : "#f97316"}
+              label={selectedScenario === "monsoon" ? "Rain cloud" : selectedScenario === "supply_crunch" ? "Crunch cloud" : "Preview cloud"}
+              note={selectedScenario === "monsoon" ? "Weather-stress overlay" : selectedScenario === "supply_crunch" ? "Shortage stress overlay" : "Pre-run sample points"}
+            />
           </div>
         </div>
       </div>
@@ -1545,6 +1927,23 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                 className="mt-5 min-h-[120px] border-white/10 bg-white/[0.05] text-sm font-semibold text-white placeholder:text-slate-500"
               />
 
+              <div className="mt-4 flex flex-wrap gap-2">
+                {[
+                  "How does our contribution margin look if this rain continues for 48 hours?",
+                  "Which sector should receive emergency salaried workers first?",
+                  "Where should we activate tactical surge pricing without damaging trust?",
+                ].map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => setCeoQuestion(prompt)}
+                    className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-2 text-xs font-bold text-slate-300 transition hover:border-emerald-300/50 hover:bg-white/[0.08] hover:text-white"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+
               <div className="mt-4 flex flex-wrap gap-3">
                 <button
                   type="button"
@@ -1664,13 +2063,44 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
             </div>
 
             {hottestSector && (
-              <div className="mt-5 rounded-[1.4rem] border border-emerald-400/25 bg-emerald-400/10 p-4">
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-200">Investor moment</p>
+              <div className={cn(
+                "mt-5 rounded-[1.4rem] border p-4",
+                selectedScenario === "monsoon"
+                  ? "border-amber-400/25 bg-amber-400/10"
+                  : selectedScenario === "supply_crunch"
+                    ? "border-rose-400/25 bg-rose-400/10"
+                      : "border-emerald-400/25 bg-emerald-400/10",
+              )}>
+                <p className={cn(
+                  "text-xs font-black uppercase tracking-[0.18em]",
+                  selectedScenario === "monsoon"
+                    ? "text-amber-200"
+                    : selectedScenario === "supply_crunch"
+                      ? "text-rose-200"
+                        : "text-emerald-200",
+                )}>
+                  {selectedScenario === "monsoon"
+                    ? "Storm command moment"
+                    : selectedScenario === "supply_crunch"
+                      ? "Service preservation moment"
+                        : "Investor moment"}
+                </p>
                 <p className="mt-2 text-base font-black text-white">
                   {hottestSector.areaSector} surfaced as the hottest cluster with {Math.round(hottestSector.salariedRatio)}% salaried coverage recommended.
                 </p>
-                <p className="mt-2 text-sm font-semibold text-emerald-100">
-                  Estimated margin lift in this zone: {formatCurrency(hottestSector.traditionalCost - hottestSector.optimizedCost)}.
+                <p className={cn(
+                  "mt-2 text-sm font-semibold",
+                  selectedScenario === "monsoon"
+                    ? "text-amber-100"
+                    : selectedScenario === "supply_crunch"
+                      ? "text-rose-100"
+                        : "text-emerald-100",
+                )}>
+                  {selectedScenario === "monsoon"
+                    ? `Monsoon response keeps this zone live with daily burn at ${formatCurrency(hottestSector.dailyBurn)} while the model concentrates core labor in urgent repair lanes.`
+                    : selectedScenario === "supply_crunch"
+                      ? `Supply shortage logic is preserving this zone with a ${Math.round(hottestSector.supplyGapRatio * 100)}% gap and a recommended shift of ${hottestSector.recommendedShift} workers.`
+                    : `Estimated margin lift in this zone: ${formatCurrency(hottestSector.traditionalCost - hottestSector.optimizedCost)}.`}
                 </p>
               </div>
             )}
