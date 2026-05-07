@@ -2463,7 +2463,7 @@ export function IntelligenceTab({
               <div className="rahi-glass-panel h-full rounded-[1.5rem] border border-white/70 bg-white/75 p-4 backdrop-blur-xl">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Logic Log [STRICT_AUDIT]</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">LOGISTICS_CORE_AUDIT [STRICT_PERSISTENCE]</p>
                     <h4 className="mt-2 text-lg font-black text-slate-950">System thoughts and model checkpoints</h4>
                   </div>
                   <span className={cn(
