@@ -49,12 +49,12 @@ type CopilotMessage = {
 };
 
 const QUICK_ACTIONS = [
-  "Go to finance",
-  "Check system health",
-  "Jump to New Delhi",
+  "System Health?",
+  "Jump to War Room",
+  "Analyze Payouts",
 ];
 
-const INITIAL_ASSISTANT_MESSAGE = "AI Navigator is live. Ask about profit, risks, critical bugs, or say \"Jump to Delhi and show me the expansion plan\".";
+const INITIAL_ASSISTANT_MESSAGE = "Technical Copilot is live. Ask about system health, payout pressure, critical bugs, or say \"Show me the money\" to jump into finance.";
 
 const createMessageId = () => (
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -558,7 +558,7 @@ export function AdminTechnicalCopilot({
 
     const now = Date.now();
     if ((now - lastRequestAtRef.current) < REQUEST_COOLDOWN_MS) {
-      setInlineNote("AI Navigator is cooling down for a second to protect the cloud reasoning rail.");
+      setInlineNote("Technical Copilot is cooling down for a second to protect the cloud reasoning rail.");
       return;
     }
 
@@ -605,7 +605,7 @@ export function AdminTechnicalCopilot({
         auditHighlights: fallback.auditHighlights,
         navigationTarget: fallback.navigationTarget,
       });
-      setInlineNote(error instanceof Error ? error.message : "AI Navigator fell back to the local reasoning lane.");
+      setInlineNote(error instanceof Error ? error.message : "Technical Copilot fell back to the local reasoning lane.");
 
       const fallbackNavigationTarget = fallback.navigationTarget;
       if (fallbackNavigationTarget && isAdminSafeRoute(fallbackNavigationTarget) && fallbackNavigationTarget !== location.pathname) {
@@ -632,7 +632,7 @@ export function AdminTechnicalCopilot({
       if (!detail?.prompt) return;
 
       setIsOpen(true);
-      setInlineNote(detail.sourceLabel ? `${detail.sourceLabel} queued in AI Navigator.` : "Preparing guided prompt...");
+      setInlineNote(detail.sourceLabel ? `${detail.sourceLabel} queued in Technical Copilot.` : "Preparing guided prompt...");
       setInput(detail.prompt);
 
       if (detail.mode === "draft") {
@@ -670,7 +670,7 @@ export function AdminTechnicalCopilot({
                         Engine Room
                       </p>
                       <h3 className="truncate text-sm font-semibold text-white">
-                        RAHI AI Navigator
+                        RAHI Technical Copilot
                       </h3>
                     </div>
                   </div>
@@ -688,7 +688,7 @@ export function AdminTechnicalCopilot({
                     type="button"
                     onClick={() => setIsOpen(false)}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white transition hover:bg-white/16"
-                    aria-label="Close AI navigator"
+                    aria-label="Close Technical Copilot"
                   >
                     <X className="h-4 w-4" />
                   </button>
@@ -791,7 +791,7 @@ export function AdminTechnicalCopilot({
                       void handleSend();
                     }
                   }}
-                  placeholder="Ask about profit, risks, or say &quot;Jump to Delhi and show me the expansion plan&quot;"
+                  placeholder="Ask about health, logs, or say &quot;Show me the money&quot;"
                   className="min-h-10 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
                 />
                 <button
@@ -799,7 +799,7 @@ export function AdminTechnicalCopilot({
                   onClick={() => void handleSend()}
                   disabled={isLoading || !input.trim()}
                   className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-[#0F172A] text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Send AI navigator message"
+                  aria-label="Send Technical Copilot message"
                 >
                   <SendHorizontal className="h-4.5 w-4.5" />
                 </button>
@@ -818,7 +818,7 @@ export function AdminTechnicalCopilot({
           type="button"
           onClick={() => setIsOpen((current) => !current)}
           className="group inline-flex items-center gap-3 rounded-full border border-white/50 bg-white/88 px-4 py-3 text-left shadow-[0_20px_48px_-28px_rgba(15,23,42,0.35)] backdrop-blur-xl transition hover:-translate-y-0.5 hover:shadow-[0_24px_56px_-28px_rgba(15,23,42,0.45)]"
-          aria-label="Open AI navigator"
+          aria-label="Open Technical Copilot"
         >
             <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-[linear-gradient(135deg,#0F172A_0%,#1E293B_100%)] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.16)]">
               <span className="absolute inset-0 rounded-full bg-emerald-400/20 blur-md transition group-hover:bg-emerald-400/30" />
@@ -827,7 +827,7 @@ export function AdminTechnicalCopilot({
 
           <span className="hidden min-w-0 sm:block">
             <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              AI Navigator
+              Technical Copilot
             </span>
               <span className="mt-0.5 flex items-center gap-1 text-sm font-semibold text-slate-900">
                 Ask or navigate

@@ -29,7 +29,7 @@ import { toast } from "sonner";
 import { API } from "@/lib/constants";
 import { DataTable } from "./components/DataTable";
 import { MissionControlMap } from "./components/MissionControlMap";
-import { StrategyPulse } from "./components/StrategyPulse";
+import { StrategyChips } from "./components/StrategyChips";
 import {
   buildMissionPath,
   buildObservabilityPath,
@@ -390,7 +390,7 @@ export function AdminOverviewPage() {
 
   return (
     <ScrollPage>
-      <StrategyPulse summary={overviewSummary} />
+      <StrategyChips summary={overviewSummary} />
 
       {pitchMode ? (
         <ProjectedAssetYieldHero
@@ -874,7 +874,7 @@ export function AdminWarRoomPage() {
           />
 
           <div className="mt-4">
-            <StrategyPulse summary={warRoomSummary} />
+            <StrategyChips summary={warRoomSummary} />
           </div>
         </div>
 
