@@ -724,6 +724,27 @@ export default function Tracking() {
                 </CardContent>
               </Card>
 
+              <Card className="overflow-hidden rounded-[2.5rem] border-slate-100 shadow-lg">
+                <CardContent className="p-8">
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">RAHI Verified Job Proof</p>
+                      <h4 className="text-xl font-black text-slate-900">Before & After work photos</h4>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        Workers must upload proof before each OTP handoff. This gallery updates as the job moves forward.
+                      </p>
+                    </div>
+                    <Badge className={beforeProofUrl || afterProofUrl ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-50' : 'bg-amber-50 text-amber-700 hover:bg-amber-50'}>
+                      {beforeProofUrl || afterProofUrl ? 'Trust trail active' : 'Awaiting proof'}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {renderProofCard('Before', beforeProofUrl, 'before', 'Waiting for worker arrival proof')}
+                    {renderProofCard('After', afterProofUrl, 'after', 'Waiting for completion proof')}
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Payment Summary Mini */}
               <Card className="rounded-[2.5rem] border-slate-100 bg-slate-900 text-white overflow-hidden">
                 <CardContent className="p-8">
@@ -761,26 +782,6 @@ export default function Tracking() {
                 </CardContent>
               </Card>
 
-              <Card className="overflow-hidden rounded-[2.5rem] border-slate-100 shadow-lg">
-                <CardContent className="p-8">
-                  <div className="mb-5 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">RAHI Verified Job Proof</p>
-                      <h4 className="text-xl font-black text-slate-900">Before & After work photos</h4>
-                      <p className="mt-1 text-xs font-semibold text-slate-500">
-                        Workers must upload proof before each OTP handoff. This gallery updates as the job moves forward.
-                      </p>
-                    </div>
-                    <Badge className={beforeProofUrl || afterProofUrl ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-50' : 'bg-amber-50 text-amber-700 hover:bg-amber-50'}>
-                      {beforeProofUrl || afterProofUrl ? 'Trust trail active' : 'Awaiting proof'}
-                    </Badge>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    {renderProofCard('Before', beforeProofUrl, 'before', 'Waiting for worker arrival proof')}
-                    {renderProofCard('After', afterProofUrl, 'after', 'Waiting for completion proof')}
-                  </div>
-                </CardContent>
-              </Card>
             </div>
           </div>
         </div>

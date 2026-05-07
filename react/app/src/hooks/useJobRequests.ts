@@ -94,7 +94,7 @@ export function useJobRequests() {
       const token = localStorage.getItem('token');
       const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const pendingRes = await fetch(`${API}/bookings?status=pending&is_worker_null=1&limit=10`, { headers });
+      const pendingRes = await fetch(`${API}/bookings?status=pending&is_worker_null=1&limit=1`, { headers });
       if (!pendingRes.ok) throw new Error('Failed to fetch pending jobs');
       const pendingData = await pendingRes.json();
       const pending = Array.isArray(pendingData) ? pendingData.map(normalizeJob) : [];
@@ -138,9 +138,10 @@ export function useJobRequests() {
       fetchJobs();
       return { error: null };
     } catch (error) {
+      const message = (error as Error).message || 'Failed to accept job. It may have been taken by another worker.';
       toast({
         title: 'Error',
-        description: 'Failed to accept job. It may have been taken by another worker.',
+        description: message,
         variant: 'destructive',
       });
       return { error: error as Error };
@@ -171,9 +172,10 @@ export function useJobRequests() {
 
       return { error: null };
     } catch (error) {
+      const message = (error as Error).message || 'Failed to skip job';
       toast({
         title: 'Error',
-        description: 'Failed to skip job',
+        description: message,
         variant: 'destructive',
       });
       return { error: error as Error };
@@ -190,14 +192,18 @@ export function useJobRequests() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
       });
-      if (!res.ok) throw new Error('Failed to update job status');
+      if (!res.ok) {
+        const message = await readApiErrorMessage(res, 'Failed to update job status');
+        throw new Error(message);
+      }
 
       fetchJobs();
       return { error: null };
     } catch (error) {
+      const message = (error as Error).message || 'Failed to update status';
       toast({
         title: 'Error',
-        description: 'Failed to update status',
+        description: message,
         variant: 'destructive',
       });
       return { error: error as Error };
@@ -232,6 +238,14 @@ export function useJobRequests() {
           });
           return { error: new Error(message) };
         }
+        if (res.status === 403 || res.status === 409) {
+          toast({
+            title: 'Access blocked',
+            description: message,
+            variant: 'destructive',
+          });
+          return { error: new Error(message) };
+        }
         throw new Error(message);
       }
 
@@ -243,9 +257,10 @@ export function useJobRequests() {
       fetchJobs();
       return { error: null };
     } catch (error) {
+      const message = (error as Error).message || 'Failed to start job';
       toast({
         title: 'Error',
-        description: 'Failed to start job',
+        description: message,
         variant: 'destructive',
       });
       return { error: error as Error };
@@ -279,6 +294,14 @@ export function useJobRequests() {
           });
           return { error: new Error(message) };
         }
+        if (res.status === 403 || res.status === 409) {
+          toast({
+            title: 'Access blocked',
+            description: message,
+            variant: 'destructive',
+          });
+          return { error: new Error(message) };
+        }
         throw new Error(message);
       }
 
@@ -290,9 +313,10 @@ export function useJobRequests() {
       fetchJobs();
       return { error: null };
     } catch (error) {
+      const message = (error as Error).message || 'Failed to complete job';
       toast({
         title: 'Error',
-        description: 'Failed to complete job',
+        description: message,
         variant: 'destructive',
       });
       return { error: error as Error };

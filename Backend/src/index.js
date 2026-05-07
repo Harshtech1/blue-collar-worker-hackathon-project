@@ -57,7 +57,13 @@ app.use(cors({
 
 app.use(express.json());
 // Kept only as a compatibility fallback when Cloudinary env vars are absent.
-app.use("/uploads", express.static(path.join(__dirname, "../public/uploads")));
+app.use("/uploads", (req, res, next) => {
+  const requestedFile = path.basename(req.path || "");
+  if (requestedFile.startsWith("private-")) {
+    return res.status(403).json({ message: "Private uploads cannot be served publicly." });
+  }
+  next();
+}, express.static(path.join(__dirname, "../public/uploads")));
 app.use((req, res, next) => {
   const start = Date.now();
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -221,15 +227,17 @@ connectDB()
         }
 
         const signedUrl = getSignedMediaUrl(media, { ttlSeconds: 600 });
-        const absoluteFallbackUrl = media.url.startsWith("http")
-          ? media.url
-          : `${req.protocol}://${req.get("host")}${media.url}`;
+        if (!signedUrl) {
+          return res.status(503).json({
+            message: "Private verification documents require secure Cloudinary delivery.",
+          });
+        }
 
         res.json({
-          url: signedUrl || absoluteFallbackUrl,
+          url: signedUrl,
           media: {
             ...media,
-            url: signedUrl || absoluteFallbackUrl,
+            url: signedUrl,
           },
         });
       } catch (err) {

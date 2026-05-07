@@ -60,6 +60,18 @@ export interface UploadedMedia {
     visibility?: string | null;
 }
 
+export const SECURE_MEDIA_LAYER_OFFLINE_MESSAGE = 'Secure Media Layer Offline. Please contact RAHI Admin.';
+
+export const isSecureMediaLayerOfflineError = (message?: string | null) => {
+    const normalized = (message || '').toLowerCase();
+    return normalized.includes('cloudinary')
+        || normalized.includes('secure media layer offline')
+        || normalized.includes('configuration is required for this upload')
+        || normalized.includes('failed to fetch')
+        || normalized.includes('networkerror')
+        || normalized.includes('fetch failed');
+};
+
 export const extractMediaUrl = (value: unknown): string | null => {
     if (!value) return null;
     if (typeof value === 'string') return value;

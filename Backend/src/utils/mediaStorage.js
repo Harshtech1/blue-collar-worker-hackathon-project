@@ -18,13 +18,49 @@ const IMAGE_MIME_TYPES = new Set([
 const PDF_MIME_TYPES = new Set(['application/pdf']);
 
 export const mediaProfiles = {
-  avatar: { folder: 'rahi/public', visibility: 'public' },
-  portfolio: { folder: 'rahi/public', visibility: 'public' },
-  workPhoto: { folder: 'rahi/public', visibility: 'public' },
-  bookingProof: { folder: 'rahi/bookings/proof', visibility: 'public' },
-  aadhaar: { folder: 'rahi/private', visibility: 'private' },
-  pan: { folder: 'rahi/private', visibility: 'private' },
-  skill: { folder: 'rahi/private', visibility: 'private' },
+  avatar: {
+    folder: 'rahi/public',
+    visibility: 'public',
+    transformation: [{
+      width: 512,
+      height: 512,
+      crop: 'fill',
+      gravity: 'face',
+      fetch_format: 'auto',
+      quality: 'auto',
+    }],
+  },
+  portfolio: {
+    folder: 'rahi/public',
+    visibility: 'public',
+    transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+  },
+  workPhoto: {
+    folder: 'rahi/public',
+    visibility: 'public',
+    transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+  },
+  bookingProof: {
+    folder: 'rahi/bookings/proof',
+    visibility: 'public',
+    requiresCloudinary: true,
+    transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+  },
+  aadhaar: {
+    folder: 'rahi/private',
+    visibility: 'private',
+    transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+  },
+  pan: {
+    folder: 'rahi/private',
+    visibility: 'private',
+    transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+  },
+  skill: {
+    folder: 'rahi/private',
+    visibility: 'private',
+    transformation: [{ fetch_format: 'auto', quality: 'auto' }],
+  },
 };
 
 export const isImageFile = (file) => IMAGE_MIME_TYPES.has(file?.mimetype);
@@ -75,7 +111,7 @@ export const getMediaUrl = (value) => normalizeMediaField(value)?.url || null;
 export const getSignedMediaUrl = (value, options = {}) => {
   const media = normalizeMediaField(value);
   if (!media?.public_id || !isCloudinaryConfigured) {
-    return media?.url || null;
+    return media?.visibility === 'private' ? null : (media?.url || null);
   }
 
   const expiresAt = options.expiresAt || Math.floor(Date.now() / 1000) + (options.ttlSeconds || 600);
@@ -120,14 +156,7 @@ const cloudinaryUpload = (file, profile) => (
       unique_filename: true,
       overwrite: false,
       access_mode: profile.visibility === 'private' ? 'authenticated' : undefined,
-      transformation: isImage ? [{
-        width: 512,
-        height: 512,
-        crop: 'fill',
-        gravity: 'face',
-        fetch_format: 'auto',
-        quality: 'auto',
-      }] : undefined,
+      transformation: isImage ? profile.transformation : undefined,
     };
 
     const stream = cloudinary.uploader.upload_stream(uploadOptions, (error, result) => {
@@ -181,6 +210,9 @@ const toMediaRecord = (uploadResult, profile) => ({
 
 export const uploadMedia = async (file, mediaKind = 'avatar') => {
   const profile = mediaProfiles[mediaKind] || mediaProfiles.avatar;
+  if ((profile.visibility === 'private' || profile.requiresCloudinary) && !isCloudinaryConfigured) {
+    throw new Error('Secure media layer offline. Cloudinary configuration is required for this upload.');
+  }
   const uploadResult = isCloudinaryConfigured
     ? await cloudinaryUpload(file, profile)
     : await persistLocalFallback(file, profile);

@@ -62,6 +62,29 @@ const buildProofPhotoRecord = (value) => {
   };
 };
 
+const getRequestedWorkerUserId = async (booking) => {
+  if (booking.assignment_mode === 'direct') {
+    if (booking.worker_user_id) return asString(booking.worker_user_id);
+    if (booking.worker) {
+      const workerProfile = await WorkerProfile.collection().findOne({ _id: toObjectId(booking.worker) || booking.worker });
+      return asString(workerProfile?.user);
+    }
+    return '';
+  }
+
+  if (booking.last_pinged_worker_id) {
+    return asString(booking.last_pinged_worker_id);
+  }
+
+  const currentCandidate = Array.isArray(booking.match_candidates)
+    && Number.isInteger(booking.waterfall_cursor)
+    && booking.waterfall_cursor >= 0
+    ? booking.match_candidates[booking.waterfall_cursor]
+    : null;
+
+  return asString(currentCandidate?.workerUserId);
+};
+
 const haversineKm = ([lng1, lat1], [lng2, lat2]) => {
   const toRad = (degree) => (degree * Math.PI) / 180;
   const earthRadiusKm = 6371;
@@ -541,6 +564,11 @@ export const respondToBooking = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    const requesterId = asString(req.user?._id);
+
+    if (req.user?.role !== 'worker') {
+      return res.status(403).json({ message: 'Only workers can respond to booking offers.' });
+    }
 
     if (!['accepted', 'declined'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status. Allowed: accepted, declined' });
@@ -551,6 +579,17 @@ export const respondToBooking = async (req, res) => {
 
     const currentBooking = await Booking.collection().findOne({ _id: objId });
     if (!currentBooking) return res.status(404).json({ message: 'Booking not found' });
+    if (currentBooking.status !== 'pending') {
+      return res.status(409).json({ message: 'This booking is no longer awaiting worker response.' });
+    }
+
+    const requestedWorkerUserId = await getRequestedWorkerUserId(currentBooking);
+    if (!requestedWorkerUserId) {
+      return res.status(409).json({ message: 'This booking does not have an active worker offer.' });
+    }
+    if (requestedWorkerUserId !== requesterId) {
+      return res.status(403).json({ message: 'Not your turn to accept this booking.' });
+    }
 
     if (status === 'accepted') {
       const workerProfile = await WorkerProfile.collection().findOne({ user: req.user._id });
@@ -614,11 +653,11 @@ export const respondToBooking = async (req, res) => {
       return res.json({ success: true, booking: updatedBooking });
     }
 
-    const declineResult = await Booking.collection().findOneAndUpdate(
-      { _id: objId },
+      const declineResult = await Booking.collection().findOneAndUpdate(
+      { _id: objId, status: 'pending', last_pinged_worker_id: requesterId },
       {
         $set: { updatedAt: new Date() },
-        $addToSet: { declined_worker_ids: req.user._id.toString() },
+        $addToSet: { declined_worker_ids: requesterId },
       },
       { returnDocument: 'after' },
     );
@@ -673,10 +712,8 @@ export const listBookings = async (req, res) => {
         const jwt = await import('jsonwebtoken');
         const decoded = jwt.default.verify(token, process.env.JWT_SECRET || 'changeme');
         if (decoded.role === 'worker') {
-          const wp = await WorkerProfile.collection().findOne({ user: toObjectId(decoded.id) });
-          if (wp?.bio) {
-            query.serviceName = { $regex: new RegExp(wp.bio.slice(0, 4), 'i') };
-          }
+          query.assignment_mode = 'waterfall';
+          query.last_pinged_worker_id = decoded.id;
           query.declined_worker_ids = { $ne: decoded.id };
         }
       } catch (err) {
@@ -788,6 +825,7 @@ export const cancelBooking = async (req, res) => {
       { _id: objId },
       { $set: { status: 'cancelled', updatedAt: new Date(), statusHistory } },
     );
+    clearWaterfallTimer(id);
 
     const updatedBooking = { ...booking, status: 'cancelled', updatedAt: new Date(), statusHistory };
     const io = getIO();
@@ -816,6 +854,33 @@ export const updateBooking = async (req, res) => {
 
     const existing = await Booking.collection().findOne({ _id: objId });
     if (!existing) return res.status(404).json({ message: 'Not found' });
+    const requesterId = asString(req.user?._id);
+    const isAdmin = req.user?.role === 'admin';
+    const isAssignedWorker = requesterId && asString(existing.worker_user_id) === requesterId;
+    const isOwningCustomer = requesterId && asString(existing.customer_user_id) === requesterId;
+    const workerControlledStatuses = new Set(['arriving', 'otp_verify', 'in_progress', 'completed']);
+
+    if (!isAdmin) {
+      if (!requesterId) {
+        return res.status(401).json({ message: 'Not authorized' });
+      }
+
+      if (updates.status === 'accepted') {
+        return res.status(403).json({ message: 'Use the respond endpoint to accept a booking.' });
+      }
+
+      if (updates.status && workerControlledStatuses.has(updates.status) && !isAssignedWorker) {
+        return res.status(403).json({ message: 'Only the assigned worker can update this booking status.' });
+      }
+
+      if (updates.status === 'cancelled' && !isOwningCustomer) {
+        return res.status(403).json({ message: 'Only the customer can cancel this booking.' });
+      }
+
+      if (!updates.status && !isAssignedWorker && !isOwningCustomer) {
+        return res.status(403).json({ message: 'Not authorized to update this booking.' });
+      }
+    }
 
     if (updates.status && !canTransitionBookingStatus(existing.status, updates.status)) {
       return res.status(400).json({
@@ -824,12 +889,15 @@ export const updateBooking = async (req, res) => {
     }
 
     if (updates.status === 'in_progress') {
+      if (!String(updates.otp || '').trim()) {
+        return res.status(400).json({ message: 'Start OTP is required.' });
+      }
       if (existing.otp_start !== updates.otp && !isDemoOtp(updates.otp)) {
         return res.status(400).json({ message: 'Invalid OTP' });
       }
       const beforeWorkPhoto = buildProofPhotoRecord(updates.beforeWorkPhoto);
       if (!beforeWorkPhoto) {
-        return res.status(400).json({ message: 'Before work photo is required to start the job.' });
+        return res.status(400).json({ message: 'Error: Visual proof is mandatory to verify OTP. Upload before-work photo first.' });
       }
       updates.beforeWorkPhoto = beforeWorkPhoto;
       updates.otp_verified = true;
@@ -837,6 +905,9 @@ export const updateBooking = async (req, res) => {
     }
 
     if (updates.status === 'completed' && existing.status !== 'completed') {
+      if (!String(updates.otp || '').trim()) {
+        return res.status(400).json({ message: 'Completion OTP is required.' });
+      }
       if (updates.otp && existing.otp_finish !== updates.otp && !isDemoOtp(updates.otp)) {
         return res.status(400).json({ message: 'Invalid completion OTP' });
       }
@@ -847,7 +918,7 @@ export const updateBooking = async (req, res) => {
 
       const afterWorkPhoto = buildProofPhotoRecord(updates.afterWorkPhoto);
       if (!afterWorkPhoto) {
-        return res.status(400).json({ message: 'After work photo is required to complete the job.' });
+        return res.status(400).json({ message: 'Error: Visual proof is mandatory to verify OTP. Upload after-work photo first.' });
       }
       updates.afterWorkPhoto = afterWorkPhoto;
 

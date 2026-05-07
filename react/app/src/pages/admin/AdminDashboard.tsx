@@ -681,13 +681,19 @@ export default function AdminDashboard() {
                   }
                   return (
                     <div className="min-w-[190px]">
-                      <p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600">RAHI Verified Job Proof</p>
+                      <p className="mb-2 flex items-center gap-1 text-[10px] font-black uppercase tracking-[0.18em] text-emerald-600">
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        RAHI Verified Job Proof
+                      </p>
                       <div className="flex gap-2">
                         {[{ label: 'Before', url: beforeUrl }, { label: 'After', url: afterUrl }].map((item) => (
                           item.url ? (
                             <div key={item.label} className="w-20">
                               <img src={item.url} alt={`${item.label} proof`} className="h-16 w-20 rounded-xl border border-slate-200 object-cover" />
-                              <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">{item.label}</p>
+                              <p className="mt-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                                <ShieldCheck className="h-3 w-3 text-emerald-500" />
+                                {item.label}
+                              </p>
                             </div>
                           ) : (
                             <div key={item.label} className="flex w-20 flex-col items-center">

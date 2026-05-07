@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Calendar, MapPin, Package, DollarSign, Bell, Clock, CheckCircle, AlertCircle, MessageCircle, TrendingUp, ArrowRight, BarChart3, BellRing, X, Play, Navigation } from 'lucide-react';
+import { Calendar, MapPin, Package, DollarSign, Bell, Clock, CheckCircle, AlertCircle, MessageCircle, TrendingUp, ArrowRight, BarChart3, BellRing, X, Navigation, Shield, Camera } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
 import { db } from '@/lib/db';
@@ -37,7 +37,13 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { UploadedMedia, extractMediaUrl, uploadFile } from '@/lib/upload';
+import {
+  UploadedMedia,
+  SECURE_MEDIA_LAYER_OFFLINE_MESSAGE,
+  extractMediaUrl,
+  isSecureMediaLayerOfflineError,
+  uploadFile,
+} from '@/lib/upload';
 
 
 
@@ -61,6 +67,8 @@ const WorkerDashboard = () => {
   const [otp, setOtp] = useState('');
   const [proofMedia, setProofMedia] = useState<UploadedMedia | null>(null);
   const [proofUploading, setProofUploading] = useState(false);
+  const [otpStep, setOtpStep] = useState<'capture' | 'otp'>('capture');
+  const [secureMediaError, setSecureMediaError] = useState<string | null>(null);
   
   const [selectedChatJob, setSelectedChatJob] = useState<any>(null);
   const currentUserId = user?._id || localStorage.getItem('userId') || '';
@@ -206,6 +214,9 @@ const WorkerDashboard = () => {
     setOtpType('start');
     setOtp('');
     setProofMedia(null);
+    setProofUploading(false);
+    setOtpStep('capture');
+    setSecureMediaError(null);
     setOtpDialogOpen(true);
   };
 
@@ -214,12 +225,27 @@ const WorkerDashboard = () => {
     setOtpType('finish');
     setOtp('');
     setProofMedia(null);
+    setProofUploading(false);
+    setOtpStep('capture');
+    setSecureMediaError(null);
     setOtpDialogOpen(true);
+  };
+
+  const resetOtpDialog = () => {
+    setOtp('');
+    setProofMedia(null);
+    setSelectedJobId(null);
+    setProofUploading(false);
+    setOtpStep('capture');
+    setSecureMediaError(null);
   };
 
   const handleProofUpload = async (file: File | undefined) => {
     if (!file) return;
 
+    setSecureMediaError(null);
+    setProofMedia(null);
+    setOtpStep('capture');
     setProofUploading(true);
     try {
       const result = await uploadFile(file, 'bookingProof');
@@ -227,9 +253,16 @@ const WorkerDashboard = () => {
         throw new Error(result.error || 'Photo upload failed');
       }
       setProofMedia(result.media);
+      setOtpStep('otp');
       toast.success(otpType === 'start' ? 'Before photo uploaded' : 'After photo uploaded');
     } catch (error: any) {
-      toast.error(error.message || 'Unable to upload proof photo');
+      const rawMessage = error.message || 'Unable to upload proof photo';
+      const friendlyMessage = isSecureMediaLayerOfflineError(rawMessage)
+        ? SECURE_MEDIA_LAYER_OFFLINE_MESSAGE
+        : rawMessage;
+      setSecureMediaError(friendlyMessage);
+      setOtpStep('capture');
+      toast.error(friendlyMessage);
     } finally {
       setProofUploading(false);
     }
@@ -237,7 +270,7 @@ const WorkerDashboard = () => {
 
   const handleVerifyOTP = async () => {
     if (!selectedJobId) return;
-    if (!proofMedia) {
+    if (otpStep !== 'otp' || !proofMedia) {
       toast.error(otpType === 'start' ? 'Upload a before-work photo first.' : 'Upload an after-work photo first.');
       return;
     }
@@ -246,17 +279,13 @@ const WorkerDashboard = () => {
       const result = await startJob(selectedJobId, otp, proofMedia);
       if (!result.error) {
         setOtpDialogOpen(false);
-        setOtp('');
-        setProofMedia(null);
-        setSelectedJobId(null);
+        resetOtpDialog();
       }
     } else {
       const result = await completeJob(selectedJobId, otp, proofMedia);
       if (!result.error) {
         setOtpDialogOpen(false);
-        setOtp('');
-        setProofMedia(null);
-        setSelectedJobId(null);
+        resetOtpDialog();
       }
     }
   };
@@ -665,24 +694,42 @@ const WorkerDashboard = () => {
                           </Button>
                         )}
                         {job.status === 'otp_verify' && (
-                          <Button 
-                            size="sm"
-                            className="w-full bg-blue-600 hover:bg-blue-700 font-bold"
-                            onClick={() => handleStartJob(job.id)}
-                          >
-                            <Play className="w-4 h-4 mr-2" />
-                            Enter OTP
-                          </Button>
+                          <>
+                            <div className="rounded-xl border border-blue-200 bg-blue-50 p-2 text-[11px] font-bold leading-snug text-blue-800">
+                              <div className="flex items-center gap-1.5">
+                                <Camera className="h-3.5 w-3.5" />
+                                Before photo required
+                              </div>
+                              <p className="mt-0.5 text-[10px] font-semibold text-blue-600">Upload proof before entering OTP.</p>
+                            </div>
+                            <Button 
+                              size="sm"
+                              className="w-full bg-blue-600 hover:bg-blue-700 font-bold"
+                              onClick={() => handleStartJob(job.id)}
+                            >
+                              <Camera className="w-4 h-4 mr-2" />
+                              Proof + OTP
+                            </Button>
+                          </>
                         )}
                         {job.status === 'in_progress' && (
-                          <Button 
-                            size="sm"
-                            className="w-full bg-green-600 hover:bg-green-700 font-bold"
-                            onClick={() => handleCompleteJob(job.id)}
-                          >
-                            <CheckCircle className="w-4 h-4 mr-2" />
-                            Complete
-                          </Button>
+                          <>
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-[11px] font-bold leading-snug text-emerald-800">
+                              <div className="flex items-center gap-1.5">
+                                <Camera className="h-3.5 w-3.5" />
+                                After photo required
+                              </div>
+                              <p className="mt-0.5 text-[10px] font-semibold text-emerald-600">Upload completion proof before final OTP.</p>
+                            </div>
+                            <Button 
+                              size="sm"
+                              className="w-full bg-green-600 hover:bg-green-700 font-bold"
+                              onClick={() => handleCompleteJob(job.id)}
+                            >
+                              <Camera className="w-4 h-4 mr-2" />
+                              Proof + Complete
+                            </Button>
+                          </>
                         )}
                         <Button 
                           size="sm" 
@@ -936,10 +983,7 @@ const WorkerDashboard = () => {
       <Dialog open={otpDialogOpen} onOpenChange={(open) => {
         setOtpDialogOpen(open);
         if (!open) {
-          setOtp('');
-          setProofMedia(null);
-          setSelectedJobId(null);
-          setProofUploading(false);
+          resetOtpDialog();
         }
       }}>
         <DialogContent className="sm:max-w-md">
@@ -954,86 +998,123 @@ const WorkerDashboard = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label className="text-sm font-bold">
-                {otpType === 'start' ? 'Before-work proof photo' : 'After-work proof photo'}
-              </Label>
-              <Input
-                id="dashboard-proof-photo"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                disabled={proofUploading}
-                onChange={(e) => handleProofUpload(e.target.files?.[0])}
-                className="sr-only"
-              />
-              <Label
-                htmlFor="dashboard-proof-photo"
-                aria-disabled={proofUploading}
-                className={`flex min-h-24 cursor-pointer flex-col justify-center rounded-2xl border-2 border-dashed p-4 transition ${
-                  proofMedia
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-                    : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-indigo-300 hover:bg-indigo-50'
-                } ${proofUploading ? 'pointer-events-none opacity-70' : ''}`}
-              >
-                <span className="text-base font-black">
-                  {otpType === 'start' ? 'Take Before-Work Photo' : 'Take After-Work Photo'}
-                </span>
-                <span className="mt-1 text-xs font-medium text-muted-foreground">
-                  The OTP field unlocks only after this proof uploads successfully.
-                </span>
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                RAHI compresses the image under 500KB for faster upload in low-signal areas.
-              </p>
-              {proofUploading && (
-                <div className="flex items-center gap-2 text-sm font-medium text-indigo-600">
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-                  Uploading proof photo...
+            <div className="flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-700">
+              <Shield className="h-4 w-4" />
+              Secure OTP verification. This step is audited by RAHI.
+            </div>
+            {secureMediaError && (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                {secureMediaError}
+              </div>
+            )}
+            <Input
+              id="dashboard-proof-photo"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              disabled={proofUploading}
+              onChange={(e) => handleProofUpload(e.target.files?.[0])}
+              className="sr-only"
+            />
+            {otpStep === 'capture' ? (
+              <div className="space-y-3">
+                <div className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-indigo-700">
+                  Step 1 of 2 · Secure proof capture
                 </div>
-              )}
-              {proofMedia && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-start gap-2">
-                      <CheckCircle className="mt-0.5 h-5 w-5 flex-none text-emerald-600" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-emerald-800">Proof photo uploaded</p>
-                        <p className="text-xs text-emerald-700">RAHI verified job proof is attached to this OTP step.</p>
-                      </div>
+                <div className="space-y-2">
+                  <Label className="text-sm font-bold">
+                    {otpType === 'start' ? 'Before-work proof photo' : 'After-work proof photo'}
+                  </Label>
+                  <Label
+                    htmlFor="dashboard-proof-photo"
+                    aria-disabled={proofUploading}
+                    className={`flex min-h-28 cursor-pointer flex-col justify-center rounded-2xl border-2 border-dashed p-5 transition ${
+                      proofUploading
+                        ? 'pointer-events-none border-indigo-200 bg-indigo-50 opacity-80'
+                        : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-indigo-300 hover:bg-indigo-50'
+                    }`}
+                  >
+                    <span className="text-base font-black">
+                      {otpType === 'start' ? 'Capture Work-Site Proof' : 'Capture Finished-Work Proof'}
+                    </span>
+                    <span className="mt-1 text-xs font-medium text-muted-foreground">
+                      The OTP field appears only after RAHI securely uploads this photo.
+                    </span>
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    RAHI compresses the image under 500KB for faster upload in low-signal areas.
+                  </p>
+                  {proofUploading && (
+                    <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-sm font-medium text-indigo-700">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+                      Streaming proof photo to the secure media layer...
                     </div>
-                    {extractMediaUrl(proofMedia) && (
-                      <img
-                        src={extractMediaUrl(proofMedia) || ''}
-                        alt="Proof preview"
-                        className="h-16 w-16 rounded-lg object-cover"
-                      />
-                    )}
-                  </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="otp">OTP Code</Label>
-              <Input
-                id="otp"
-                type="text"
-                placeholder={proofMedia ? 'Enter 4-digit OTP' : 'Upload proof photo first'}
-                value={otp}
-                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                maxLength={4}
-                disabled={!proofMedia || proofUploading}
-                className={`h-14 text-center text-2xl tracking-widest ${!proofMedia || proofUploading ? 'cursor-not-allowed bg-slate-100 opacity-60' : ''}`}
-              />
-            </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+                  Step 2 of 2 · OTP verification unlocked
+                </div>
+                {proofMedia && (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <CheckCircle className="mt-0.5 h-5 w-5 flex-none text-emerald-600" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-emerald-800">Proof photo uploaded</p>
+                          <p className="text-xs text-emerald-700">RAHI verified job proof is attached to this OTP step.</p>
+                        </div>
+                      </div>
+                      {extractMediaUrl(proofMedia) && (
+                        <img
+                          src={extractMediaUrl(proofMedia) || ''}
+                          alt="Proof preview"
+                          className="h-16 w-16 rounded-lg object-cover"
+                        />
+                      )}
+                    </div>
+                    <Label
+                      htmlFor="dashboard-proof-photo"
+                      aria-disabled={proofUploading}
+                      className={`mt-3 inline-flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-emerald-300 px-4 text-sm font-semibold text-emerald-800 transition ${
+                        proofUploading ? 'pointer-events-none opacity-70' : 'hover:border-emerald-400 hover:bg-emerald-100'
+                      }`}
+                    >
+                      Retake photo
+                    </Label>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="otp">OTP Code</Label>
+                  <Input
+                    id="otp"
+                    type="text"
+                    placeholder="Enter 4-digit OTP"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    maxLength={4}
+                    disabled={proofUploading}
+                    className="h-14 text-center text-2xl tracking-widest"
+                  />
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOtpDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleVerifyOTP} disabled={otp.length !== 4 || !proofMedia || proofUploading}>
-              {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
-            </Button>
+            {otpStep === 'otp' ? (
+              <Button onClick={handleVerifyOTP} disabled={otp.length !== 4 || !proofMedia || proofUploading}>
+                {otpType === 'start' ? 'Verify & Start' : 'Verify & Finish'}
+              </Button>
+            ) : (
+              <Button disabled>
+                {proofUploading ? 'Uploading Proof...' : 'Capture Proof First'}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
