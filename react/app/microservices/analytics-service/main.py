@@ -86,6 +86,10 @@ class SimulationSectorSummary(BaseModel):
     traditional_cost: float
     optimized_cost: float
     projected_revenue: float
+    acquisition_cost: float
+    estimated_ltv: float
+    contribution_margin: float
+    daily_burn: float
     burn_risk: float
     churn_risk: float
     centroid_lat: float
@@ -289,6 +293,11 @@ def _cost_profile(
     return projected_revenue, traditional_cost, optimized_cost, burn_risk
 
 
+def _estimate_ltv(avg_value: float, churn_risk: float, historical_traction: float) -> float:
+    retention_multiplier = _clamp(1.35 + ((1 - churn_risk) * 3.1) + ((historical_traction - 1) * 0.6), 1.2, 5.6)
+    return avg_value * retention_multiplier * 1.04
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "rahi-analytics"}
@@ -417,6 +426,10 @@ def simulate_density_batch(payload: SimulationBatchRequest):
                 0.08,
                 0.48,
             ))
+            acquisition_cost = float(row["acquisition_cost"])
+            estimated_ltv = _estimate_ltv(float(row["avg_value"]), churn_risk, float(row["historical_traction"]))
+            contribution_margin = projected_revenue - optimized_cost
+            daily_burn = max(0.0, optimized_cost - projected_revenue)
 
             cluster_distribution[cluster_label] += 1
             sector_summaries.append(SimulationSectorSummary(
@@ -433,6 +446,10 @@ def simulate_density_batch(payload: SimulationBatchRequest):
                 traditional_cost=round(traditional_cost, 2),
                 optimized_cost=round(optimized_cost, 2),
                 projected_revenue=round(projected_revenue, 2),
+                acquisition_cost=round(acquisition_cost, 2),
+                estimated_ltv=round(estimated_ltv, 2),
+                contribution_margin=round(contribution_margin, 2),
+                daily_burn=round(daily_burn, 2),
                 burn_risk=round(burn_risk, 4),
                 churn_risk=round(churn_risk, 4),
                 centroid_lat=round(float(row["centroid_lat"]), 5),

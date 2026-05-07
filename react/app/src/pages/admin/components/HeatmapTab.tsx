@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import { useEffect, useMemo, useState } from "react";
+import { Circle, CircleMarker, MapContainer, TileLayer, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { API } from "@/lib/constants";
 
@@ -18,13 +18,15 @@ interface HeatmapTabProps {
   token: string;
 }
 
+const DEFAULT_CENTER: [number, number] = [20.5937, 78.9629];
+
 export function HeatmapTab({ token }: HeatmapTabProps) {
   const [heatmapData, setHeatmapData] = useState<HeatmapData[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "pending" | "completed">("all");
 
   useEffect(() => {
-    fetchHeatmapData();
+    void fetchHeatmapData();
   }, []);
 
   const fetchHeatmapData = async () => {
@@ -43,85 +45,131 @@ export function HeatmapTab({ token }: HeatmapTabProps) {
     }
   };
 
-  const filteredData = heatmapData.filter((item) => {
-    if (filter === "all") return true;
-    return item.status === filter;
-  });
+  const filteredData = useMemo(() => (
+    heatmapData.filter((item) => {
+      if (filter === "all") return true;
+      return item.status === filter;
+    })
+  ), [filter, heatmapData]);
 
-  const center: [number, number] = [30.7333, 76.7794]; // Chandigarh default
+  const points = useMemo(() => (
+    filteredData
+      .map((item) => {
+        const lat = item.location?.coordinates?.[1];
+        const lng = item.location?.coordinates?.[0];
+        if (typeof lat !== "number" || typeof lng !== "number") return null;
+
+        return {
+          ...item,
+          lat,
+          lng,
+        };
+      })
+      .filter((item): item is HeatmapData & { lat: number; lng: number } => Boolean(item))
+  ), [filteredData]);
+
+  const center = useMemo<[number, number]>(() => {
+    if (points.length === 0) return DEFAULT_CENTER;
+    const latSum = points.reduce((sum, point) => sum + point.lat, 0);
+    const lngSum = points.reduce((sum, point) => sum + point.lng, 0);
+    return [latSum / points.length, lngSum / points.length];
+  }, [points]);
+
+  const totalHotBookings = useMemo(
+    () => points.reduce((sum, point) => sum + point.count, 0),
+    [points],
+  );
 
   const getHeatColor = (count: number) => {
-    if (count > 10) return "#ef4444"; // red
-    if (count > 5) return "#f97316"; // orange
-    if (count > 2) return "#eab308"; // yellow
-    return "#22c55e"; // green
+    if (count > 10) return "#ef4444";
+    if (count > 5) return "#f97316";
+    if (count > 2) return "#6366f1";
+    return "#22c55e";
   };
 
-  const getRadius = (count: number) => {
-    return Math.min(20 + count * 3, 50);
-  };
+  const getRadius = (count: number) => Math.min(1800 + (count * 220), 6000);
+  const getMarkerRadius = (count: number) => Math.min(12 + count, 28);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-indigo-600" />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* Filter Controls */}
-      <div className="flex gap-2 mb-4">
-        {(["all", "pending", "completed"] as const).map((f) => (
+      <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-800">
+        Canvas rendering is active for this heatmap, so the admin surface stays smooth as hotspot volume grows.
+      </div>
+
+      <div className="mb-4 flex gap-2">
+        {(["all", "pending", "completed"] as const).map((entry) => (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-              filter === f
+            key={entry}
+            onClick={() => setFilter(entry)}
+            className={`rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+              filter === entry
                 ? "bg-indigo-600 text-white"
                 : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            {entry.charAt(0).toUpperCase() + entry.slice(1)}
           </button>
         ))}
       </div>
 
-      {/* Map */}
-      <div className="h-[500px] rounded-2xl overflow-hidden border border-slate-200">
+      <div className="h-[500px] overflow-hidden rounded-2xl border border-slate-200">
         <MapContainer
           center={center}
-          zoom={12}
+          zoom={points.length > 0 ? 10 : 5}
+          preferCanvas
+          scrollWheelZoom
           style={{ height: "100%", width: "100%" }}
         >
           <TileLayer
             url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-            attribution='&copy; CARTO'
+            attribution="&copy; CARTO"
           />
-          {filteredData.map((item) => {
-            const lat = item.location?.coordinates?.[1];
-            const lng = item.location?.coordinates?.[0];
-            if (!lat || !lng) return null;
+          <HeatmapViewport points={points} fallbackCenter={center} />
+          {points.map((item) => {
+            const color = getHeatColor(item.count);
+            return (
+              <Circle
+                key={`heat-${item._id}`}
+                center={[item.lat, item.lng]}
+                radius={getRadius(item.count)}
+                pathOptions={{
+                  color,
+                  weight: 1,
+                  fillColor: color,
+                  fillOpacity: 0.14,
+                }}
+              />
+            );
+          })}
+          {points.map((item) => {
+            const color = getHeatColor(item.count);
             return (
               <CircleMarker
                 key={item._id}
-                center={[lat, lng]}
-                radius={getRadius(item.count)}
+                center={[item.lat, item.lng]}
+                radius={getMarkerRadius(item.count)}
                 pathOptions={{
-                  fillColor: getHeatColor(item.count),
-                  fillOpacity: 0.6,
-                  color: getHeatColor(item.count),
-                  weight: 2,
+                  fillColor: color,
+                  fillOpacity: 0.68,
+                  color,
+                  weight: 1.2,
                 }}
               >
                 <Popup>
                   <div className="p-2">
-                    <p className="font-bold text-sm">{item.service || "Service"}</p>
+                    <p className="text-sm font-bold">{item.service || "Service"}</p>
                     <p className="text-xs text-slate-500">
                       {item.count} booking{item.count > 1 ? "s" : ""}
                     </p>
-                    <p className="text-xs text-slate-400 capitalize">
+                    <p className="text-xs capitalize text-slate-400">
                       Status: {item.status}
                     </p>
                   </div>
@@ -132,25 +180,51 @@ export function HeatmapTab({ token }: HeatmapTabProps) {
         </MapContainer>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white p-4 rounded-xl border">
-          <p className="text-xs text-slate-500 font-bold uppercase">Total Hotspots</p>
-          <p className="text-2xl font-black text-slate-900">{filteredData.length}</p>
+        <div className="rounded-xl border bg-white p-4">
+          <p className="text-xs font-bold uppercase text-slate-500">Total Hotspots</p>
+          <p className="text-2xl font-black text-slate-900">{points.length}</p>
         </div>
-        <div className="bg-white p-4 rounded-xl border">
-          <p className="text-xs text-slate-500 font-bold uppercase">Pending Jobs</p>
+        <div className="rounded-xl border bg-white p-4">
+          <p className="text-xs font-bold uppercase text-slate-500">Pending Jobs</p>
           <p className="text-2xl font-black text-orange-600">
-            {filteredData.filter((d) => d.status === "pending").reduce((acc, d) => acc + d.count, 0)}
+            {points.filter((point) => point.status === "pending").reduce((acc, point) => acc + point.count, 0)}
           </p>
         </div>
-        <div className="bg-white p-4 rounded-xl border">
-          <p className="text-xs text-slate-500 font-bold uppercase">Completed</p>
-          <p className="text-2xl font-black text-green-600">
-            {filteredData.filter((d) => d.status === "completed").reduce((acc, d) => acc + d.count, 0)}
+        <div className="rounded-xl border bg-white p-4">
+          <p className="text-xs font-bold uppercase text-slate-500">Active Heat</p>
+          <p className="text-2xl font-black text-indigo-600">
+            {totalHotBookings.toLocaleString("en-IN")}
           </p>
         </div>
       </div>
     </div>
   );
+}
+
+function HeatmapViewport({
+  points,
+  fallbackCenter,
+}: {
+  points: Array<HeatmapData & { lat: number; lng: number }>;
+  fallbackCenter: [number, number];
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (points.length === 0) {
+      map.setView(fallbackCenter, 5);
+      return;
+    }
+
+    if (points.length === 1) {
+      map.setView([points[0].lat, points[0].lng], 12);
+      return;
+    }
+
+    const bounds = points.map((point) => [point.lat, point.lng] as [number, number]);
+    map.fitBounds(bounds, { padding: [28, 28], animate: true });
+  }, [fallbackCenter, map, points]);
+
+  return null;
 }

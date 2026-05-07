@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -47,7 +47,12 @@ import "leaflet/dist/leaflet.css";
 import { toast } from "sonner";
 import { API } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { SimulationEngine } from "./SimulationEngine";
+import {
+  SimulationEngine,
+  type SimulationCompletionPayload,
+  type SimulationPhase,
+  type SimulationTelemetryPayload,
+} from "./SimulationEngine";
 import { generateSimulationBatch, sectorSeeds } from "@/utils/simulationData";
 
 interface DensityAnalysis {
@@ -164,6 +169,27 @@ interface SimulationPreviewPoint {
   serviceType: string;
   estimatedValue: number;
   isEmergency: boolean;
+}
+
+interface StrategyBrief {
+  signal: string;
+  reasoning: string;
+  procedures: string[];
+  provider: string;
+  model: string;
+  historyId?: string | null;
+  saved?: boolean;
+  fallback?: boolean;
+}
+
+type StrategyTerminalStatus = "idle" | "thinking" | "ready" | "error";
+
+interface LogicLogEntry {
+  id: string;
+  timestamp: string;
+  message: string;
+  tone: "info" | "success" | "warning" | "critical";
+  source: "simulation" | "strategy" | "system";
 }
 
 const sectorSignals: SectorSignal[] = [
@@ -484,6 +510,37 @@ const formatTime = (value: Date | null) => (
     : "--:--"
 );
 
+const formatAuditTimestamp = (value = new Date()) => (
+  value.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+);
+
+const useTypewriterText = (script: string[], speedMs = 14) => {
+  const [visibleLineCount, setVisibleLineCount] = useState(0);
+
+  useEffect(() => {
+    setVisibleLineCount(0);
+
+    if (!script.length) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setVisibleLineCount((current) => {
+        if (current >= script.length) {
+          window.clearInterval(intervalId);
+          return current;
+        }
+
+        return current + 1;
+      });
+    }, Math.max(8, speedMs));
+
+    return () => window.clearInterval(intervalId);
+  }, [script, speedMs]);
+
+  return useMemo(() => script.slice(0, visibleLineCount), [script, visibleLineCount]);
+};
+
 const clampNumber = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
 
 const getDensityTone = (density: number) => {
@@ -532,6 +589,141 @@ const buildScenarioSnapshot = (
     qualityScore,
     responseMinutes,
   };
+};
+
+const buildStrategyFallback = ({
+  zoneLabel,
+  city,
+  densityScore,
+  predictedDemand,
+  currentWorkers,
+  emergencyOrders,
+  priceMultiplier,
+  timeLens,
+  hottestSector,
+  acquisitionCost,
+  churnRate,
+  marginLift,
+}: {
+  zoneLabel: string;
+  city: string;
+  densityScore: number;
+  predictedDemand: number;
+  currentWorkers: number;
+  emergencyOrders: number;
+  priceMultiplier: number;
+  timeLens: TimeLens;
+  hottestSector: string;
+  acquisitionCost: number;
+  churnRate: number;
+  marginLift: number;
+}): StrategyBrief => {
+  if (densityScore > 2.5) {
+    return {
+      signal: `${zoneLabel} is overheating; density ${densityScore.toFixed(2)} is outpacing the current ${currentWorkers}-worker field capacity.`,
+      reasoning: `The Density Rule treats ${zoneLabel} as a salaried-core zone because D=${densityScore.toFixed(2)} is above 2.5. With ${predictedDemand} forecast jobs and ${emergencyOrders} emergency orders, reliability matters more than freelancer flexibility.`,
+      procedures: [
+        `Deploy 5 salaried workers into ${zoneLabel} and route emergency demand there first until density cools below 2.3.`,
+        `Hold pricing around ${priceMultiplier.toFixed(2)}x and defend fill rate before expanding acquisition in ${city}.`,
+        `Run photo-proof QA checks in ${hottestSector} before the next ${timeLens} demand wave.`,
+      ],
+      provider: "rule_engine",
+      model: "density-rule-fallback",
+      saved: false,
+      fallback: true,
+    };
+  }
+
+  if (densityScore < 1.0) {
+    return {
+      signal: `${zoneLabel} is under-dense; D=${densityScore.toFixed(2)} means salaried hiring here is a burn trap right now.`,
+      reasoning: `The Density Rule treats ${zoneLabel} as freelancer-led because D=${densityScore.toFixed(2)} is below 1.0. Fixed payroll would expand faster than service reliability, especially with acquisition cost already at ${formatCurrency(acquisitionCost)}.`,
+      procedures: [
+        `Pause salaried expansion in ${zoneLabel} and cover this zone with verified freelancers for the next ${timeLens}.`,
+        `Shift referral bonuses to high-quality freelancers instead of adding fixed payroll in ${city}.`,
+        `Re-open salaried hiring only if margin lift rises above ${formatCurrency(Math.max(0, marginLift))} while churn drops below ${churnRate.toFixed(1)}%.`,
+      ],
+      provider: "rule_engine",
+      model: "density-rule-fallback",
+      saved: false,
+      fallback: true,
+    };
+  }
+
+  return {
+    signal: `${zoneLabel} is in the transition band; D=${densityScore.toFixed(2)} supports a hybrid workforce, but the next move should be paced carefully.`,
+    reasoning: `The Density Rule keeps ${zoneLabel} hybrid because D=${densityScore.toFixed(2)} sits between 1.0 and 2.5. The zone can absorb a small salaried core, but churn at ${churnRate.toFixed(1)}% means burn control still matters.`,
+    procedures: [
+      `Add 2 salaried anchors in ${zoneLabel} while keeping flexible freelancer coverage for the next ${timeLens} cycle.`,
+      `Keep pricing close to ${priceMultiplier.toFixed(2)}x until repeat demand rises faster than fixed labor cost.`,
+      `Re-run the simulation after the next peak and promote ${zoneLabel} only if density stays above 1.8 for consecutive windows.`,
+    ],
+    provider: "rule_engine",
+    model: "density-rule-fallback",
+    saved: false,
+    fallback: true,
+  };
+};
+
+const buildSimulationLogicSignals = (
+  simulation: SimulationCompletionPayload | null,
+  zoneLabel: string,
+) => {
+  if (!simulation) {
+    return [
+      `Waiting for the 400k simulation evidence pack before briefing ${zoneLabel}.`,
+    ];
+  }
+
+  const topSignals = simulation.topSignals.slice(0, 3).map((signal) => (
+    `${signal.sector}: density ${signal.densityScore.toFixed(2)} with ${signal.projectedOrders.toLocaleString("en-IN")} projected orders across ${signal.activeWorkers} active workers.`
+  ));
+
+  return [
+    `${simulation.hottestSector} emerged as the hottest sector in the latest ${simulation.totalPoints.toLocaleString("en-IN")} point run.`,
+    ...topSignals,
+  ].slice(0, 3);
+};
+
+const buildStrategyTerminalScript = ({
+  status,
+  activeSector,
+  timeLensLabel,
+  densityScore,
+  strategyBrief,
+  logicSignals,
+}: {
+  status: StrategyTerminalStatus;
+  activeSector: SectorSignal;
+  timeLensLabel: string;
+  densityScore: number;
+  strategyBrief: StrategyBrief | null;
+  logicSignals: string[];
+}) => {
+  if (status === "thinking") {
+    return [
+      `$ rahi://strategy/${activeSector.id}`,
+      `> Booting command lane for ${activeSector.label}`,
+      `> Syncing ${timeLensLabel} density window at D=${densityScore.toFixed(2)}`,
+      ...logicSignals.slice(0, 3).map((signal) => `> ${signal}`),
+      "> Drafting CEO briefing...",
+    ].join("\n");
+  }
+
+  if (!strategyBrief) {
+    return [
+      "$ rahi://strategy/awaiting-input",
+      "> Select a zone or run the 400k simulation.",
+      "> The strategy terminal will narrate the next move once live data arrives.",
+    ].join("\n");
+  }
+
+  return [
+    `$ rahi://strategy/${activeSector.id}`,
+    `> SIGNAL: ${strategyBrief.signal}`,
+    `> WHY: ${strategyBrief.reasoning}`,
+    ...strategyBrief.procedures.map((procedure, index) => `> CMD-${index + 1}: ${procedure}`),
+  ].join("\n");
 };
 
 const buildDemandSeries = (
@@ -736,6 +928,23 @@ export function IntelligenceTab({
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [manualCoreWorkers, setManualCoreWorkers] = useState(4);
+  const [latestSimulation, setLatestSimulation] = useState<SimulationCompletionPayload | null>(null);
+  const [strategyBrief, setStrategyBrief] = useState<StrategyBrief | null>(null);
+  const [strategyStatus, setStrategyStatus] = useState<StrategyTerminalStatus>("idle");
+  const [strategyMessage, setStrategyMessage] = useState("Run the simulation or request a deep dive to generate the COO briefing.");
+  const [logicLog, setLogicLog] = useState<LogicLogEntry[]>([
+    {
+      id: "logic-boot",
+      timestamp: formatAuditTimestamp(),
+      message: "Command center online. Launch the simulation or request a zone briefing to start the reasoning trail.",
+      tone: "info",
+      source: "system",
+    },
+  ]);
+  const [simulationPhase, setSimulationPhase] = useState<SimulationPhase>("idle");
+  const [simulationRunning, setSimulationRunning] = useState(false);
+  const logScrollerRef = useRef<HTMLDivElement | null>(null);
+  const lastTelemetryMessageRef = useRef<string | null>(null);
 
   const loadInvestorAnalytics = useCallback(async () => {
     try {
@@ -917,6 +1126,310 @@ export function IntelligenceTab({
     [activeSector, analysis, aiRecommendedCore],
   );
 
+  const auditSignals = useMemo(() => ({
+    photoVerificationSuccessRate: clampNumber(
+      84 + (analysis.confidence_score * 11) - (analysis.emergency_orders * 1.2),
+      68,
+      98,
+    ),
+    beforeAfterCoverage: clampNumber(
+      79 + (analysis.density_score * 7) - (liveEscalations.length * 1.5),
+      62,
+      97,
+    ),
+    cloudinaryVerifiedUploads: clampNumber(
+      86 + (currentScenario.qualityScore - 80) * 0.6,
+      70,
+      99,
+    ),
+  }), [
+    analysis.confidence_score,
+    analysis.density_score,
+    analysis.emergency_orders,
+    currentScenario.qualityScore,
+    liveEscalations.length,
+  ]);
+
+  const appendLogicEntry = useCallback((
+    message: string,
+    options?: Pick<LogicLogEntry, "tone" | "source">,
+  ) => {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+
+    setLogicLog((current) => {
+      const lastMessage = current[current.length - 1]?.message;
+      if (lastMessage === trimmed) {
+        return current;
+      }
+
+      return [
+        ...current,
+        {
+          id: `${Date.now()}-${current.length}`,
+          timestamp: formatAuditTimestamp(),
+          message: trimmed,
+          tone: options?.tone || "info",
+          source: options?.source || "system",
+        },
+      ].slice(-14);
+    });
+  }, []);
+
+  const simulationLogicSignals = useMemo(
+    () => buildSimulationLogicSignals(latestSimulation, activeSector.label),
+    [activeSector.label, latestSimulation],
+  );
+
+  const terminalScript = useMemo(() => (
+    buildStrategyTerminalScript({
+      status: strategyStatus,
+      activeSector,
+      timeLensLabel: timeLensMeta[timeLens].label,
+      densityScore: analysis.density_score,
+      strategyBrief,
+      logicSignals: simulationLogicSignals,
+    })
+  ), [
+    activeSector,
+    analysis.density_score,
+    simulationLogicSignals,
+    strategyBrief,
+    strategyStatus,
+    timeLens,
+  ]);
+
+  const terminalText = useTypewriterText(
+    terminalScript,
+    strategyStatus === "thinking" ? 18 : 10,
+  );
+
+  useEffect(() => {
+    if (!logScrollerRef.current) return;
+    logScrollerRef.current.scrollTop = logScrollerRef.current.scrollHeight;
+  }, [logicLog]);
+
+  const requestStrategyBrief = useCallback(async (
+    options?: {
+      simulation?: SimulationCompletionPayload | null;
+      deepDive?: boolean;
+      silent?: boolean;
+    },
+  ) => {
+    const simulation = options?.simulation ?? latestSimulation;
+    const deepDive = Boolean(options?.deepDive);
+    const token = localStorage.getItem("adminToken");
+    const timeLensLabel = timeLensMeta[timeLens].label;
+    const logicSignals = buildSimulationLogicSignals(simulation, activeSector.label);
+
+    const payload = {
+      routePath: `/admin-portal-2026/intelligence/${activeSector.id}`,
+      zoneId: activeSector.id,
+      zoneLabel: activeSector.label,
+      city: activeSector.city,
+      radiusKm: simulation?.zone.radiusKm ?? 4,
+      timeLens: timeLensLabel,
+      densityScore: analysis.density_score,
+      predictedDemand: analysis.predicted_demand,
+      currentOrders: analysis.current_orders,
+      currentWorkers: analysis.current_workers,
+      emergencyOrders: analysis.emergency_orders,
+      allocationStrategy: analysis.allocation_strategy,
+      priceMultiplier,
+      pricingSignal,
+      serviceWarning: analysis.service_warning || null,
+      auditData: auditSignals,
+      logicSignals,
+      financials: {
+        acquisitionCost: activeSector.spend,
+        churnRate: investorAnalytics.summary.churnRate,
+        projectedRevenue: manualScenario.projectedProfit + activeSector.spend + (manualScenario.totalWorkers * 430),
+        projectedProfit: manualScenario.projectedProfit,
+        platformCommission: investorAnalytics.summary.platformCommission,
+        marginLift: (simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit)),
+      },
+      forecast: demandSeries.map((point) => ({
+        label: point.label,
+        actual: point.actual,
+        predicted: point.predicted,
+        gap: point.gap,
+      })),
+      simulationSummary: simulation
+        ? {
+          totalPoints: simulation.totalPoints,
+          totalProjectedOrders: simulation.totalProjectedOrders,
+          totalTraditionalCost: simulation.totalTraditionalCost,
+          totalOptimizedCost: simulation.totalOptimizedCost,
+          marginLift: simulation.marginLift,
+          averageSalariedRatio: simulation.averageSalariedRatio,
+          hottestSector: simulation.hottestSector,
+          modelVersion: simulation.modelVersion,
+          sectors: simulation.sectors.map((sector) => ({
+            sector: sector.sector,
+            densityScore: sector.densityScore,
+            salariedRatio: sector.salariedRatio,
+            projectedOrders: sector.projectedOrders,
+            burnRisk: sector.burnRisk,
+            churnRisk: sector.churnRisk,
+          })),
+        }
+        : undefined,
+      deepDive,
+      providerPreference: deepDive ? "gemini" : "groq",
+    };
+
+    setStrategyStatus("thinking");
+    setStrategyMessage(
+      deepDive
+        ? `Deep strategy scan running for ${activeSector.label}. Gemini is drafting the CEO briefing.`
+        : `Fast zone analysis running for ${activeSector.label}. Groq is reading the density stack.`,
+    );
+    appendLogicEntry(
+      deepDive
+        ? `Churn risk detected in ${activeSector.label}. Querying Gemini for an investor-grade retention and staffing strategy.`
+        : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift.`,
+      { tone: deepDive ? "warning" : "info", source: "strategy" },
+    );
+    logicSignals.slice(0, 2).forEach((signal) => {
+      appendLogicEntry(signal, { tone: "info", source: "simulation" });
+    });
+
+    try {
+      if (!token) {
+        throw new Error("Admin authentication token is missing");
+      }
+
+      const response = await fetch(`${API}/admin/analyze-strategy`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || result.detail || "Strategy request failed");
+      }
+
+      setStrategyBrief(result);
+      setStrategyStatus("ready");
+      setStrategyMessage(
+        result.fallback
+          ? "Strategy terminal is using the local density rule engine because no external LLM provider was available."
+          : `Strategy terminal updated by ${String(result.provider || "llm").toUpperCase()}.`,
+      );
+      appendLogicEntry(
+        result.fallback
+          ? "CEO briefing ready from the local density rule engine. External LLM provider was unavailable."
+          : `CEO briefing ready via ${String(result.provider || "llm").toUpperCase()}.`,
+        { tone: result.fallback ? "warning" : "success", source: "strategy" },
+      );
+
+      if (!options?.silent) {
+        toast.success(deepDive ? "Deep strategy briefing is ready." : "Strategy briefing updated.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Strategy briefing failed";
+      const fallbackBrief = buildStrategyFallback({
+        zoneLabel: activeSector.label,
+        city: activeSector.city,
+        densityScore: analysis.density_score,
+        predictedDemand: analysis.predicted_demand,
+        currentWorkers: analysis.current_workers,
+        emergencyOrders: analysis.emergency_orders,
+        priceMultiplier,
+        timeLens,
+        hottestSector: simulation?.hottestSector || activeSector.label,
+        acquisitionCost: activeSector.spend,
+        churnRate: investorAnalytics.summary.churnRate,
+        marginLift: simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit),
+      });
+
+      setStrategyBrief(fallbackBrief);
+      setStrategyStatus("error");
+      setStrategyMessage(`Live strategy provider was unavailable. Showing fallback COO guidance. ${message}`);
+      appendLogicEntry(
+        `Live strategy provider unavailable. Falling back to the local density rule engine for ${activeSector.label}.`,
+        { tone: "critical", source: "strategy" },
+      );
+
+      if (!options?.silent) {
+        toast.error("Live strategy provider unavailable. Showing fallback briefing.");
+      }
+    }
+  }, [
+    activeSector.city,
+    activeSector.id,
+    activeSector.label,
+    activeSector.spend,
+    aiScenario.projectedProfit,
+    analysis.allocation_strategy,
+    analysis.current_orders,
+    analysis.current_workers,
+    analysis.density_score,
+    analysis.emergency_orders,
+    analysis.predicted_demand,
+    analysis.service_warning,
+    auditSignals,
+    currentScenario.projectedProfit,
+    demandSeries,
+    investorAnalytics.summary.churnRate,
+    investorAnalytics.summary.platformCommission,
+    latestSimulation,
+    manualScenario.projectedProfit,
+    manualScenario.totalWorkers,
+    appendLogicEntry,
+    priceMultiplier,
+    pricingSignal,
+    timeLens,
+  ]);
+
+  const handleSimulationComplete = useCallback((summary: SimulationCompletionPayload) => {
+    setLatestSimulation(summary);
+    buildSimulationLogicSignals(summary, activeSector.label).forEach((signal, index) => {
+      appendLogicEntry(
+        index === 0 ? `Random Forest summary ready. ${signal}` : signal,
+        { tone: index === 0 ? "success" : "info", source: "simulation" },
+      );
+    });
+  }, [activeSector.label, appendLogicEntry]);
+
+  const handleSimulationTelemetry = useCallback((telemetry: SimulationTelemetryPayload) => {
+    setSimulationPhase(telemetry.phase);
+    setSimulationRunning(telemetry.isRunning);
+
+    const latestMessage = telemetry.statusFeed[0];
+    if (!latestMessage || latestMessage === lastTelemetryMessageRef.current) {
+      return;
+    }
+
+    lastTelemetryMessageRef.current = latestMessage;
+    appendLogicEntry(latestMessage, {
+      tone: telemetry.phase === "error"
+        ? "critical"
+        : telemetry.phase === "complete"
+          ? "success"
+          : telemetry.phase === "inferencing"
+            ? "warning"
+            : "info",
+      source: "simulation",
+    });
+  }, [appendLogicEntry]);
+
+  useEffect(() => {
+    if (!latestSimulation) {
+      return;
+    }
+
+    void requestStrategyBrief({
+      simulation: latestSimulation,
+      deepDive: false,
+      silent: true,
+    });
+  }, [activeSector.id, latestSimulation, requestStrategyBrief, timeLens]);
+
   const zoneChecklist = useMemo(() => {
     const items = [
       `Zone confidence is ${(analysis.confidence_score * 100).toFixed(0)}%. Keep ${strategyLabel[analysis.allocation_strategy]} live in ${analysis.area}.`,
@@ -1012,6 +1525,7 @@ export function IntelligenceTab({
 
   return (
     <div className="space-y-8">
+      <CommandCenterMotionStyles />
       <section className="relative overflow-hidden rounded-[2rem] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(20,184,166,0.16),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.18),_transparent_28%),linear-gradient(135deg,_#07111f_0%,_#0f172a_48%,_#10243d_100%)] p-6 text-white shadow-2xl shadow-slate-950/10 md:p-8">
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/30 to-transparent" />
 
@@ -1167,100 +1681,337 @@ export function IntelligenceTab({
             </div>
           </div>
 
-          <div className="relative h-[34rem]">
-            <MapContainer
-              center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
-              zoom={selectedSectorId === "all" ? 11 : 12}
-              scrollWheelZoom
-              className="h-full w-full"
-            >
-              <CommandMapView
+          <div className="grid min-h-[34rem] xl:grid-cols-[minmax(0,1fr)_21rem]">
+            <div className="relative min-h-[34rem] border-b border-slate-200 xl:border-b-0 xl:border-r">
+              <MapContainer
                 center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
                 zoom={selectedSectorId === "all" ? 11 : 12}
-              />
-              <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-                attribution="&copy; CARTO"
-              />
+                scrollWheelZoom
+                preferCanvas
+                className="h-full w-full"
+              >
+                <CommandMapView
+                  center={selectedSectorId === "all" ? AGRA_MAP_CENTER : activeMapZone.center}
+                  zoom={selectedSectorId === "all" ? 11 : 12}
+                />
+                <TileLayer
+                  url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                  attribution="&copy; CARTO"
+                />
 
-              {commandMapZones.map((zone) => {
-                const density = zoneDensityMap[zone.id] ?? 0;
-                const tone = getDensityTone(density);
-                const active = zone.id === activeSector.id;
+                {commandMapZones.map((zone) => {
+                  const density = zoneDensityMap[zone.id] ?? 0;
+                  const tone = getDensityTone(density);
+                  const active = zone.id === activeSector.id;
 
-                return (
-                  <Polygon
-                    key={zone.id}
-                    positions={zone.polygon}
+                  return (
+                    <Polygon
+                      key={zone.id}
+                      positions={zone.polygon}
+                      pathOptions={{
+                        color: active ? "#0f172a" : tone.stroke,
+                        weight: active ? 3 : 2,
+                        fillColor: tone.fill,
+                        fillOpacity: active ? 0.44 : 0.2,
+                      }}
+                      eventHandlers={{ click: () => handleZoneSelection(zone.id) }}
+                    >
+                      <LeafletTooltip sticky>
+                        <div className="space-y-1">
+                          <p className="text-sm font-black text-slate-950">{zone.label}</p>
+                          <p className="text-xs font-bold text-slate-500">{tone.label}</p>
+                          <p className="text-xs font-bold text-slate-700">Density {density.toFixed(2)}</p>
+                        </div>
+                      </LeafletTooltip>
+                    </Polygon>
+                  );
+                })}
+
+                {visiblePreviewSignals.map((signal) => (
+                  <CircleMarker
+                    key={signal.id}
+                    center={signal.position}
+                    radius={signal.isEmergency ? 7 : 4}
                     pathOptions={{
-                      color: active ? "#0f172a" : tone.stroke,
-                      weight: active ? 3 : 2,
-                      fillColor: tone.fill,
-                      fillOpacity: active ? 0.44 : 0.2,
+                      color: signal.isEmergency ? "#b91c1c" : "#4338ca",
+                      fillColor: signal.isEmergency ? "#f97316" : "#6366f1",
+                      fillOpacity: signal.isEmergency ? 0.88 : 0.62,
+                      weight: signal.isEmergency ? 2 : 1,
                     }}
-                    eventHandlers={{ click: () => handleZoneSelection(zone.id) }}
                   >
-                    <LeafletTooltip sticky>
+                    <LeafletTooltip>
                       <div className="space-y-1">
-                        <p className="text-sm font-black text-slate-950">{zone.label}</p>
-                        <p className="text-xs font-bold text-slate-500">{tone.label}</p>
-                        <p className="text-xs font-bold text-slate-700">Density {density.toFixed(2)}</p>
+                        <p className="text-sm font-black text-slate-950">{signal.label}</p>
+                        <p className="text-xs font-bold text-slate-500">{signal.serviceType}</p>
+                        <p className="text-xs font-bold text-slate-700">{formatCurrency(signal.estimatedValue)}</p>
                       </div>
                     </LeafletTooltip>
-                  </Polygon>
-                );
-              })}
-
-              {visiblePreviewSignals.map((signal) => (
-                <CircleMarker
-                  key={signal.id}
-                  center={signal.position}
-                  radius={signal.isEmergency ? 7 : 4}
-                  pathOptions={{
-                    color: signal.isEmergency ? "#b91c1c" : "#4338ca",
-                    fillColor: signal.isEmergency ? "#f97316" : "#6366f1",
-                    fillOpacity: signal.isEmergency ? 0.88 : 0.62,
-                    weight: signal.isEmergency ? 2 : 1,
-                  }}
-                >
-                  <LeafletTooltip>
-                    <div className="space-y-1">
-                      <p className="text-sm font-black text-slate-950">{signal.label}</p>
-                      <p className="text-xs font-bold text-slate-500">{signal.serviceType}</p>
-                      <p className="text-xs font-bold text-slate-700">{formatCurrency(signal.estimatedValue)}</p>
-                    </div>
-                  </LeafletTooltip>
-                </CircleMarker>
-              ))}
-            </MapContainer>
-
-            <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Legend</p>
-              <div className="mt-3 space-y-2 text-xs font-bold text-slate-600">
-                {[
-                  { label: "Critical density", color: "bg-rose-500" },
-                  { label: "High density", color: "bg-orange-500" },
-                  { label: "Balanced density", color: "bg-indigo-500" },
-                  { label: "Freelancer-led", color: "bg-sky-500" },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-center gap-2">
-                    <span className={cn("h-2.5 w-2.5 rounded-full", item.color)} />
-                    {item.label}
-                  </div>
+                  </CircleMarker>
                 ))}
+              </MapContainer>
+
+              <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Legend</p>
+                <div className="mt-3 space-y-2 text-xs font-bold text-slate-600">
+                  {[
+                    { label: "Critical density", color: "bg-rose-500" },
+                    { label: "High density", color: "bg-orange-500" },
+                    { label: "Balanced density", color: "bg-indigo-500" },
+                    { label: "Freelancer-led", color: "bg-sky-500" },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center gap-2">
+                      <span className={cn("h-2.5 w-2.5 rounded-full", item.color)} />
+                      {item.label}
+                    </div>
+                  ))}
+                </div>
               </div>
+
+              <div className="pointer-events-none absolute bottom-4 left-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Synthetic load sample</p>
+                <p className="mt-2 text-sm font-black text-slate-950">
+                  {visiblePreviewSignals.length} preview points from the 400k simulation engine
+                </p>
+              </div>
+
+              {(simulationRunning || strategyStatus === "thinking") && (
+                <>
+                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(79,70,229,0.12),_transparent_55%)]" />
+                  <div className="rahi-scanline pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-transparent via-indigo-400/25 to-transparent" />
+                  <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                    <div className="rahi-command-pin relative h-4 w-4 rounded-full bg-indigo-600 shadow-[0_0_0_8px_rgba(79,70,229,0.18)]">
+                      <span className="absolute inset-0 rounded-full border border-white/90" />
+                    </div>
+                  </div>
+                  <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-indigo-300/40 bg-slate-950/85 px-4 py-3 text-white shadow-xl shadow-indigo-950/20 backdrop-blur">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-200">AI overlay</p>
+                    <p className="mt-2 text-sm font-black">
+                      {simulationRunning
+                        ? "Random Forest is scanning the heatmap in live batches."
+                        : "Strategy engine is tracing the current zone before briefing the CEO."}
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
-            <div className="pointer-events-none absolute bottom-4 right-4 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Synthetic load sample</p>
-              <p className="mt-2 text-sm font-black text-slate-950">
-                {visiblePreviewSignals.length} preview points from the 400k simulation engine
-              </p>
+            <div className="bg-[linear-gradient(180deg,_rgba(15,23,42,0.02),_rgba(79,70,229,0.08))] p-4">
+              <div className="rahi-glass-panel h-full rounded-[1.5rem] border border-white/70 bg-white/75 p-4 backdrop-blur-xl">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Live audit log</p>
+                    <h4 className="mt-2 text-lg font-black text-slate-950">System thoughts and model checkpoints</h4>
+                  </div>
+                  <span className={cn(
+                    "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]",
+                    simulationRunning || strategyStatus === "thinking"
+                      ? "bg-indigo-100 text-indigo-700"
+                      : "bg-slate-100 text-slate-500",
+                  )}>
+                    {simulationRunning ? "Streaming" : strategyStatus === "thinking" ? "Drafting" : "Standby"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                  <MonitoringStat
+                    label="Strategy lane"
+                    value={strategyStatus === "ready" ? "Briefed" : strategyStatus === "thinking" ? "Thinking" : "Idle"}
+                    hint={strategyBrief ? `${String(strategyBrief.provider || "rule_engine").toUpperCase()} provider` : "No active briefing yet"}
+                    light
+                  />
+                  <MonitoringStat
+                    label="Simulation phase"
+                    value={simulationPhase.replace("_", " ")}
+                    hint={latestSimulation ? `${latestSimulation.totalPoints.toLocaleString("en-IN")} points captured` : "No batch results attached yet"}
+                    light
+                  />
+                </div>
+
+                <div ref={logScrollerRef} className="mt-4 max-h-[25.5rem] space-y-3 overflow-y-auto pr-1">
+                  {logicLog.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={cn(
+                        "rounded-[1.25rem] border px-4 py-3 shadow-sm backdrop-blur",
+                        entry.tone === "success" && "border-emerald-200 bg-emerald-50/85",
+                        entry.tone === "warning" && "border-amber-200 bg-amber-50/90",
+                        entry.tone === "critical" && "border-rose-200 bg-rose-50/90",
+                        entry.tone === "info" && "border-white/80 bg-white/80",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">
+                          [{entry.timestamp}]
+                        </span>
+                        <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                          {entry.source}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{entry.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
         <div className="space-y-6">
+          <div className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-[linear-gradient(135deg,_#07111f_0%,_#0f172a_52%,_#10243d_100%)] p-6 text-white shadow-xl shadow-slate-950/10">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-200/80">Strategy terminal</p>
+                <h3 className="mt-2 text-2xl font-black">RAHI COO briefing for {activeSector.label}</h3>
+                <p className="mt-2 max-w-xl text-sm font-semibold leading-6 text-slate-300">
+                  This terminal reads the selected zone, current density, and the latest simulation summary to recommend the next operating move.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-right">
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Provider lane</p>
+                <p className="mt-2 text-sm font-black text-white">
+                  {strategyBrief ? String(strategyBrief.provider || "rule_engine").toUpperCase() : "WAITING"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <MonitoringStat
+                label="Zone route"
+                value={`/intelligence/${activeSector.id}`}
+                hint={activeSector.city}
+              />
+              <MonitoringStat
+                label="Simulation state"
+                value={latestSimulation ? "Attached" : "Waiting"}
+                hint={latestSimulation ? `${latestSimulation.totalPoints.toLocaleString("en-IN")} points ready` : "Run the 400k engine to attach batch evidence"}
+              />
+              <MonitoringStat
+                label="Forecast lens"
+                value={timeLensMeta[timeLens].label}
+                hint={`${analysis.predicted_demand} predicted jobs in view`}
+              />
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void requestStrategyBrief({ deepDive: false })}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-slate-100"
+              >
+                {strategyStatus === "thinking" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Run zone briefing
+              </button>
+              <button
+                type="button"
+                onClick={() => void requestStrategyBrief({ deepDive: true })}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 text-sm font-black text-white transition hover:bg-white/[0.12]"
+              >
+                <Cpu className="h-4 w-4" />
+                Request deep dive
+              </button>
+              <button
+                type="button"
+                onClick={jumpToSimulationLab}
+                className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm font-black text-emerald-100 transition hover:bg-emerald-300/20"
+              >
+                <ChevronRight className="h-4 w-4" />
+                Open simulation lab
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/[0.05] p-5">
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "flex h-11 w-11 items-center justify-center rounded-2xl border",
+                  strategyStatus === "thinking"
+                    ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-100"
+                    : strategyStatus === "ready"
+                      ? "border-indigo-300/30 bg-indigo-300/10 text-indigo-100"
+                      : strategyStatus === "error"
+                        ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
+                        : "border-white/10 bg-white/[0.04] text-slate-300",
+                )}>
+                  {strategyStatus === "thinking" ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : strategyStatus === "ready" ? (
+                    <BrainTerminalIcon />
+                  ) : strategyStatus === "error" ? (
+                    <TriangleAlert className="h-5 w-5" />
+                  ) : (
+                    <Cpu className="h-5 w-5" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Terminal status</p>
+                  <p className="mt-1 text-sm font-black text-white">{strategyMessage}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <div className="rahi-terminal-shell rounded-[1.4rem] border border-indigo-300/20 bg-black/35 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-200/80">Typewritten briefing stream</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-400">
+                        The command center shows the reasoning path instead of waiting on a blank spinner.
+                      </p>
+                    </div>
+                    <span className={cn(
+                      "rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]",
+                      strategyStatus === "thinking"
+                        ? "bg-emerald-300/12 text-emerald-100"
+                        : strategyStatus === "error"
+                          ? "bg-amber-300/12 text-amber-100"
+                          : "bg-indigo-300/12 text-indigo-100",
+                    )}>
+                      {strategyStatus === "thinking" ? "Streaming" : strategyStatus === "error" ? "Fallback" : "Ready"}
+                    </span>
+                  </div>
+
+                  <pre className="mt-4 min-h-[14rem] whitespace-pre-wrap break-words font-mono text-[13px] leading-6 text-indigo-50">
+                    {terminalText}
+                    <span className={cn("rahi-terminal-caret", strategyStatus !== "error" && "bg-emerald-200")} />
+                  </pre>
+                </div>
+
+                {strategyBrief ? (
+                  <>
+                    <div className="grid gap-3">
+                      {strategyBrief.procedures.map((procedure, index) => (
+                        <div
+                          key={`${procedure}-${index}`}
+                          className="rahi-glass-panel flex gap-3 rounded-[1.3rem] border border-white/10 bg-white/[0.05] px-4 py-3"
+                        >
+                          <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-400/15 text-xs font-black text-indigo-100">
+                            {index + 1}
+                          </span>
+                          <p className="text-sm font-semibold leading-6 text-slate-100">{procedure}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <MonitoringStat
+                        label="Model"
+                        value={strategyBrief.model || "density-rule-fallback"}
+                        hint={strategyBrief.fallback ? "Fallback rules are active" : "LLM-backed strategy"}
+                      />
+                      <MonitoringStat
+                        label="History"
+                        value={strategyBrief.saved ? "Persisted" : "Local only"}
+                        hint={strategyBrief.historyId ? `History id ${strategyBrief.historyId}` : "No Mongo history row written"}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-[1.4rem] border border-dashed border-white/10 px-4 py-5 text-sm font-semibold leading-6 text-slate-300">
+                    No strategy briefing yet. Run the simulation or trigger a zone briefing to see the signal, reasoning, and next procedures.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-[1.8rem] border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1930,10 +2681,125 @@ export function IntelligenceTab({
       </section>
 
       <section id="simulation-lab" className="scroll-mt-24">
-        <SimulationEngine />
+        <SimulationEngine
+          onSimulationComplete={handleSimulationComplete}
+          onTelemetryChange={handleSimulationTelemetry}
+        />
       </section>
     </div>
   );
+}
+
+function CommandCenterMotionStyles() {
+  return (
+    <style>{`
+      @keyframes rahi-scanline {
+        0% { transform: translateY(-12%); opacity: 0; }
+        12% { opacity: 0.72; }
+        100% { transform: translateY(1450%); opacity: 0; }
+      }
+
+      @keyframes rahi-command-pin {
+        0% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.22); }
+        70% { transform: scale(1.08); box-shadow: 0 0 0 18px rgba(79, 70, 229, 0); }
+        100% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
+      }
+
+      @keyframes rahi-terminal-caret {
+        0%, 42% { opacity: 1; }
+        43%, 100% { opacity: 0; }
+      }
+
+      .rahi-scanline {
+        animation: rahi-scanline 2.8s linear infinite;
+      }
+
+      .rahi-command-pin {
+        animation: rahi-command-pin 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      }
+
+      .rahi-terminal-shell {
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 24px 50px rgba(15,23,42,0.2);
+      }
+
+      .rahi-glass-panel {
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+      }
+
+      .rahi-terminal-caret {
+        display: inline-block;
+        width: 0.65ch;
+        height: 1.1em;
+        margin-left: 0.2ch;
+        vertical-align: text-bottom;
+        border-radius: 999px;
+        background: rgba(224, 231, 255, 0.95);
+        animation: rahi-terminal-caret 1s steps(1) infinite;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .rahi-scanline,
+        .rahi-command-pin,
+        .rahi-terminal-caret {
+          animation: none !important;
+        }
+      }
+    `}</style>
+  );
+}
+
+function usePrefersReducedMotion() {
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches);
+
+    updatePreference();
+    mediaQuery.addEventListener?.("change", updatePreference);
+
+    return () => {
+      mediaQuery.removeEventListener?.("change", updatePreference);
+    };
+  }, []);
+
+  return prefersReducedMotion;
+}
+
+function useTypewriterText(text: string, intervalMs = 14) {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const [displayedText, setDisplayedText] = useState(text);
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setDisplayedText(text);
+      return undefined;
+    }
+
+    if (!text) {
+      setDisplayedText("");
+      return undefined;
+    }
+
+    setDisplayedText("");
+    let cursor = 0;
+    const step = text.length > 420 ? 8 : text.length > 220 ? 4 : 2;
+    const timer = window.setInterval(() => {
+      cursor = Math.min(text.length, cursor + step);
+      setDisplayedText(text.slice(0, cursor));
+      if (cursor >= text.length) {
+        window.clearInterval(timer);
+      }
+    }, intervalMs);
+
+    return () => window.clearInterval(timer);
+  }, [intervalMs, prefersReducedMotion, text]);
+
+  return displayedText;
 }
 
 function HeroSignal({
@@ -1970,6 +2836,17 @@ function HeroSignal({
       <p className="mt-2 text-2xl font-black text-white">{value}</p>
       <p className="mt-3 text-xs font-semibold leading-5 text-slate-300">{note}</p>
     </button>
+  );
+}
+
+function BrainTerminalIcon() {
+  return (
+    <div className="relative h-5 w-5">
+      <span className="absolute inset-0 rounded-full border border-current opacity-60" />
+      <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current" />
+      <span className="absolute left-1 top-1/2 h-px w-3 translate-y-[-50%] bg-current opacity-80" />
+      <span className="absolute left-1/2 top-1 h-3 w-px translate-x-[-50%] bg-current opacity-80" />
+    </div>
   );
 }
 

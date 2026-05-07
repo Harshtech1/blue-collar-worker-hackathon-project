@@ -18,6 +18,9 @@ export interface SimulationReportPayload {
   marginLift: number;
   averageSalariedRatio: number;
   hottestSector: string;
+  zoneLabel?: string;
+  radiusKm?: number;
+  centerCoordinates?: string;
   sectors: SimulationReportSectorLine[];
 }
 
@@ -68,6 +71,9 @@ export const downloadSimulationReport = (payload: SimulationReportPayload) => {
   const lines = [
     "RAHI Intelligence Simulation Report",
     `Generated: ${payload.generatedAt}`,
+    ...(payload.zoneLabel ? [`Zone: ${payload.zoneLabel}`] : []),
+    ...(payload.radiusKm ? [`Radius: ${payload.radiusKm.toFixed(0)} km`] : []),
+    ...(payload.centerCoordinates ? [`Center: ${payload.centerCoordinates}`] : []),
     `Synthetic traffic processed: ${payload.totalPoints.toLocaleString("en-IN")} booking requests`,
     `Sectors analyzed: ${payload.totalSectors}`,
     `Projected orders: ${payload.totalProjectedOrders.toLocaleString("en-IN")}`,

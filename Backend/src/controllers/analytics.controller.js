@@ -1,5 +1,13 @@
 import { getDb } from "../config/db.js";
 import {
+  SIMULATION_HISTORY_COLLECTION,
+  buildSimulationHistoryDocument,
+} from "../models/SimulationHistory.js";
+import {
+  analyzeStrategyWithLLM,
+  hasStrategyProviderConfigured,
+} from "../services/llmService.js";
+import {
   buildFallbackPrediction,
   buildSyntheticHistory,
   getSurgeMultiplier,
@@ -213,6 +221,53 @@ export const runSimulationBatch = async (req, res) => {
     return res.status(502).json({
       message: "Simulation analytics service is unavailable",
       detail: error instanceof Error ? error.message : "Unknown analytics error",
+    });
+  }
+};
+
+export const analyzeStrategyBrief = async (req, res) => {
+  let db = null;
+
+  try {
+    try {
+      db = getDb();
+    } catch (dbError) {
+      console.warn("[analyzeStrategyBrief] Database unavailable, continuing without persistence:", dbError.message);
+    }
+
+    const strategyResult = await analyzeStrategyWithLLM(req.body || {});
+
+    let historyId = null;
+    if (db) {
+      const historyDoc = buildSimulationHistoryDocument({
+        zoneId: req.body?.zoneId,
+        zoneLabel: req.body?.zoneLabel,
+        city: req.body?.city,
+        deepDive: req.body?.deepDive,
+        requestPayload: req.body || {},
+        llmResponse: strategyResult.strategy,
+        provider: strategyResult.provider,
+        model: strategyResult.model,
+        createdBy: req.user?.email || req.user?._id || null,
+      });
+
+      const insertResult = await db.collection(SIMULATION_HISTORY_COLLECTION).insertOne(historyDoc);
+      historyId = insertResult?.insertedId?.toString?.() || null;
+    }
+
+    return res.json({
+      ...strategyResult.strategy,
+      provider: strategyResult.provider,
+      model: strategyResult.model,
+      historyId,
+      saved: Boolean(historyId),
+      fallback: !hasStrategyProviderConfigured() || strategyResult.provider === "rule_engine",
+    });
+  } catch (error) {
+    console.error("analyzeStrategyBrief Error:", error);
+    return res.status(500).json({
+      message: "Strategy analysis failed",
+      detail: error instanceof Error ? error.message : "Unknown strategy error",
     });
   }
 };

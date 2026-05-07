@@ -19,6 +19,37 @@ export interface SectorSeed {
   serviceMix: Array<{ type: string; weight: number }>;
 }
 
+export interface GlobalSimulationCity {
+  id: string;
+  label: string;
+  country: string;
+  lat: number;
+  lng: number;
+  demandScale: number;
+  workerScale: number;
+  emergencyScale: number;
+  marketingScale: number;
+  historicalTraffic: number;
+  serviceMix: Array<{ type: string; weight: number }>;
+}
+
+export interface SimulationGeoConfig {
+  cityId: string;
+  cityLabel: string;
+  country: string;
+  center: {
+    lat: number;
+    lng: number;
+  };
+  radiusKm: number;
+  demandScale: number;
+  workerScale: number;
+  emergencyScale: number;
+  marketingScale: number;
+  historicalTraffic: number;
+  serviceMix: Array<{ type: string; weight: number }>;
+}
+
 export interface SimulationBookingRequest {
   lat: number;
   lng: number;
@@ -44,6 +75,220 @@ const SERVICE_VALUE_BANDS: Record<string, [number, number]> = {
   DeepCleaning: [1200, 4800],
   PestControl: [850, 2600],
 };
+
+const DEFAULT_SERVICE_MIX = [
+  { type: "Plumbing", weight: 18 },
+  { type: "Electrical", weight: 17 },
+  { type: "Cleaning", weight: 19 },
+  { type: "Carpentry", weight: 12 },
+  { type: "Painting", weight: 9 },
+  { type: "Appliance", weight: 12 },
+  { type: "DeepCleaning", weight: 7 },
+  { type: "PestControl", weight: 6 },
+];
+
+export const DEFAULT_SIMULATION_CITY_ID = "agra";
+
+export const GLOBAL_SIMULATION_CITIES: GlobalSimulationCity[] = [
+  {
+    id: "agra",
+    label: "Agra",
+    country: "India",
+    lat: 27.1767,
+    lng: 78.0081,
+    demandScale: 0.92,
+    workerScale: 0.84,
+    emergencyScale: 0.11,
+    marketingScale: 0.9,
+    historicalTraffic: 0.93,
+    serviceMix: [
+      { type: "Cleaning", weight: 19 },
+      { type: "Plumbing", weight: 18 },
+      { type: "Electrical", weight: 16 },
+      { type: "DeepCleaning", weight: 14 },
+      { type: "Appliance", weight: 12 },
+      { type: "PestControl", weight: 11 },
+      { type: "Carpentry", weight: 6 },
+      { type: "Painting", weight: 4 },
+    ],
+  },
+  {
+    id: "bengaluru",
+    label: "Bengaluru",
+    country: "India",
+    lat: 12.9716,
+    lng: 77.5946,
+    demandScale: 1.28,
+    workerScale: 1.22,
+    emergencyScale: 0.13,
+    marketingScale: 1.32,
+    historicalTraffic: 1.24,
+    serviceMix: [
+      { type: "Appliance", weight: 18 },
+      { type: "Electrical", weight: 17 },
+      { type: "Cleaning", weight: 16 },
+      { type: "DeepCleaning", weight: 14 },
+      { type: "Plumbing", weight: 14 },
+      { type: "PestControl", weight: 9 },
+      { type: "Carpentry", weight: 7 },
+      { type: "Painting", weight: 5 },
+    ],
+  },
+  {
+    id: "mumbai",
+    label: "Mumbai",
+    country: "India",
+    lat: 19.076,
+    lng: 72.8777,
+    demandScale: 1.42,
+    workerScale: 1.31,
+    emergencyScale: 0.16,
+    marketingScale: 1.46,
+    historicalTraffic: 1.34,
+    serviceMix: [
+      { type: "Cleaning", weight: 19 },
+      { type: "DeepCleaning", weight: 16 },
+      { type: "Plumbing", weight: 16 },
+      { type: "Electrical", weight: 15 },
+      { type: "Appliance", weight: 13 },
+      { type: "PestControl", weight: 9 },
+      { type: "Carpentry", weight: 7 },
+      { type: "Painting", weight: 5 },
+    ],
+  },
+  {
+    id: "new-delhi",
+    label: "New Delhi",
+    country: "India",
+    lat: 28.6139,
+    lng: 77.209,
+    demandScale: 1.38,
+    workerScale: 1.29,
+    emergencyScale: 0.15,
+    marketingScale: 1.4,
+    historicalTraffic: 1.29,
+    serviceMix: [
+      { type: "Cleaning", weight: 17 },
+      { type: "Plumbing", weight: 17 },
+      { type: "Electrical", weight: 16 },
+      { type: "Appliance", weight: 14 },
+      { type: "DeepCleaning", weight: 13 },
+      { type: "PestControl", weight: 9 },
+      { type: "Carpentry", weight: 8 },
+      { type: "Painting", weight: 6 },
+    ],
+  },
+  {
+    id: "dubai",
+    label: "Dubai",
+    country: "United Arab Emirates",
+    lat: 25.2048,
+    lng: 55.2708,
+    demandScale: 1.33,
+    workerScale: 1.18,
+    emergencyScale: 0.14,
+    marketingScale: 1.37,
+    historicalTraffic: 1.26,
+    serviceMix: [
+      { type: "Appliance", weight: 18 },
+      { type: "Electrical", weight: 17 },
+      { type: "DeepCleaning", weight: 15 },
+      { type: "Cleaning", weight: 15 },
+      { type: "Plumbing", weight: 13 },
+      { type: "PestControl", weight: 9 },
+      { type: "Painting", weight: 8 },
+      { type: "Carpentry", weight: 5 },
+    ],
+  },
+  {
+    id: "singapore",
+    label: "Singapore",
+    country: "Singapore",
+    lat: 1.3521,
+    lng: 103.8198,
+    demandScale: 1.18,
+    workerScale: 1.12,
+    emergencyScale: 0.1,
+    marketingScale: 1.26,
+    historicalTraffic: 1.22,
+    serviceMix: [
+      { type: "Cleaning", weight: 21 },
+      { type: "Appliance", weight: 16 },
+      { type: "Electrical", weight: 15 },
+      { type: "Plumbing", weight: 13 },
+      { type: "DeepCleaning", weight: 13 },
+      { type: "PestControl", weight: 9 },
+      { type: "Carpentry", weight: 7 },
+      { type: "Painting", weight: 6 },
+    ],
+  },
+  {
+    id: "london",
+    label: "London",
+    country: "United Kingdom",
+    lat: 51.5072,
+    lng: -0.1276,
+    demandScale: 1.21,
+    workerScale: 1.08,
+    emergencyScale: 0.12,
+    marketingScale: 1.22,
+    historicalTraffic: 1.16,
+    serviceMix: [
+      { type: "Plumbing", weight: 18 },
+      { type: "Electrical", weight: 17 },
+      { type: "Cleaning", weight: 16 },
+      { type: "Appliance", weight: 15 },
+      { type: "DeepCleaning", weight: 11 },
+      { type: "Painting", weight: 9 },
+      { type: "Carpentry", weight: 8 },
+      { type: "PestControl", weight: 6 },
+    ],
+  },
+  {
+    id: "new-york",
+    label: "New York",
+    country: "United States",
+    lat: 40.7128,
+    lng: -74.006,
+    demandScale: 1.35,
+    workerScale: 1.15,
+    emergencyScale: 0.15,
+    marketingScale: 1.41,
+    historicalTraffic: 1.31,
+    serviceMix: [
+      { type: "Cleaning", weight: 19 },
+      { type: "Plumbing", weight: 17 },
+      { type: "Electrical", weight: 16 },
+      { type: "Appliance", weight: 14 },
+      { type: "DeepCleaning", weight: 12 },
+      { type: "PestControl", weight: 9 },
+      { type: "Painting", weight: 7 },
+      { type: "Carpentry", weight: 6 },
+    ],
+  },
+  {
+    id: "sao-paulo",
+    label: "Sao Paulo",
+    country: "Brazil",
+    lat: -23.5505,
+    lng: -46.6333,
+    demandScale: 1.24,
+    workerScale: 1.09,
+    emergencyScale: 0.13,
+    marketingScale: 1.18,
+    historicalTraffic: 1.14,
+    serviceMix: [
+      { type: "Cleaning", weight: 18 },
+      { type: "Electrical", weight: 16 },
+      { type: "Plumbing", weight: 16 },
+      { type: "Appliance", weight: 14 },
+      { type: "Painting", weight: 11 },
+      { type: "Carpentry", weight: 10 },
+      { type: "PestControl", weight: 9 },
+      { type: "DeepCleaning", weight: 6 },
+    ],
+  },
+];
 
 export const sectorSeeds: SectorSeed[] = [
   {
@@ -221,6 +466,131 @@ const emergencyBiasByService: Record<string, number> = {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+interface VirtualSectorSeed {
+  id: string;
+  label: string;
+  city: string;
+  demandWeight: number;
+  surgeAffinity: number;
+  baseWorkers: number;
+  marketingEffort: number;
+  historicalTraffic: number;
+  serviceMix: Array<{ type: string; weight: number }>;
+  radiusBandKm: [number, number];
+  bearingBand: [number, number];
+}
+
+const EARTH_RADIUS_KM = 6371;
+
+const RING_BLUEPRINTS = [
+  { id: "core", label: "Core", minFactor: 0, maxFactor: 0.34, demandWeight: 1.32, workerFactor: 1.18, marketingFactor: 1.22, historicalBoost: 0.08 },
+  { id: "inner", label: "Inner Ring", minFactor: 0.34, maxFactor: 0.68, demandWeight: 1.05, workerFactor: 1, marketingFactor: 1, historicalBoost: 0.03 },
+  { id: "outer", label: "Outer Ring", minFactor: 0.68, maxFactor: 1, demandWeight: 0.8, workerFactor: 0.78, marketingFactor: 0.84, historicalBoost: -0.04 },
+] as const;
+
+const DIRECTION_BLUEPRINTS = [
+  { id: "n", label: "North", minBearing: 337.5, maxBearing: 22.5, demandWeight: 1.04 },
+  { id: "ne", label: "North East", minBearing: 22.5, maxBearing: 67.5, demandWeight: 1.06 },
+  { id: "e", label: "East", minBearing: 67.5, maxBearing: 112.5, demandWeight: 1.05 },
+  { id: "se", label: "South East", minBearing: 112.5, maxBearing: 157.5, demandWeight: 1 },
+  { id: "s", label: "South", minBearing: 157.5, maxBearing: 202.5, demandWeight: 0.97 },
+  { id: "sw", label: "South West", minBearing: 202.5, maxBearing: 247.5, demandWeight: 0.94 },
+  { id: "w", label: "West", minBearing: 247.5, maxBearing: 292.5, demandWeight: 0.98 },
+  { id: "nw", label: "North West", minBearing: 292.5, maxBearing: 337.5, demandWeight: 1.02 },
+] as const;
+
+const hashString = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const toRadians = (value: number) => value * (Math.PI / 180);
+const toDegrees = (value: number) => value * (180 / Math.PI);
+
+const offsetCoordinate = (lat: number, lng: number, distanceKm: number, bearingDeg: number) => {
+  const angularDistance = distanceKm / EARTH_RADIUS_KM;
+  const bearing = toRadians(bearingDeg);
+  const startLat = toRadians(lat);
+  const startLng = toRadians(lng);
+
+  const nextLat = Math.asin(
+    (Math.sin(startLat) * Math.cos(angularDistance))
+      + (Math.cos(startLat) * Math.sin(angularDistance) * Math.cos(bearing)),
+  );
+
+  const nextLng = startLng + Math.atan2(
+    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(startLat),
+    Math.cos(angularDistance) - (Math.sin(startLat) * Math.sin(nextLat)),
+  );
+
+  return {
+    lat: Number(toDegrees(nextLat).toFixed(6)),
+    lng: Number((((toDegrees(nextLng) + 540) % 360) - 180).toFixed(6)),
+  };
+};
+
+const getDefaultServiceMix = () => DEFAULT_SERVICE_MIX.map((service) => ({ ...service }));
+
+export const getGlobalSimulationCity = (cityId: string) => (
+  GLOBAL_SIMULATION_CITIES.find((city) => city.id === cityId)
+  || GLOBAL_SIMULATION_CITIES.find((city) => city.id === DEFAULT_SIMULATION_CITY_ID)
+  || GLOBAL_SIMULATION_CITIES[0]
+);
+
+export const buildSimulationGeoConfig = ({
+  cityId = DEFAULT_SIMULATION_CITY_ID,
+  center,
+  radiusKm = 12,
+}: {
+  cityId?: string;
+  center?: { lat: number; lng: number };
+  radiusKm?: number;
+} = {}): SimulationGeoConfig => {
+  const city = getGlobalSimulationCity(cityId);
+
+  return {
+    cityId: city.id,
+    cityLabel: city.label,
+    country: city.country,
+    center: {
+      lat: Number((center?.lat ?? city.lat).toFixed(6)),
+      lng: Number((center?.lng ?? city.lng).toFixed(6)),
+    },
+    radiusKm: clamp(Number(radiusKm.toFixed(1)), 1, 50),
+    demandScale: city.demandScale,
+    workerScale: city.workerScale,
+    emergencyScale: city.emergencyScale,
+    marketingScale: city.marketingScale,
+    historicalTraffic: city.historicalTraffic,
+    serviceMix: city.serviceMix.length > 0 ? city.serviceMix.map((service) => ({ ...service })) : getDefaultServiceMix(),
+  };
+};
+
+const buildVirtualSectors = (geoConfig: SimulationGeoConfig): VirtualSectorSeed[] => (
+  RING_BLUEPRINTS.flatMap((ring) => (
+    DIRECTION_BLUEPRINTS.map((direction) => ({
+      id: `${geoConfig.cityId}-${ring.id}-${direction.id}`,
+      label: `${geoConfig.cityLabel} ${ring.label} ${direction.label}`,
+      city: geoConfig.cityLabel,
+      demandWeight: geoConfig.demandScale * ring.demandWeight * direction.demandWeight,
+      surgeAffinity: 1 + ((geoConfig.demandScale - 1) * 0.18) + ((ring.demandWeight - 1) * 0.16),
+      baseWorkers: Math.max(18, Math.round((52 + (geoConfig.workerScale * 38)) * ring.workerFactor)),
+      marketingEffort: Math.round((7800 + (geoConfig.marketingScale * 5200)) * ring.marketingFactor),
+      historicalTraffic: Number((geoConfig.historicalTraffic + ring.historicalBoost).toFixed(3)),
+      serviceMix: geoConfig.serviceMix.length > 0 ? geoConfig.serviceMix : getDefaultServiceMix(),
+      radiusBandKm: [
+        Number((geoConfig.radiusKm * ring.minFactor).toFixed(3)),
+        Number((geoConfig.radiusKm * ring.maxFactor).toFixed(3)),
+      ],
+      bearingBand: [direction.minBearing, direction.maxBearing],
+    }))
+  ))
+);
+
 const pickWeighted = <T,>(items: Array<{ value: T; weight: number }>) => {
   const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
   let threshold = faker.number.float({ min: 0, max: totalWeight });
@@ -266,47 +636,148 @@ const pickSector = (batchIndex: number) => {
   );
 };
 
+const pickVirtualSector = (batchIndex: number, sectors: VirtualSectorSeed[]) => {
+  const wave = 1 + (Math.sin((batchIndex / SIMULATION_BATCH_COUNT) * Math.PI * 1.8) * 0.22);
+  return pickWeighted(
+    sectors.map((sector) => ({
+      value: sector,
+      weight: sector.demandWeight * (sector.surgeAffinity * wave),
+    })),
+  );
+};
+
+const randomBearingInBand = ([minBearing, maxBearing]: [number, number]) => {
+  if (minBearing <= maxBearing) {
+    return faker.number.float({ min: minBearing, max: maxBearing });
+  }
+
+  const wrapSpan = (360 - minBearing) + maxBearing;
+  const offset = faker.number.float({ min: 0, max: wrapSpan });
+  return offset <= (360 - minBearing)
+    ? minBearing + offset
+    : offset - (360 - minBearing);
+};
+
+const sampleGaussianUnit = () => {
+  const u = faker.number.float({ min: 0.0001, max: 0.9999 });
+  const v = faker.number.float({ min: 0.0001, max: 0.9999 });
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
+
+const sampleDistanceInBand = ([innerRadiusKm, outerRadiusKm]: [number, number]) => {
+  const safeOuter = Math.max(innerRadiusKm + 0.05, outerRadiusKm);
+  const bandWidth = safeOuter - innerRadiusKm;
+  const meanDistance = innerRadiusKm + (bandWidth * 0.38);
+  const deviation = Math.max(0.05, bandWidth * 0.24);
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const candidate = meanDistance + (sampleGaussianUnit() * deviation);
+    if (candidate >= innerRadiusKm && candidate <= safeOuter) {
+      return candidate;
+    }
+  }
+
+  return clamp(meanDistance + Math.abs(sampleGaussianUnit() * deviation), innerRadiusKm, safeOuter);
+};
+
 export const generateSimulationBatch = ({
   batchIndex,
   batchSize = SIMULATION_BATCH_SIZE,
+  geoConfig,
 }: {
   batchIndex: number;
   batchSize?: number;
+  geoConfig?: SimulationGeoConfig;
 }) => {
-  faker.seed(SIMULATION_SEED + batchIndex);
+  const geoSeed = geoConfig
+    ? hashString(`${geoConfig.cityId}:${geoConfig.center.lat.toFixed(4)}:${geoConfig.center.lng.toFixed(4)}:${geoConfig.radiusKm.toFixed(1)}`)
+    : 0;
+  faker.seed(SIMULATION_SEED + batchIndex + geoSeed);
+
+  if (!geoConfig) {
+    return Array.from({ length: batchSize }, () => {
+      const sector = pickSector(batchIndex);
+      const serviceType = pickWeighted(
+        sector.serviceMix.map((service) => ({ value: service.type, weight: service.weight })),
+      );
+      const estimatedValue = toEstimatedValue(serviceType);
+      const activeWorkersHint = Math.max(
+        12,
+        sector.baseWorkers + faker.number.int({ min: -12, max: 16 }),
+      );
+      const churnRisk = clamp(
+        0.11 + ((1.05 - sector.historicalTraffic) * 0.12) + faker.number.float({ min: -0.02, max: 0.07 }),
+        0.06,
+        0.42,
+      );
+      const acquisitionCost = Math.round(
+        sector.marketingEffort / 110
+        + estimatedValue * 0.045
+        + faker.number.float({ min: 25, max: 95 }),
+      );
+      const emergencyBias = emergencyBiasByService[serviceType] ?? 0.06;
+
+      return {
+        lat: Number(faker.location.latitude({ min: sector.latRange[0], max: sector.latRange[1], precision: 0.0001 })),
+        lng: Number(faker.location.longitude({ min: sector.lngRange[0], max: sector.lngRange[1], precision: 0.0001 })),
+        serviceType,
+        timestamp: buildTimestamp(batchIndex),
+        estimatedValue,
+        areaSector: sector.label,
+        marketingEffort: sector.marketingEffort + faker.number.int({ min: -450, max: 650 }),
+        activeWorkersHint,
+        historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.08, max: 0.11 })).toFixed(3)),
+        acquisitionCost,
+        churnRisk: Number(churnRisk.toFixed(3)),
+        isEmergency: faker.number.float({ min: 0, max: 1 }) < emergencyBias,
+      } satisfies SimulationBookingRequest;
+    });
+  }
+
+  const virtualSectors = buildVirtualSectors(geoConfig);
 
   return Array.from({ length: batchSize }, () => {
-    const sector = pickSector(batchIndex);
+    const sector = pickVirtualSector(batchIndex, virtualSectors);
     const serviceType = pickWeighted(
       sector.serviceMix.map((service) => ({ value: service.type, weight: service.weight })),
     );
     const estimatedValue = toEstimatedValue(serviceType);
     const activeWorkersHint = Math.max(
-      12,
-      sector.baseWorkers + faker.number.int({ min: -12, max: 16 }),
+      18,
+      Math.round(sector.baseWorkers + faker.number.int({ min: -14, max: 22 })),
     );
+    const distanceKm = sampleDistanceInBand(sector.radiusBandKm);
+    const bearingDeg = randomBearingInBand(sector.bearingBand);
+    const location = offsetCoordinate(geoConfig.center.lat, geoConfig.center.lng, distanceKm, bearingDeg);
     const churnRisk = clamp(
-      0.11 + ((1.05 - sector.historicalTraffic) * 0.12) + faker.number.float({ min: -0.02, max: 0.07 }),
-      0.06,
-      0.42,
+      0.1
+      + ((1.08 - sector.historicalTraffic) * 0.12)
+      + ((1.05 - geoConfig.workerScale) * 0.06)
+      + faker.number.float({ min: -0.02, max: 0.08 }),
+      0.05,
+      0.46,
     );
     const acquisitionCost = Math.round(
-      sector.marketingEffort / 110
-      + estimatedValue * 0.045
-      + faker.number.float({ min: 25, max: 95 }),
+      (sector.marketingEffort / (115 + (geoConfig.workerScale * 18)))
+      + (estimatedValue * 0.045)
+      + faker.number.float({ min: 25, max: 105 }),
     );
-    const emergencyBias = emergencyBiasByService[serviceType] ?? 0.06;
+    const emergencyBias = clamp(
+      (emergencyBiasByService[serviceType] ?? 0.06) + geoConfig.emergencyScale,
+      0.04,
+      0.34,
+    );
 
     return {
-      lat: Number(faker.location.latitude({ min: sector.latRange[0], max: sector.latRange[1], precision: 0.0001 })),
-      lng: Number(faker.location.longitude({ min: sector.lngRange[0], max: sector.lngRange[1], precision: 0.0001 })),
+      lat: location.lat,
+      lng: location.lng,
       serviceType,
       timestamp: buildTimestamp(batchIndex),
       estimatedValue,
       areaSector: sector.label,
-      marketingEffort: sector.marketingEffort + faker.number.int({ min: -450, max: 650 }),
+      marketingEffort: Math.round(sector.marketingEffort + faker.number.int({ min: -520, max: 760 })),
       activeWorkersHint,
-      historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.08, max: 0.11 })).toFixed(3)),
+      historicalTraffic: Number((sector.historicalTraffic + faker.number.float({ min: -0.06, max: 0.1 })).toFixed(3)),
       acquisitionCost,
       churnRisk: Number(churnRisk.toFixed(3)),
       isEmergency: faker.number.float({ min: 0, max: 1 }) < emergencyBias,

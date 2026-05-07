@@ -19,6 +19,7 @@ import thekedarRoutes from "./routes/thekedar.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import analyticsRoutes from "./routes/analytics.routes.js";
 import { getInvestorAnalytics } from "./controllers/admin.analytics.js";
+import { analyzeStrategyBrief } from "./controllers/analytics.controller.js";
 import { protect, authorize } from "./middleware/auth.js";
 import {
   isConfiguredAdminEmail,
@@ -292,6 +293,7 @@ connectDB()
     });
 
     app.get("/api/admin/investor-analytics", protect, authorize("admin"), getInvestorAnalytics);
+    app.post("/api/admin/analyze-strategy", protect, authorize("admin"), analyzeStrategyBrief);
 
     app.post("/api/auth/admin-login", async (req, res) => {
       const { email, password } = req.body;
