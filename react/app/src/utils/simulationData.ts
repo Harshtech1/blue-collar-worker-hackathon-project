@@ -27,7 +27,7 @@ export const SIMULATION_SCENARIOS: Array<{
   },
   {
     id: "price_war",
-    label: "Price War",
+    label: "Market Competition Stress",
     blurb: "A discount-heavy competitor spikes CAC, pushes churn upward, and forces a profitability-floor response.",
   },
 ];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -24,6 +24,7 @@ import { FinanceTab } from "./components/FinanceTab";
 import { HeatmapTab } from "./components/HeatmapTab";
 import { IntelligenceTab } from "./components/IntelligenceTab";
 import { API } from '@/lib/constants';
+import { toast } from "sonner";
 
 /* ================= TYPES ================= */
 
@@ -144,6 +145,7 @@ export default function AdminDashboard() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const systemReadyToastShown = useRef(false);
 
 
   /* ================= AUTH ================= */
@@ -174,6 +176,35 @@ export default function AdminDashboard() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || systemReadyToastShown.current) return;
+
+    let cancelled = false;
+
+    const probeSystemReadiness = async () => {
+      try {
+        const res = await fetch(`${API}/health`, { cache: "no-store" });
+        if (!res.ok) return;
+
+        const health = await res.json();
+        if (cancelled) return;
+
+        if (health?.status === "ok" && health?.media?.secureUploadsReady === true) {
+          systemReadyToastShown.current = true;
+          toast.success("System Ready: Render, database, Socket.IO, and secure uploads are live.");
+        }
+      } catch (probeError) {
+        console.warn("[AdminDashboard] Health probe failed:", probeError);
+      }
+    };
+
+    void probeSystemReadiness();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
 
   // PRIORITY 1 FIX: Credentials validated SERVER-SIDE via POST /api/auth/admin-login.
   // Admin password no longer lives in the JS bundle as a VITE_ variable.

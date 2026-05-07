@@ -302,8 +302,8 @@ const scenarioMeta: Record<SimulationScenario, {
     iconTone: "text-rose-600",
   },
   price_war: {
-    label: "Price War Simulation",
-    badge: "CONTESTED MARKET",
+    label: "Market Competition Stress",
+    badge: "COMPETITION STRESS",
     summary: "A competitor discount war drives CAC upward, lifts churn, and forces the engine to defend the profitability floor sector by sector.",
     ribbon: "border-amber-300 bg-[linear-gradient(135deg,_rgba(253,230,138,0.24),_rgba(251,146,60,0.18))] text-amber-950",
     iconTone: "text-amber-700",
@@ -326,6 +326,8 @@ const getScenarioWeatherSignal = (scenario: SimulationScenario) => {
       return "Monsoon scenario active: repair demand is upweighted, worker mobility is reduced, and cash burn is elevated.";
     case "supply_crunch":
       return "Supply shortage scenario active: worker availability is down 50% while priority demand is surging across the zone.";
+    case "price_war":
+      return "Market competition stress is active: CAC is elevated, churn pressure is rising, and margin defense is the command priority.";
     default:
       return "Normal operating window with standard workforce mobility, demand shape, and acquisition pressure.";
   }
@@ -349,6 +351,12 @@ const getScenarioLogicSignals = ({
         "Repair-heavy categories like Plumbing, Roofing, and Electrical are receiving higher traffic weight in the current run.",
         `Projected 48-hour burn runway at current pace is ${formatCurrency(totalDailyBurn * 2)}.`,
       ];
+    case "price_war":
+      return [
+        "Market competition stress is active: customer acquisition cost and churn assumptions are both running above the baseline city model.",
+        `The profitability floor is being defended first in ${hottestSector || "the hottest sector"} while broad discount matching is kept off by default.`,
+        `The intervention target is to preserve ${formatCurrency(marginLift)} of margin while the command zone absorbs contested-market pressure.`,
+      ];
     case "supply_crunch":
       return [
         "Supply shortage drill active: active workers are halved so the engine can expose the first zone that breaks under pressure.",
@@ -368,6 +376,8 @@ const getScenarioRequestDescriptor = (scenario: SimulationScenario) => {
   switch (scenario) {
     case "monsoon":
       return "storm-adjusted";
+    case "price_war":
+      return "competition-adjusted";
     case "supply_crunch":
       return "shortage-adjusted";
     default:
@@ -379,6 +389,8 @@ const getScenarioInferenceSuffix = (scenario: SimulationScenario) => {
   switch (scenario) {
     case "monsoon":
       return "under weather stress";
+    case "price_war":
+      return "under competition stress";
     case "supply_crunch":
       return "under supply preservation pressure";
     default:
@@ -390,6 +402,8 @@ const getScenarioVisualizationMessage = (scenario: SimulationScenario) => {
   switch (scenario) {
     case "monsoon":
       return "Inference complete. Rendering the storm command map, emergency staffing shifts, and burn-response plan.";
+    case "price_war":
+      return "Inference complete. Rendering the profitability-floor map, CAC pressure signals, and retention-first response plan.";
     case "supply_crunch":
       return "Inference complete. Rendering the supply-gap heatmap, redeployment orders, and service-preservation ladder.";
     default:
@@ -401,6 +415,8 @@ const getScenarioCompletionToast = (scenario: SimulationScenario) => {
   switch (scenario) {
     case "monsoon":
       return "RAHI monsoon stress test finished successfully.";
+    case "price_war":
+      return "RAHI market competition stress test finished successfully.";
     case "supply_crunch":
       return "RAHI supply shortage drill finished successfully.";
     default:
@@ -412,6 +428,8 @@ const getScenarioLaunchLabel = (scenario: SimulationScenario) => {
   switch (scenario) {
     case "monsoon":
       return "Launch Monsoon Stress Test";
+    case "price_war":
+      return "Launch Competition Stress Test";
     case "supply_crunch":
       return "Launch 50% Supply Shortage";
     default:
@@ -428,6 +446,15 @@ const getScenarioPhaseCopy = (scenario: SimulationScenario): Record<SimulationPh
         inferencing: "Streaming each batch into the Random Forest engine with monsoon supply-friction assumptions.",
         visualizing: "Packaging emergency staffing shifts, amber alerts, and burn-pressure signals for the command map.",
         complete: "Monsoon simulation complete. The command map, economics, and storm playbook are ready for review.",
+        error: "Simulation paused because a batch failed. Fix the service and launch again.",
+      };
+    case "price_war":
+      return {
+        idle: "Select a city, pin the zone, and trigger market competition stress to see where CAC pressure breaks margin first.",
+        generating: "Generating competition-adjusted booking traffic with elevated CAC and churn assumptions across the active zone.",
+        inferencing: "Streaming each batch into the Random Forest engine with profitability-floor and retention guardrails enabled.",
+        visualizing: "Packaging margin-defense hotspots, retention pivots, and contested-market warnings for the command map.",
+        complete: "Competition stress complete. The profitability map, retention plan, and margin-defense logic are ready for review.",
         error: "Simulation paused because a batch failed. Fix the service and launch again.",
       };
     case "supply_crunch":
@@ -658,6 +685,14 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
   const totalOptimizedCost = useMemo(
     () => effectiveAggregatedSectors.reduce((sum, sector) => sum + sector.optimizedCost, 0),
     [effectiveAggregatedSectors],
+  );
+  const totalCostSavings = useMemo(
+    () => Math.max(0, totalTraditionalCost - totalOptimizedCost),
+    [totalOptimizedCost, totalTraditionalCost],
+  );
+  const costSavingsRate = useMemo(
+    () => (totalTraditionalCost > 0 ? totalCostSavings / totalTraditionalCost : 0),
+    [totalCostSavings, totalTraditionalCost],
   );
   const totalProjectedOrders = useMemo(
     () => effectiveAggregatedSectors.reduce((sum, sector) => sum + sector.projectedOrders, 0),
@@ -1211,7 +1246,7 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
 
           if (weakMarginSector && weakMarginSector.acquisition_cost >= 250) {
             appendFeed(
-              `PRICE-WAR ALERT: ${weakMarginSector.area_sector} is under the highest CAC pressure at ${formatCurrency(weakMarginSector.acquisition_cost)} with margin compression live.`,
+              `COMPETITION ALERT: ${weakMarginSector.area_sector} is under the highest CAC pressure at ${formatCurrency(weakMarginSector.acquisition_cost)} with margin compression live.`,
             );
           }
         } else if (selectedScenario === "supply_crunch") {
@@ -1780,19 +1815,38 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
 
         <TabsContent value="financial" className="mt-4 grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
           <div className="space-y-4">
+            <div className="rounded-[1.5rem] border border-emerald-200 bg-[linear-gradient(135deg,_rgba(16,185,129,0.12),_rgba(15,23,42,0.03))] p-5 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Unit Economic Survival</p>
+                  <h4 className="mt-2 text-2xl font-black text-slate-950">Cost-cutting is the primary investor signal in this command ring.</h4>
+                  <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-600">
+                    RAHI is currently stripping out flat staffing waste first, then protecting worker retention only where the supply chain would otherwise fracture.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-white/80 px-4 py-3 text-right shadow-sm">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">Cost savings live</p>
+                  <p className="mt-2 text-3xl font-black text-slate-950">{formatCurrency(totalCostSavings)}</p>
+                  <p className="mt-1 text-xs font-bold text-slate-500">
+                    {formatPercent(costSavingsRate)} lower than the traditional staffing model
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <SimulationMetricCard
-                label="Average CAC"
-                value={formatCurrency(financialOverview.averageCac)}
-                hint="Acquisition cost per zone"
-                icon={HandCoins}
+                label="Daily burn"
+                value={formatCurrency(financialOverview.totalDailyBurn)}
+                hint="Cash pressure across the active command zone"
+                icon={TrendingDown}
                 tone="rose"
               />
               <SimulationMetricCard
-                label="Average LTV"
-                value={formatCurrency(financialOverview.averageLtv)}
-                hint="Estimated value retained per customer"
-                icon={TrendingUp}
+                label="Cost savings"
+                value={formatCurrency(totalCostSavings)}
+                hint="Traditional model cost removed by density optimization"
+                icon={Zap}
                 tone="emerald"
               />
               <SimulationMetricCard
@@ -1803,10 +1857,10 @@ export function SimulationEngine({ onSimulationComplete, onTelemetryChange }: Si
                 tone="indigo"
               />
               <SimulationMetricCard
-                label="Daily burn"
-                value={formatCurrency(financialOverview.totalDailyBurn)}
-                hint="Cash pressure across the active command zone"
-                icon={TrendingDown}
+                label="Average CAC"
+                value={formatCurrency(financialOverview.averageCac)}
+                hint="Acquisition cost per zone"
+                icon={HandCoins}
                 tone="sky"
               />
             </div>

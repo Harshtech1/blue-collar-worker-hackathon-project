@@ -630,6 +630,7 @@ const buildStrategyFallback = ({
   churnRate,
   marginLift,
   scenario = "baseline",
+  competitorSignal,
 }: {
   zoneLabel: string;
   city: string;
@@ -644,16 +645,25 @@ const buildStrategyFallback = ({
   churnRate: number;
   marginLift: number;
   scenario?: SimulationCompletionPayload["scenario"];
+  competitorSignal?: string | null;
 }): StrategyBrief => {
+  const competitorReasoning = competitorSignal
+    ? ` ${competitorSignal} The operating response should protect trust and margin instead of matching blanket discounting.`
+    : "";
+  const competitorProcedure = competitorSignal
+    ? `Keep pricing disciplined in ${zoneLabel} and counter the live discount with Verified Pro proof plus loyalty retention messaging.`
+    : null;
+
   if (scenario === "supply_crunch") {
     return {
       signal: `${zoneLabel} has entered amber-alert preservation mode; supply is collapsing faster than the current field plan can recover on its own.`,
-      reasoning: `The supply crunch override prioritizes service preservation over growth. Density is ${densityScore.toFixed(2)}, ${predictedDemand} jobs are in the forecast, and the current ${currentWorkers}-worker field base cannot absorb the shortage without suspending lower-priority demand.`,
+      reasoning: `The supply crunch override prioritizes service preservation over growth. Density is ${densityScore.toFixed(2)}, ${predictedDemand} jobs are in the forecast, and the current ${currentWorkers}-worker field base cannot absorb the shortage without suspending lower-priority demand.${competitorReasoning}`,
       procedures: [
         `Suspend non-essential bookings in ${zoneLabel} and keep salaried workers focused on high-priority jobs for the next ${timeLens} window.`,
         `Activate a temporary ${Math.max(1.5, priceMultiplier).toFixed(2)}x payout shield so emergency acceptance does not collapse in ${city}.`,
         `Re-route the core team toward ${hottestSector} and re-run the shortage simulation before reopening growth lanes.`,
-      ],
+        competitorProcedure,
+      ].filter((procedure): procedure is string => Boolean(procedure)),
       provider: "rule_engine",
       model: "density-rule-fallback",
       saved: false,
@@ -664,12 +674,13 @@ const buildStrategyFallback = ({
   if (scenario === "monsoon") {
     return {
       signal: `${zoneLabel} is under active monsoon deployment protocol; emergency repair density is rising faster than a normal-day workforce plan can absorb.`,
-      reasoning: `The weather-aware Density Rule treats ${zoneLabel} as an emergency reliability lane first. Density is ${densityScore.toFixed(2)}, there are ${emergencyOrders} emergency jobs in the current signal stack, and pricing or staffing delays will turn directly into burn and service-quality erosion.`,
+      reasoning: `The weather-aware Density Rule treats ${zoneLabel} as an emergency reliability lane first. Density is ${densityScore.toFixed(2)}, there are ${emergencyOrders} emergency jobs in the current signal stack, and pricing or staffing delays will turn directly into burn and service-quality erosion.${competitorReasoning}`,
       procedures: [
         `Shift salaried workers into Plumbing, Roofing, and Electrical lanes in ${zoneLabel} for the next ${timeLens} window.`,
         `Hold a weather multiplier near ${Math.max(1.25, priceMultiplier).toFixed(2)}x so response incentives do not collapse contribution margin in ${city}.`,
         `Pause low-priority cosmetic work and re-run the storm simulation before reopening general-service growth in ${hottestSector}.`,
-      ],
+        competitorProcedure,
+      ].filter((procedure): procedure is string => Boolean(procedure)),
       provider: "rule_engine",
       model: "density-rule-fallback",
       saved: false,
@@ -680,12 +691,13 @@ const buildStrategyFallback = ({
   if (densityScore > 2.5) {
     return {
       signal: `${zoneLabel} is overheating; density ${densityScore.toFixed(2)} is outpacing the current ${currentWorkers}-worker field capacity.`,
-      reasoning: `The Density Rule treats ${zoneLabel} as a salaried-core zone because D=${densityScore.toFixed(2)} is above 2.5. With ${predictedDemand} forecast jobs and ${emergencyOrders} emergency orders, reliability matters more than freelancer flexibility.`,
+      reasoning: `The Density Rule treats ${zoneLabel} as a salaried-core zone because D=${densityScore.toFixed(2)} is above 2.5. With ${predictedDemand} forecast jobs and ${emergencyOrders} emergency orders, reliability matters more than freelancer flexibility.${competitorReasoning}`,
       procedures: [
         `Deploy 5 salaried workers into ${zoneLabel} and route emergency demand there first until density cools below 2.3.`,
         `Hold pricing around ${priceMultiplier.toFixed(2)}x and defend fill rate before expanding acquisition in ${city}.`,
         `Run photo-proof QA checks in ${hottestSector} before the next ${timeLens} demand wave.`,
-      ],
+        competitorProcedure,
+      ].filter((procedure): procedure is string => Boolean(procedure)),
       provider: "rule_engine",
       model: "density-rule-fallback",
       saved: false,
@@ -696,12 +708,13 @@ const buildStrategyFallback = ({
   if (densityScore < 1.0) {
     return {
       signal: `${zoneLabel} is under-dense; D=${densityScore.toFixed(2)} means salaried hiring here is a burn trap right now.`,
-      reasoning: `The Density Rule treats ${zoneLabel} as freelancer-led because D=${densityScore.toFixed(2)} is below 1.0. Fixed payroll would expand faster than service reliability, especially with acquisition cost already at ${formatCurrency(acquisitionCost)}.`,
+      reasoning: `The Density Rule treats ${zoneLabel} as freelancer-led because D=${densityScore.toFixed(2)} is below 1.0. Fixed payroll would expand faster than service reliability, especially with acquisition cost already at ${formatCurrency(acquisitionCost)}.${competitorReasoning}`,
       procedures: [
         `Pause salaried expansion in ${zoneLabel} and cover this zone with verified freelancers for the next ${timeLens}.`,
         `Shift referral bonuses to high-quality freelancers instead of adding fixed payroll in ${city}.`,
         `Re-open salaried hiring only if margin lift rises above ${formatCurrency(Math.max(0, marginLift))} while churn drops below ${churnRate.toFixed(1)}%.`,
-      ],
+        competitorProcedure,
+      ].filter((procedure): procedure is string => Boolean(procedure)),
       provider: "rule_engine",
       model: "density-rule-fallback",
       saved: false,
@@ -711,12 +724,13 @@ const buildStrategyFallback = ({
 
   return {
     signal: `${zoneLabel} is in the transition band; D=${densityScore.toFixed(2)} supports a hybrid workforce, but the next move should be paced carefully.`,
-    reasoning: `The Density Rule keeps ${zoneLabel} hybrid because D=${densityScore.toFixed(2)} sits between 1.0 and 2.5. The zone can absorb a small salaried core, but churn at ${churnRate.toFixed(1)}% means burn control still matters.`,
+    reasoning: `The Density Rule keeps ${zoneLabel} hybrid because D=${densityScore.toFixed(2)} sits between 1.0 and 2.5. The zone can absorb a small salaried core, but churn at ${churnRate.toFixed(1)}% means burn control still matters.${competitorReasoning}`,
     procedures: [
       `Add 2 salaried anchors in ${zoneLabel} while keeping flexible freelancer coverage for the next ${timeLens} cycle.`,
       `Keep pricing close to ${priceMultiplier.toFixed(2)}x until repeat demand rises faster than fixed labor cost.`,
       `Re-run the simulation after the next peak and promote ${zoneLabel} only if density stays above 1.8 for consecutive windows.`,
-    ],
+      competitorProcedure,
+    ].filter((procedure): procedure is string => Boolean(procedure)),
     provider: "rule_engine",
     model: "density-rule-fallback",
     saved: false,
@@ -787,6 +801,7 @@ const buildStrategyTerminalScript = ({
   densityScore,
   strategyBrief,
   logicSignals,
+  competitorPulseMessage,
 }: {
   status: StrategyTerminalStatus;
   activeSector: SectorSignal;
@@ -794,12 +809,14 @@ const buildStrategyTerminalScript = ({
   densityScore: number;
   strategyBrief: StrategyBrief | null;
   logicSignals: string[];
+  competitorPulseMessage?: string | null;
 }) => {
   if (status === "thinking") {
     return [
       `$ rahi://strategy/${activeSector.id}`,
       `> Booting command lane for ${activeSector.label}`,
       `> Syncing ${timeLensLabel} density window at D=${densityScore.toFixed(2)}`,
+      ...(competitorPulseMessage ? [`> [INTEL] ${competitorPulseMessage}`] : []),
       ...logicSignals.slice(0, 3).map((signal) => `> ${signal}`),
       "> Drafting CEO briefing...",
     ].join("\n");
@@ -817,6 +834,7 @@ const buildStrategyTerminalScript = ({
     `$ rahi://strategy/${activeSector.id}`,
     `> SIGNAL: ${strategyBrief.signal}`,
     `> WHY: ${strategyBrief.reasoning}`,
+    ...(competitorPulseMessage ? [`> INTEL: ${competitorPulseMessage}`] : []),
     ...strategyBrief.procedures.map((procedure, index) => `> CMD-${index + 1}: ${procedure}`),
   ].join("\n");
 };
@@ -1124,6 +1142,7 @@ export function IntelligenceTab({
   } | null>(null);
   const logScrollerRef = useRef<HTMLDivElement | null>(null);
   const lastTelemetryMessageRef = useRef<string | null>(null);
+  const lastCompetitorPulseRef = useRef<string | null>(null);
 
   const loadInvestorAnalytics = useCallback(async () => {
     try {
@@ -1227,6 +1246,21 @@ export function IntelligenceTab({
   const activeMapZone = useMemo(() => (
     commandMapZones.find((zone) => zone.id === activeSector.id) || commandMapZones[0]
   ), [activeSector.id]);
+
+  const competitorPulse = useMemo<CompetitorPulse>(() => (
+    competitorPulseFeed.find((pulse) => pulse.zoneId === activeSector.id) || {
+      id: `intel-${activeSector.id}`,
+      competitor: "UrbanX",
+      zoneId: activeSector.id,
+      zoneLabel: activeSector.label,
+      discountPercent: 12,
+      response: "Protect margin with loyalty nudges and lead with RAHI Verified Pro proof instead of matching broad discounts.",
+    }
+  ), [activeSector.id, activeSector.label]);
+
+  const competitorPulseMessage = useMemo(() => (
+    `Competitor '${competitorPulse.competitor}' just launched a ${competitorPulse.discountPercent}% discount in ${competitorPulse.zoneLabel}. ${competitorPulse.response}`
+  ), [competitorPulse]);
 
   const zoneDensityMap = useMemo(() => {
     const entries = sectorSignals
@@ -1422,10 +1456,12 @@ export function IntelligenceTab({
       densityScore: analysis.density_score,
       strategyBrief,
       logicSignals: simulationLogicSignals,
+      competitorPulseMessage,
     })
   ), [
     activeSector,
     analysis.density_score,
+    competitorPulseMessage,
     simulationLogicSignals,
     strategyBrief,
     strategyStatus,
@@ -1480,6 +1516,20 @@ export function IntelligenceTab({
     logScrollerRef.current.scrollTop = logScrollerRef.current.scrollHeight;
   }, [logicLog]);
 
+  useEffect(() => {
+    const competitorKey = `${activeSector.id}:${competitorPulse.id}`;
+    if (lastCompetitorPulseRef.current === competitorKey) {
+      return;
+    }
+
+    appendLogicEntry(competitorPulseMessage, {
+      tone: "warning",
+      source: "system",
+      tag: "INTEL",
+    });
+    lastCompetitorPulseRef.current = competitorKey;
+  }, [activeSector.id, appendLogicEntry, competitorPulse.id, competitorPulseMessage]);
+
   const requestStrategyBrief = useCallback(async (
     options?: {
       simulation?: SimulationCompletionPayload | null;
@@ -1492,6 +1542,10 @@ export function IntelligenceTab({
     const token = localStorage.getItem("adminToken");
     const timeLensLabel = timeLensMeta[timeLens].label;
     const logicSignals = buildSimulationLogicSignals(simulation, activeSector.label);
+    const combinedLogicSignals = [
+      `[INTEL] ${competitorPulseMessage}`,
+      ...logicSignals,
+    ];
 
     const payload = {
       routePath: `/admin-portal-2026/intelligence/${activeSector.id}`,
@@ -1517,7 +1571,7 @@ export function IntelligenceTab({
       pricingSignal,
       serviceWarning: analysis.service_warning || null,
       auditData: auditSignals,
-      logicSignals,
+      logicSignals: combinedLogicSignals,
       financials: {
         acquisitionCost: activeSector.spend,
         churnRate: investorAnalytics.summary.churnRate,
@@ -1572,7 +1626,7 @@ export function IntelligenceTab({
         ? `Churn risk detected in ${activeSector.label}. Querying Gemini for an investor-grade retention and staffing strategy.`
         : simulation?.scenario === "supply_crunch"
           ? `Supply crunch detected in ${activeSector.label}. Querying Gemini for a service-preservation intervention plan.`
-          : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift.`,
+          : `Scanning ${activeSector.label} for demand-supply delta before the next ${timeLensLabel} workforce shift while competitor pressure stays live.`,
       {
         tone: deepDive || simulation?.scenario === "supply_crunch" ? "warning" : "info",
         source: "strategy",
@@ -1635,6 +1689,7 @@ export function IntelligenceTab({
         churnRate: investorAnalytics.summary.churnRate,
         marginLift: simulation?.marginLift ?? (aiScenario.projectedProfit - currentScenario.projectedProfit),
         scenario: simulation?.scenario ?? "baseline",
+        competitorSignal: competitorPulseMessage,
       });
 
       setStrategyBrief(fallbackBrief);
@@ -1670,6 +1725,7 @@ export function IntelligenceTab({
     latestSimulation,
     manualScenario.projectedProfit,
     manualScenario.totalWorkers,
+    competitorPulseMessage,
     appendLogicEntry,
     priceMultiplier,
     pricingSignal,
@@ -2136,6 +2192,24 @@ export function IntelligenceTab({
                   {step}
                 </span>
               ))}
+            </div>
+
+            <div className="mt-5 max-w-3xl rounded-[1.4rem] border border-amber-200 bg-white/90 p-4 shadow-sm shadow-amber-100/60">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-700">Competitor Pulse</p>
+                  <h4 className="mt-2 text-base font-black text-slate-950 md:text-lg">
+                    {competitorPulse.competitor} launched {competitorPulse.discountPercent}% discount in {competitorPulse.zoneLabel}
+                  </h4>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                    {competitorPulse.response}
+                  </p>
+                </div>
+                <div className="inline-flex items-center gap-2 self-start rounded-full border border-indigo-200 bg-indigo-50 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-700">
+                  <ShieldCheck className="h-4 w-4" />
+                  Verified Pro Counter
+                </div>
+              </div>
             </div>
           </div>
 
