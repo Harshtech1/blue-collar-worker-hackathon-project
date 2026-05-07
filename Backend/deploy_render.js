@@ -1,7 +1,12 @@
 async function updateService() {
-  const apiKey = "rnd_3i278joTidEYgKy1Nv5xi1bPRLvS";
-  const serviceId = "srv-d7aiiah5pdvs73eb0cqg";
-  const branch = "phase-2-payments-socials";
+  const apiKey = process.env.RENDER_API_KEY;
+  const serviceId = process.env.RENDER_SERVICE_ID;
+  const branch = process.env.RENDER_BRANCH;
+
+  if (!apiKey || !serviceId || !branch) {
+    console.error("Missing required environment variables: RENDER_API_KEY, RENDER_SERVICE_ID, RENDER_BRANCH");
+    process.exit(1);
+  }
 
   const response = await fetch(`https://api.render.com/v1/services/${serviceId}`, {
     method: 'PATCH',
@@ -32,11 +37,16 @@ async function updateService() {
   });
 
   if (!deployResponse.ok) {
-    console.error("Failed to trigger deploy:", await deployResponse.text());
+    const errorText = await deployResponse.text();
+    console.error("Failed to trigger deploy:", deployResponse.status, errorText);
+    process.exit(1);
   } else {
     const deployData = await deployResponse.json();
     console.log("Triggered deploy:", deployData.id, "Status:", deployData.status);
   }
 }
 
-updateService();
+updateService().catch((error) => {
+  console.error("Render deploy script failed:", error);
+  process.exit(1);
+});
