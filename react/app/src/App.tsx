@@ -184,9 +184,8 @@ const ActiveBookingRecovery = () => {
         const activeBookingId = activeBooking?._id || activeBooking?.bookingId;
         if (!activeBookingId) return;
 
-        const safeToRedirect = !location.pathname.startsWith('/admin-portal-2026')
-          && !location.pathname.startsWith('/payment')
-          && !location.pathname.startsWith('/tracking/');
+        const safeToRedirect = location.pathname.startsWith('/bookings')
+          || location.pathname.startsWith('/customer-dashboard');
 
         if (safeToRedirect) {
           navigate(`/tracking/${activeBookingId}`, { replace: true });
