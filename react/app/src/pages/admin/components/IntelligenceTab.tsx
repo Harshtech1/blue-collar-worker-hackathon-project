@@ -530,39 +530,6 @@ const formatAuditTimestamp = (value = new Date()) => (
   value.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 );
 
-const useTypewriterText = (script: string, speedMs = 14) => {
-  const prefersReducedMotion = usePrefersReducedMotion();
-  const [visibleCharCount, setVisibleCharCount] = useState(script.length);
-
-  useEffect(() => {
-    if (prefersReducedMotion) {
-      setVisibleCharCount(script.length);
-      return undefined;
-    }
-
-    if (!script) {
-      setVisibleCharCount(0);
-      return undefined;
-    }
-
-    setVisibleCharCount(0);
-    const step = script.length > 420 ? 8 : script.length > 220 ? 4 : 2;
-    const intervalId = window.setInterval(() => {
-      setVisibleCharCount((current) => {
-        const nextValue = Math.min(script.length, current + step);
-        if (nextValue >= script.length) {
-          window.clearInterval(intervalId);
-        }
-        return nextValue;
-      });
-    }, Math.max(8, speedMs));
-
-    return () => window.clearInterval(intervalId);
-  }, [prefersReducedMotion, script, speedMs]);
-
-  return useMemo(() => script.slice(0, visibleCharCount), [script, visibleCharCount]);
-};
-
 const clampNumber = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
 
 const getDensityTone = (density: number) => {
@@ -2993,12 +2960,23 @@ function CommandCenterMotionStyles() {
         43%, 100% { opacity: 0; }
       }
 
+      @keyframes rahi-map-focus {
+        0% { stroke-opacity: 0.95; fill-opacity: 0.08; transform: scale(0.94); }
+        70% { stroke-opacity: 0; fill-opacity: 0; transform: scale(1.18); }
+        100% { stroke-opacity: 0; fill-opacity: 0; transform: scale(1.18); }
+      }
+
       .rahi-scanline {
         animation: rahi-scanline 2.8s linear infinite;
       }
 
       .rahi-command-pin {
         animation: rahi-command-pin 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+      }
+
+      .rahi-map-focus-ring {
+        transform-origin: center;
+        animation: rahi-map-focus 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
       }
 
       .rahi-terminal-shell {
@@ -3023,34 +3001,13 @@ function CommandCenterMotionStyles() {
       @media (prefers-reduced-motion: reduce) {
         .rahi-scanline,
         .rahi-command-pin,
+        .rahi-map-focus-ring,
         .rahi-terminal-caret {
           animation: none !important;
         }
       }
     `}</style>
   );
-}
-
-function usePrefersReducedMotion() {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return undefined;
-    }
-
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updatePreference = () => setPrefersReducedMotion(mediaQuery.matches);
-
-    updatePreference();
-    mediaQuery.addEventListener?.("change", updatePreference);
-
-    return () => {
-      mediaQuery.removeEventListener?.("change", updatePreference);
-    };
-  }, []);
-
-  return prefersReducedMotion;
 }
 
 function HeroSignal({
@@ -3087,17 +3044,6 @@ function HeroSignal({
       <p className="mt-2 text-2xl font-black text-white">{value}</p>
       <p className="mt-3 text-xs font-semibold leading-5 text-slate-300">{note}</p>
     </button>
-  );
-}
-
-function BrainTerminalIcon() {
-  return (
-    <div className="relative h-5 w-5">
-      <span className="absolute inset-0 rounded-full border border-current opacity-60" />
-      <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current" />
-      <span className="absolute left-1 top-1/2 h-px w-3 translate-y-[-50%] bg-current opacity-80" />
-      <span className="absolute left-1/2 top-1 h-3 w-px translate-x-[-50%] bg-current opacity-80" />
-    </div>
   );
 }
 
