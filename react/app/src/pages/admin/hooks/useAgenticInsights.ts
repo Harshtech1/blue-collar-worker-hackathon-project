@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { API } from "@/lib/constants";
-import { buildSimulationGeoConfig, sectorSeeds, type SimulationGeoConfig } from "@/utils/simulationData";
+import {
+  sectorSeeds,
+  type SimulationGeoConfig,
+} from "@/utils/simulationData";
 import type { AdminShellContextValue } from "../adminShellContext";
 import { buildMissionPath, buildObservabilityPath, buildWarRoomPath } from "../adminRoutes";
 import {
@@ -8,6 +11,7 @@ import {
   humanizeIssueCode,
   type ObservabilityIssue,
 } from "../adminSignals";
+import { buildMarketGeoConfig, getMarketDistrictsForCity } from "../marketRegistry";
 
 const DEMO_ADMIN_TOKEN = "demo-admin-token";
 const INSIGHTS_DEBOUNCE_MS = 700;
@@ -77,12 +81,28 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const formatCurrency = (value: number) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
 
 const resolveCurrentCity = (context: AdminShellContextValue, geoConfig?: SimulationGeoConfig) => {
+  if (context.selectedCityLabel) return context.selectedCityLabel;
   if (geoConfig?.cityLabel) return geoConfig.cityLabel;
 
   const sector = sectorSeeds.find((entry) => entry.id === context.routeZoneId);
   if (sector?.city) return sector.city;
 
   return context.zoneLabel || "Agra";
+};
+
+const resolveGeoConfig = (
+  context: AdminShellContextValue,
+  providedGeoConfig?: SimulationGeoConfig,
+) => {
+  if (providedGeoConfig) return providedGeoConfig;
+
+  return buildMarketGeoConfig({
+    market: context.selectedMarket.city,
+    stateSlug: context.selectedStateSlug,
+    citySlug: context.selectedCitySlug,
+    districtSlug: context.selectedDistrictId,
+    radiusKm: context.selectedCitySlug === "agra" ? 10 : 14,
+  });
 };
 
 const resolveExpansionTarget = (summaryCity: string, currentZoneId: string, isExistingMarket: boolean) => {
@@ -100,6 +120,12 @@ const resolveExpansionTarget = (summaryCity: string, currentZoneId: string, isEx
 };
 
 const buildDemandZones = (city: string, zoneLabel: string) => {
+  const registeredDistricts = getMarketDistrictsForCity(city)
+    .slice(0, 2)
+    .map((district) => district.label);
+
+  if (registeredDistricts.length > 0) return registeredDistricts;
+
   const matchingSectors = sectorSeeds
     .filter((sector) => sector.city.toLowerCase() === city.toLowerCase())
     .sort((left, right) => right.demandWeight - left.demandWeight)
@@ -117,7 +143,7 @@ export const buildAgenticSystemSummary = (
     currentRoute?: string;
   } = {},
 ): AgenticSystemSummary => {
-  const geoConfig = options.geoConfig || buildSimulationGeoConfig({ cityId: context.routeZoneId || "agra" });
+  const geoConfig = resolveGeoConfig(context, options.geoConfig);
   const currentCity = resolveCurrentCity(context, geoConfig);
   const yieldPerJob = Number(context.investorSummary?.unitEconomics?.netProfitPerJob ?? Math.max(0, context.averageTicket * 0.11));
   const cacProjected = Math.max(90, Math.round((context.averageTicket || 600) * (geoConfig.isExistingMarket ? 0.15 : 0.18)));
@@ -145,7 +171,7 @@ export const buildAgenticSystemSummary = (
     zoneLabel: context.zoneLabel,
     currentMission: context.currentMission,
     currentRoute: options.currentRoute || buildMissionPath(context.currentMission, {
-      zoneId: context.routeZoneId,
+      market: context.selectedMarketLocation,
       panel: context.currentObservabilityPanel,
     }),
     density: validatedDensity,
@@ -178,7 +204,7 @@ export const buildAgenticSystemSummary = (
     expansionTargetRoute: expansionTarget.route,
     financeRoute: buildMissionPath("finance"),
     riskRoute: buildObservabilityPath("bug-monitor"),
-    opsRoute: buildWarRoomPath(context.routeZoneId || "agra-cantt"),
+    opsRoute: buildWarRoomPath(context.selectedMarketLocation),
     issues: ADMIN_OBSERVABILITY_ISSUES,
     auditTrail: context.activities.slice(0, 8).map((activity) => ({
       source: activity.role || activity.type || "ops",

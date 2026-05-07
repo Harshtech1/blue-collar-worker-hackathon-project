@@ -1,7 +1,16 @@
-import { GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
+import {
+  buildMarketBreadcrumb,
+  getDefaultMarketLocation,
+  resolveMarketLocation,
+  resolveLegacyMarketTarget,
+  resolveMarketContext,
+  resolveMarketLabel as resolveLabelFromRegistry,
+  type MarketLocation,
+} from "./marketRegistry";
 
 export const ADMIN_ROUTE_PREFIX = "/admin-portal-2026";
-export const DEFAULT_WAR_ROOM_ZONE = "agra-cantt";
+export const DEFAULT_WAR_ROOM_MARKET = getDefaultMarketLocation();
+export const DEFAULT_WAR_ROOM_ZONE = DEFAULT_WAR_ROOM_MARKET.citySlug;
 
 export type AdminTab =
   | "overview"
@@ -56,6 +65,18 @@ const getAdminSegments = (pathname: string) => {
   return trimmed.split("/").filter(Boolean);
 };
 
+const normalizeMarketLocation = (
+  location?: Partial<MarketLocation> | null,
+): MarketLocation => {
+  if (!location) return resolveMarketLocation(
+    DEFAULT_WAR_ROOM_MARKET.stateSlug,
+    DEFAULT_WAR_ROOM_MARKET.citySlug,
+    DEFAULT_WAR_ROOM_MARKET.districtSlug,
+  );
+
+  return resolveMarketLocation(location.stateSlug, location.citySlug, location.districtSlug);
+};
+
 export const resolveObservabilityPanel = (value?: string | null): AdminObservabilityPanel => {
   switch (value) {
     case "bug-monitor":
@@ -98,15 +119,34 @@ export const getMissionFromPath = (pathname: string): AdminMission => {
   }
 };
 
-export const getWarRoomZoneIdFromPath = (pathname: string) => {
-  const [firstSegment, secondSegment] = getAdminSegments(pathname);
+export const getWarRoomLocationFromPath = (pathname: string): MarketLocation => {
+  const [firstSegment, secondSegment, thirdSegment, fourthSegment] = getAdminSegments(pathname);
 
   if (firstSegment === "war-room" || firstSegment === "intelligence") {
-    return secondSegment || DEFAULT_WAR_ROOM_ZONE;
+    if (secondSegment && thirdSegment) {
+      return normalizeMarketLocation({
+        stateSlug: decodeURIComponent(secondSegment),
+        citySlug: decodeURIComponent(thirdSegment),
+        districtSlug: fourthSegment ? decodeURIComponent(fourthSegment) : null,
+      });
+    }
+
+    const legacy = resolveLegacyMarketTarget(secondSegment ? decodeURIComponent(secondSegment) : null);
+    if (legacy) {
+      return normalizeMarketLocation(legacy);
+    }
   }
 
-  return DEFAULT_WAR_ROOM_ZONE;
+  return { ...DEFAULT_WAR_ROOM_MARKET };
 };
+
+export const getWarRoomDistrictFromPath = (pathname: string) => {
+  return getWarRoomLocationFromPath(pathname).districtSlug || null;
+};
+
+export const getWarRoomZoneIdFromPath = (pathname: string) => (
+  getWarRoomLocationFromPath(pathname).citySlug
+);
 
 export const getObservabilityPanelFromPath = (pathname: string) => {
   const [firstSegment, secondSegment] = getAdminSegments(pathname);
@@ -119,24 +159,76 @@ export const getObservabilityPanelFromPath = (pathname: string) => {
   return "system-health";
 };
 
-export const resolveMarketLabel = (zoneId?: string | null) => {
-  if (!zoneId) return "Agra Cantt";
+export const resolveMarketContextFromLocation = (
+  stateSlug?: string | null,
+  citySlug?: string | null,
+  districtSlug?: string | null,
+) => resolveMarketContext(stateSlug, citySlug, districtSlug);
 
-  const sector = sectorSeeds.find((entry) => entry.id === zoneId);
-  if (sector) return sector.label;
+export const resolveMarketLabel = (
+  cityOrStateSlug?: string | null,
+  citySlugOrDistrictSlug?: string | null,
+  districtSlug?: string | null,
+) => {
+  if (districtSlug !== undefined) {
+    return resolveLabelFromRegistry(cityOrStateSlug, citySlugOrDistrictSlug, districtSlug);
+  }
 
-  const city = GLOBAL_SIMULATION_CITIES.find((entry) => entry.id === zoneId);
-  if (city) return city.stateCode ? `${city.label}, ${city.stateCode}` : city.label;
+  if (citySlugOrDistrictSlug) {
+    return resolveLabelFromRegistry(cityOrStateSlug, citySlugOrDistrictSlug, null);
+  }
 
-  return zoneId
-    .split("-")
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
+  const legacy = resolveLegacyMarketTarget(cityOrStateSlug);
+  if (legacy) {
+    return resolveLabelFromRegistry(legacy.stateSlug, legacy.citySlug, legacy.districtSlug);
+  }
+
+  return resolveLabelFromRegistry(DEFAULT_WAR_ROOM_MARKET.stateSlug, DEFAULT_WAR_ROOM_MARKET.citySlug, null);
 };
 
-export const buildWarRoomPath = (zoneId = DEFAULT_WAR_ROOM_ZONE) => (
-  `${ADMIN_ROUTE_PREFIX}/war-room/${encodeURIComponent(zoneId)}`
-);
+export const buildWarRoomPath = (
+  stateOrLocation: string | MarketLocation = DEFAULT_WAR_ROOM_MARKET,
+  citySlug?: string | null,
+  districtSlug?: string | null,
+) => {
+  const location = (() => {
+    if (typeof stateOrLocation === "object") {
+      return normalizeMarketLocation(stateOrLocation);
+    }
+
+    if (citySlug) {
+      return normalizeMarketLocation({
+        stateSlug: stateOrLocation,
+        citySlug,
+        districtSlug: districtSlug || null,
+      });
+    }
+
+    const legacy = resolveLegacyMarketTarget(stateOrLocation);
+    if (legacy) {
+      return normalizeMarketLocation(legacy);
+    }
+
+    return { ...DEFAULT_WAR_ROOM_MARKET };
+  })();
+
+  const districtSegment = location.districtSlug
+    ? `/${encodeURIComponent(location.districtSlug)}`
+    : "";
+
+  return `${ADMIN_ROUTE_PREFIX}/war-room/${encodeURIComponent(location.stateSlug)}/${encodeURIComponent(location.citySlug)}${districtSegment}`;
+};
+
+export const buildIntelligencePath = (
+  stateOrLocation: string | MarketLocation = DEFAULT_WAR_ROOM_MARKET,
+  citySlug?: string | null,
+) => buildWarRoomPath(
+  typeof stateOrLocation === "object"
+    ? stateOrLocation
+    : citySlug
+      ? { stateSlug: stateOrLocation, citySlug }
+      : resolveLegacyMarketTarget(stateOrLocation) || DEFAULT_WAR_ROOM_MARKET,
+).replace("/war-room/", "/intelligence/");
 
 export const buildObservabilityPath = (
   panel: AdminObservabilityPanel = "system-health",
@@ -146,14 +238,17 @@ export const buildMissionPath = (
   mission: AdminMission,
   options: {
     zoneId?: string;
+    market?: Partial<MarketLocation>;
     panel?: AdminObservabilityPanel;
   } = {},
 ) => {
+  const location = options.market || (options.zoneId ? resolveLegacyMarketTarget(options.zoneId) : null) || DEFAULT_WAR_ROOM_MARKET;
+
   switch (mission) {
     case "overview":
       return `${ADMIN_ROUTE_PREFIX}/overview`;
     case "war-room":
-      return buildWarRoomPath(options.zoneId || DEFAULT_WAR_ROOM_ZONE);
+      return buildWarRoomPath(location as MarketLocation);
     case "workforce":
       return `${ADMIN_ROUTE_PREFIX}/workforce`;
     case "finance":
@@ -177,8 +272,12 @@ export const buildPathForTool = (tool: AdminToolAction) => {
 
 export const buildPathForTab = (
   tab: AdminTab,
-  currentZoneId = DEFAULT_WAR_ROOM_ZONE,
+  currentZoneIdOrLocation: string | MarketLocation = DEFAULT_WAR_ROOM_MARKET,
 ) => {
+  const market = typeof currentZoneIdOrLocation === "string"
+    ? resolveLegacyMarketTarget(currentZoneIdOrLocation) || DEFAULT_WAR_ROOM_MARKET
+    : currentZoneIdOrLocation;
+
   switch (tab) {
     case "overview":
       return buildMissionPath("overview");
@@ -190,7 +289,7 @@ export const buildPathForTab = (
       return buildMissionPath("finance");
     case "heatmap":
     case "intelligence":
-      return buildWarRoomPath(currentZoneId);
+      return buildWarRoomPath(market);
     case "system":
       return buildObservabilityPath("system-health");
     case "bugs":
@@ -203,3 +302,7 @@ export const buildPathForTab = (
       return buildMissionPath("overview");
   }
 };
+
+export const buildMarketBreadcrumbLabel = (
+  location: Partial<MarketLocation> = DEFAULT_WAR_ROOM_MARKET,
+) => buildMarketBreadcrumb(location.stateSlug, location.citySlug, location.districtSlug);

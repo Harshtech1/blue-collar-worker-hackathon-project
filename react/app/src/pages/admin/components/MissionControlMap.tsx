@@ -16,13 +16,19 @@ import {
 import "leaflet/dist/leaflet.css";
 import { cn } from "@/lib/utils";
 import {
-  buildSimulationGeoConfig,
   DEFAULT_SIMULATION_CITY_ID,
   generateSimulationBatch,
   GLOBAL_SIMULATION_CITIES,
   type GlobalSimulationCity,
   sectorSeeds,
 } from "@/utils/simulationData";
+import {
+  buildMarketBreadcrumb,
+  buildMarketGeoConfig,
+  getMarketDistrictBySlug,
+  getMarketDistrictsForCity,
+  type MarketCity,
+} from "../marketRegistry";
 import type { AdminTab } from "./AdminSidebar";
 
 interface MissionControlWorker {
@@ -49,10 +55,14 @@ interface MissionControlBooking {
 interface MissionControlMapProps {
   activeTab: AdminTab;
   routeZoneId?: string | null;
+  selectedMarket?: MarketCity | null;
+  selectedDistrictId?: string | null;
   workers: MissionControlWorker[];
   bookings: MissionControlBooking[];
   onZoneSelect?: (zoneId: string) => void;
   highlightWorkerId?: string | null;
+  mapStyleMode?: "road" | "terrain" | "high-contrast";
+  onMapStyleChange?: (mapStyle: "road" | "terrain" | "high-contrast") => void;
   variant?: "full" | "lite";
   className?: string;
 }
@@ -64,6 +74,9 @@ interface ZoneAnchor {
   center: [number, number];
   intensity: number;
   scope: "sector" | "city";
+  zoomLevel?: number;
+  readinessScore?: number;
+  landmarkLabel?: string;
   bounds?: [[number, number], [number, number]];
   baseWorkers?: number;
 }
@@ -79,12 +92,18 @@ const EARTH_RADIUS_KM = 6371;
 const MAP_LABEL_FONT = "\"Inter\", \"Plus Jakarta Sans\", system-ui, sans-serif";
 const MARKET_TIER_BADGES: Record<string, string> = {
   agra: "TIER-2",
+  amritsar: "TIER-2",
+  lucknow: "TIER-2",
+  ludhiana: "TIER-2",
+  noida: "TIER-1",
+  "north-delhi": "TIER-1",
   chandigarh: "TIER-2",
   chennai: "TIER-1",
   bengaluru: "TIER-1",
   kolkata: "TIER-1",
   mumbai: "TIER-1",
   "new-delhi": "TIER-1",
+  "south-delhi": "TIER-1",
   dubai: "GLOBAL",
   singapore: "GLOBAL",
   london: "GLOBAL",
@@ -118,8 +137,12 @@ const offsetCoordinate = (lat: number, lng: number, distanceKm: number, bearingD
   ] as [number, number];
 };
 
-const buildZoneAnchors = (): ZoneAnchor[] => (
-  sectorSeeds.map((seed) => ({
+const buildZoneAnchors = (): ZoneAnchor[] => {
+  const allowedAgraDistricts = new Set(getMarketDistrictsForCity("agra").map((district) => district.slug));
+
+  return sectorSeeds
+    .filter((seed) => allowedAgraDistricts.has(seed.id))
+    .map((seed) => ({
     id: seed.id,
     label: seed.label,
     city: seed.city,
@@ -129,15 +152,33 @@ const buildZoneAnchors = (): ZoneAnchor[] => (
     ] as [number, number],
     intensity: Number((seed.demandWeight * seed.historicalTraffic).toFixed(2)),
     scope: "sector" as const,
+    zoomLevel: 13.8,
+    readinessScore: Math.max(68, Math.min(97, Math.round((seed.demandWeight * 34) + (seed.historicalTraffic * 30) + 18))),
+    landmarkLabel: `${seed.city} service zone`,
     baseWorkers: seed.baseWorkers,
     bounds: [
       [seed.latRange[0], seed.lngRange[0]],
       [seed.latRange[1], seed.lngRange[1]],
     ],
-  }))
-);
+  }));
+};
 
-const buildCityAnchors = (city: GlobalSimulationCity): ZoneAnchor[] => {
+const buildCityAnchors = (city: Pick<GlobalSimulationCity, "id" | "label" | "lat" | "lng">): ZoneAnchor[] => {
+  const registryDistricts = getMarketDistrictsForCity(city.id);
+  if (registryDistricts.length > 0) {
+    return registryDistricts.map((district) => ({
+      id: district.slug,
+      label: district.label,
+      city: city.label,
+      center: district.centerCoords,
+      intensity: Number((0.82 + (district.readinessScore / 100) * 0.78).toFixed(2)),
+      scope: "city" as const,
+      zoomLevel: district.zoomLevel,
+      readinessScore: district.readinessScore,
+      landmarkLabel: district.landmarkLabel,
+    }));
+  }
+
   const anchorBlueprints = [
     { id: city.id, label: `${city.label} Core`, distanceKm: 0, bearingDeg: 0, intensity: 1.38 },
     { id: `${city.id}-north`, label: `${city.label} North`, distanceKm: 4.2, bearingDeg: 0, intensity: 1.1 },
@@ -156,6 +197,7 @@ const buildCityAnchors = (city: GlobalSimulationCity): ZoneAnchor[] => {
       : offsetCoordinate(city.lat, city.lng, anchor.distanceKm, anchor.bearingDeg),
     intensity: anchor.intensity,
     scope: "city",
+    zoomLevel: anchor.distanceKm === 0 ? 12.8 : 12.2,
   }));
 };
 
@@ -183,55 +225,127 @@ const scenarioByTab: Record<AdminTab, "baseline" | "monsoon" | "price_war" | "su
 export function MissionControlMap({
   activeTab,
   routeZoneId,
+  selectedMarket,
+  selectedDistrictId,
   workers,
   bookings,
   onZoneSelect,
   highlightWorkerId,
+  mapStyleMode,
+  onMapStyleChange,
   variant = "full",
   className,
 }: MissionControlMapProps) {
   const isLite = variant === "lite";
   const agraZoneAnchors = useMemo(() => buildZoneAnchors(), []);
+  const activeCitySlug = selectedMarket?.simulationCityId || routeZoneId || DEFAULT_SIMULATION_CITY_ID;
   const selectedGlobalCity = useMemo(
-    () => GLOBAL_SIMULATION_CITIES.find((city) => city.id === routeZoneId) || null,
-    [routeZoneId],
+    () => GLOBAL_SIMULATION_CITIES.find((city) => city.id === activeCitySlug) || null,
+    [activeCitySlug],
   );
-  const usingGlobalCityScope = Boolean(selectedGlobalCity && !sectorSeeds.some((sector) => sector.id === routeZoneId));
+  const resolvedCitySurface = useMemo(() => {
+    if (selectedGlobalCity) {
+      return {
+        id: selectedGlobalCity.id,
+        label: selectedGlobalCity.label,
+        lat: selectedGlobalCity.lat,
+        lng: selectedGlobalCity.lng,
+      };
+    }
+
+    if (selectedMarket) {
+      return {
+        id: selectedMarket.slug,
+        label: selectedMarket.label,
+        lat: selectedMarket.lat,
+        lng: selectedMarket.lng,
+      };
+    }
+
+    return {
+      id: "agra",
+      label: "Agra",
+      lat: 27.1767,
+      lng: 78.0081,
+    };
+  }, [selectedGlobalCity, selectedMarket]);
+  const seededDistricts = useMemo(
+    () => getMarketDistrictsForCity(selectedMarket?.slug || activeCitySlug),
+    [activeCitySlug, selectedMarket?.slug],
+  );
+  const usingGlobalCityScope = (selectedMarket?.slug || activeCitySlug) !== "agra";
   const zoneAnchors = useMemo(
-    () => usingGlobalCityScope && selectedGlobalCity
-      ? buildCityAnchors(selectedGlobalCity)
+    () => usingGlobalCityScope
+      ? buildCityAnchors(resolvedCitySurface)
       : agraZoneAnchors,
-    [agraZoneAnchors, selectedGlobalCity, usingGlobalCityScope],
+    [agraZoneAnchors, resolvedCitySurface, usingGlobalCityScope],
   );
   const highlightedZone = useMemo(
     () => {
-      if (usingGlobalCityScope && selectedGlobalCity) {
+      if (selectedDistrictId) {
+        const matchedDistrict = zoneAnchors.find((zone) => zone.id === selectedDistrictId);
+        if (matchedDistrict) return matchedDistrict;
+      }
+
+      if (!usingGlobalCityScope) {
         return zoneAnchors[0];
       }
 
-      return zoneAnchors.find((zone) => zone.id === routeZoneId) || zoneAnchors[0];
+      return zoneAnchors[0];
     },
-    [routeZoneId, selectedGlobalCity, usingGlobalCityScope, zoneAnchors],
+    [selectedDistrictId, usingGlobalCityScope, zoneAnchors],
+  );
+  const [mapViewMode, setMapViewMode] = useState<"road" | "terrain" | "high-contrast">(mapStyleMode || "road");
+  const [showSectorOverlays, setShowSectorOverlays] = useState(false);
+  const [showMapSettings, setShowMapSettings] = useState(false);
+  const activeDistrict = useMemo(
+    () => getMarketDistrictBySlug(selectedDistrictId, selectedMarket?.slug || activeCitySlug),
+    [activeCitySlug, selectedDistrictId, selectedMarket?.slug],
   );
 
-  const simulationPoints = useMemo(() => {
-    const resolvedCityId = usingGlobalCityScope && selectedGlobalCity
-      ? selectedGlobalCity.id
-      : DEFAULT_SIMULATION_CITY_ID;
+  useEffect(() => {
+    if (!mapStyleMode) return;
 
-    const geoConfig = buildSimulationGeoConfig({
-      cityId: resolvedCityId,
+    if (mapStyleMode === "road") {
+      setMapViewMode("road");
+      setShowSectorOverlays(false);
+      return;
+    }
+
+    if (mapStyleMode === "terrain") {
+      setMapViewMode("terrain");
+      setShowSectorOverlays(true);
+      return;
+    }
+
+    setMapViewMode("high-contrast");
+    setShowSectorOverlays(true);
+  }, [mapStyleMode]);
+
+  const simulationGeoConfig = useMemo(() => {
+    return buildMarketGeoConfig({
+      market: selectedMarket || undefined,
+      citySlug: selectedMarket?.slug || activeCitySlug,
+      districtSlug: selectedDistrictId,
       center: {
         lat: highlightedZone.center[0],
         lng: highlightedZone.center[1],
       },
       radiusKm: usingGlobalCityScope ? 14 : 10,
     });
+  }, [
+    activeCitySlug,
+    highlightedZone.center,
+    selectedMarket,
+    selectedDistrictId,
+    usingGlobalCityScope,
+  ]);
 
+  const simulationPoints = useMemo(() => {
     return generateSimulationBatch({
       batchIndex: 0,
       batchSize: 260,
-      geoConfig,
+      geoConfig: simulationGeoConfig,
       scenario: scenarioByTab[activeTab],
     }).map((point, index) => ({
       id: `${point.areaSector}-${index}`,
@@ -240,7 +354,7 @@ export function MissionControlMap({
       serviceType: point.serviceType,
       isEmergency: point.isEmergency,
     }));
-  }, [activeTab, highlightedZone.center, selectedGlobalCity, usingGlobalCityScope]);
+  }, [activeTab, simulationGeoConfig]);
 
   const workerReticles = useMemo(() => {
     const normalizedHighlightWorkerId = String(highlightWorkerId || "").trim().toLowerCase();
@@ -322,9 +436,11 @@ export function MissionControlMap({
   );
 
   const activePressureColor = "#0F172A";
-  const defaultZoom = usingGlobalCityScope
-    ? (isLite ? 10.8 : 11.4)
-    : (isLite ? 11.8 : 12.6);
+  const baseZoomLevel = activeDistrict?.zoomLevel
+    || highlightedZone.zoomLevel
+    || selectedMarket?.zoomLevel
+    || (usingGlobalCityScope ? 11.4 : 12.6);
+  const defaultZoom = Math.max(10.2, baseZoomLevel - (isLite ? 0.6 : 0));
   const [viewportTelemetry, setViewportTelemetry] = useState<ViewportTelemetry>({
     center: highlightedZone.center,
     zoom: defaultZoom,
@@ -412,11 +528,23 @@ export function MissionControlMap({
   );
 
   const marketBadgeLabel = useMemo(() => {
-    const activeCityLabel = selectedGlobalCity?.label || highlightedZone.city || "Agra";
-    const activeCityId = selectedGlobalCity?.id || DEFAULT_SIMULATION_CITY_ID;
-    const tierBadge = MARKET_TIER_BADGES[activeCityId] || "LIVE";
-    return `MARKET: ${activeCityLabel.toUpperCase()} (${tierBadge})`;
-  }, [highlightedZone.city, selectedGlobalCity]);
+    const activeCityLabel = selectedMarket?.label || selectedGlobalCity?.label || highlightedZone.city || "Agra";
+    const activeCityId = selectedMarket?.simulationCityId || selectedGlobalCity?.id || DEFAULT_SIMULATION_CITY_ID;
+    const tierBadge = MARKET_TIER_BADGES[activeCityId]
+      || (selectedMarket?.tier === "tier_1"
+        ? "TIER-1"
+        : selectedMarket?.tier === "tier_2"
+          ? "TIER-2"
+          : selectedMarket?.tier === "tier_3"
+            ? "TIER-3"
+            : selectedMarket?.tier === "pilot"
+              ? "PILOT"
+              : "LIVE");
+    const breadcrumbLabel = selectedMarket
+      ? buildMarketBreadcrumb(selectedMarket.stateSlug, selectedMarket.slug, selectedDistrictId)
+      : `Markets > India > ${activeCityLabel}`;
+    return `${breadcrumbLabel} | ${tierBadge}`;
+  }, [highlightedZone.city, selectedDistrictId, selectedGlobalCity, selectedMarket]);
 
   return (
     <div className={cn("relative w-full h-full min-h-[450px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.18)]", className)}>
@@ -429,7 +557,11 @@ export function MissionControlMap({
         }
 
         .rahi-map-shell .leaflet-tile-pane {
-          filter: contrast(1.02) brightness(0.98) saturate(0.94);
+          filter: ${mapViewMode === "road"
+            ? "contrast(1.02) brightness(1) saturate(0.92)"
+            : mapViewMode === "terrain"
+              ? "contrast(1.06) brightness(1.01) saturate(0.98)"
+              : "contrast(1.14) brightness(0.76) saturate(0.72)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -524,17 +656,25 @@ export function MissionControlMap({
             zoom={defaultZoom}
             onViewportChange={setViewportTelemetry}
           />
-          <TileLayer
-            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-            attribution="Tiles &copy; Esri"
-          />
-          <TileLayer
-            url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places_Alternate/MapServer/tile/{z}/{y}/{x}"
-            attribution="Labels &copy; Esri"
-          />
+          {mapViewMode === "road" ? (
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+            />
+          ) : mapViewMode === "terrain" ? (
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+            />
+          ) : (
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+            />
+          )}
 
           <Pane name="sector-boxes" style={{ zIndex: 418 }}>
-            {!usingGlobalCityScope && labeledZones.filter((zone) => zone.bounds).map((zone) => (
+            {(showSectorOverlays || mapViewMode === "terrain") && !usingGlobalCityScope && labeledZones.filter((zone) => zone.bounds).map((zone) => (
               <Rectangle
                 key={`${zone.id}-bounds`}
                 bounds={zone.bounds!}
@@ -552,12 +692,12 @@ export function MissionControlMap({
           </Pane>
 
           <Pane name="pressure-zones" style={{ zIndex: 420 }}>
-            {labeledZones.map((zone) => (
+            {(showSectorOverlays || mapViewMode === "terrain") && labeledZones.map((zone) => (
               <Circle
                 key={`${zone.id}-ring`}
                 center={zone.center}
                 radius={4200 + Math.min(zone.total * 12, 3200)}
-                eventHandlers={!usingGlobalCityScope && onZoneSelect ? { click: () => onZoneSelect(zone.id) } : undefined}
+                eventHandlers={onZoneSelect ? { click: () => onZoneSelect(zone.id) } : undefined}
                 pathOptions={{
                   color: zone.id === highlightedZone.id ? activePressureColor : "#94a3b8",
                   fillColor: zone.id === highlightedZone.id ? "#1E3A8A" : "#cbd5e1",
@@ -570,6 +710,7 @@ export function MissionControlMap({
                     <p className="font-semibold uppercase tracking-[0.18em] text-slate-500">Zone focus</p>
                     <p className="text-sm font-bold text-slate-900">{zone.label}</p>
                     <p className="text-slate-600">Projected load: {zone.total.toLocaleString("en-IN")}</p>
+                    {zone.landmarkLabel ? <p className="text-slate-600">{zone.landmarkLabel}</p> : null}
                     <p className="text-emerald-600">Active workers: {zone.activeWorkers.toLocaleString("en-IN")}</p>
                     <p className="text-slate-600">Pressure ratio: {zone.pressureRatio.toFixed(2)}</p>
                     <p className="text-amber-600">Emergency lanes: {zone.emergency.toLocaleString("en-IN")}</p>
@@ -580,7 +721,7 @@ export function MissionControlMap({
           </Pane>
 
           <Pane name="zone-labels" style={{ zIndex: 465 }}>
-            {visibleZoneLabels.map((zone) => (
+            {(showSectorOverlays || mapViewMode === "terrain") && visibleZoneLabels.map((zone) => (
               <Marker
                 key={`${zone.id}-label`}
                 position={zone.center}
@@ -708,12 +849,97 @@ export function MissionControlMap({
         <div className="absolute right-3 top-3 h-5 w-5 border-r border-t border-slate-300/90" />
         <div className="absolute bottom-3 left-3 h-5 w-5 border-b border-l border-slate-300/90" />
         <div className="absolute bottom-3 right-3 h-5 w-5 border-b border-r border-slate-300/90" />
-        <div className="absolute left-4 top-4 rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_14px_32px_-20px_rgba(15,23,42,0.22)]">
+        <div className="absolute left-4 top-4 rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold tracking-[0.08em] text-white shadow-[0_14px_32px_-20px_rgba(15,23,42,0.22)]">
           {marketBadgeLabel}
         </div>
         {!isLite ? (
-          <div className="absolute bottom-4 right-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
-            LAT {viewportTelemetry.center[0].toFixed(4)} | LNG {viewportTelemetry.center[1].toFixed(4)} | ALT {coordinateAltitude} | Z {viewportTelemetry.zoom.toFixed(1)}
+          <div className="pointer-events-auto absolute right-4 top-4">
+            <button
+              type="button"
+              onClick={() => setShowMapSettings((current) => !current)}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)] transition hover:bg-slate-50"
+            >
+              Map Layers
+            </button>
+
+            {showMapSettings ? (
+              <div className="mt-2 w-52 rounded-[18px] border border-slate-200 bg-white p-2 shadow-[0_22px_44px_-28px_rgba(15,23,42,0.26)]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapViewMode("road");
+                    setShowSectorOverlays(false);
+                    onMapStyleChange?.("road");
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "road"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Standard Road</span>
+                  {mapViewMode === "road" ? <span>On</span> : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapViewMode("terrain");
+                    setShowSectorOverlays(true);
+                    onMapStyleChange?.("terrain");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "terrain"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Infrastructure Overlay</span>
+                  <span>{mapViewMode === "terrain" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapViewMode("high-contrast");
+                    setShowSectorOverlays(true);
+                    onMapStyleChange?.("high-contrast");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "high-contrast"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>High-Contrast Dark</span>
+                  <span>{mapViewMode === "high-contrast" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowSectorOverlays((current) => !current)}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    showSectorOverlays || mapViewMode === "terrain"
+                      ? "bg-sky-50 text-sky-700"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>District Heat Zones</span>
+                  <span>{showSectorOverlays || mapViewMode === "terrain" ? "On" : "Off"}</span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {!isLite ? (
+          <div className="absolute bottom-4 right-4 rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
+            VIEWPORT: {(selectedMarket?.label || selectedGlobalCity?.label || highlightedZone.city || "Agra").toUpperCase()} // {viewportTelemetry.center[0].toFixed(4)}° N, {viewportTelemetry.center[1].toFixed(4)}° E
+          </div>
+        ) : null}
+        {!isLite && seededDistricts.length > 0 ? (
+          <div className="absolute bottom-4 left-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
+            District registry: {seededDistricts.length} zones
           </div>
         ) : null}
       </div>

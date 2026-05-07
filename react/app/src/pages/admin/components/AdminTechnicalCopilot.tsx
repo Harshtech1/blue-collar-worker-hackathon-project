@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { API } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES } from "@/utils/simulationData";
 import {
   ADMIN_COPILOT_SEED_EVENT,
   type AdminCopilotSeedDetail,
@@ -23,8 +22,17 @@ import {
   buildMissionPath,
   buildObservabilityPath,
   buildWarRoomPath,
+  getWarRoomLocationFromPath,
+  resolveMarketContextFromLocation,
+  resolveMarketLabel,
 } from "../adminRoutes";
 import { buildAgenticSystemSummary } from "../hooks/useAgenticInsights";
+import {
+  buildMarketGeoConfig,
+  getDefaultCityForState,
+  listMarketCities,
+  listMarketStates,
+} from "../marketRegistry";
 import { buildSystemInsightsSummary } from "../utils/systemInsights";
 
 const DEMO_ADMIN_TOKEN = "demo-admin-token";
@@ -75,28 +83,46 @@ const hasNavigationIntent = (message: string) => (
 const resolveLocalNavigation = (message: string, context: AdminShellContextValue) => {
   const normalized = message.toLowerCase();
   const currentZoneRoute = {
-    route: buildWarRoomPath(context.routeZoneId || "agra-cantt"),
+    route: buildWarRoomPath(context.selectedMarketLocation),
     label: context.zoneLabel || "War Room",
     reason: `Opening the war room for ${context.zoneLabel || "the active zone"}.`,
   };
-
-  const zoneRoutes = [
-    { token: "agra", route: buildWarRoomPath("agra-cantt"), label: "Agra Cantt War Room" },
-    { token: "chandigarh", route: buildWarRoomPath("chandigarh"), label: "Chandigarh War Room" },
-    { token: "chennai", route: buildWarRoomPath("chennai"), label: "Chennai War Room" },
-    { token: "bengaluru", route: buildWarRoomPath("bengaluru"), label: "Bengaluru War Room" },
-    { token: "bangalore", route: buildWarRoomPath("bengaluru"), label: "Bengaluru War Room" },
-    { token: "kolkata", route: buildWarRoomPath("kolkata"), label: "Kolkata War Room" },
-    { token: "mumbai", route: buildWarRoomPath("mumbai"), label: "Mumbai War Room" },
-    { token: "new delhi", route: buildWarRoomPath("new-delhi"), label: "New Delhi War Room" },
-  ];
-
-  const explicitZone = zoneRoutes.find((entry) => normalized.includes(entry.token));
-  if (explicitZone && (hasNavigationIntent(message) || /map|war room|operations center|intelligence/.test(normalized))) {
+  const explicitCity = listMarketCities().find((city) => (
+    normalized.includes(city.label.toLowerCase()) || normalized.includes(city.slug.replace(/-/g, " "))
+  ));
+  if (
+    explicitCity
+    && (
+      /map|war room|operations center|intelligence/.test(normalized)
+      || (hasNavigationIntent(message) && !/finance|money|payment|payments|payout|payouts|revenue|cash/.test(normalized))
+    )
+  ) {
     return {
-      route: explicitZone.route,
-      label: explicitZone.label,
-      reason: `Opening ${explicitZone.label} so the map centers on that market.`,
+      route: buildWarRoomPath({ stateSlug: explicitCity.stateSlug, citySlug: explicitCity.slug }),
+      label: `${explicitCity.label} War Room`,
+      reason: `Opening ${explicitCity.label} War Room so the map centers on that market.`,
+    };
+  }
+
+  const explicitState = listMarketStates().find((state) => (
+    normalized.includes(state.label.toLowerCase()) || normalized.includes(state.slug.replace(/-/g, " "))
+  ));
+  if (
+    explicitState
+    && (
+      /map|war room|operations center|intelligence|market/.test(normalized)
+      || (hasNavigationIntent(message) && !/finance|money|payment|payments|payout|payouts|revenue|cash/.test(normalized))
+    )
+  ) {
+    const defaultCity = getDefaultCityForState(explicitState.slug);
+    if (!defaultCity) {
+      return currentZoneRoute;
+    }
+
+    return {
+      route: buildWarRoomPath({ stateSlug: explicitState.slug, citySlug: defaultCity.slug }),
+      label: `${explicitState.label} Cluster`,
+      reason: `Opening ${explicitState.label} through ${defaultCity.label}, the current focus city for that state cluster.`,
     };
   }
 
@@ -206,25 +232,44 @@ const resolveRouteZoneOverride = (
   fallbackZoneId: string,
   fallbackLabel: string,
 ) => {
-  const routeZoneId = route.split("/").filter(Boolean).pop() || fallbackZoneId;
-  const market = GLOBAL_SIMULATION_CITIES.find((city) => city.id === routeZoneId);
+  const parsed = new URL(route, "https://rahi.local");
+  const marketLocation = getWarRoomLocationFromPath(parsed.pathname);
+  const districtSlug = parsed.searchParams.get("district");
+  const marketContext = resolveMarketContextFromLocation(marketLocation.stateSlug, marketLocation.citySlug);
+  const routeZoneId = marketContext.city.simulationCityId || marketContext.city.slug || fallbackZoneId;
   return {
     zoneId: routeZoneId,
-    zoneLabel: market?.label || fallbackLabel,
+    zoneLabel: resolveMarketLabel(marketLocation.stateSlug, marketLocation.citySlug, districtSlug) || fallbackLabel,
+    selectedMarketLocation: {
+      stateSlug: marketContext.state.slug,
+      citySlug: marketContext.city.slug,
+      districtSlug: districtSlug || null,
+    },
+    selectedStateSlug: marketContext.state.slug,
+    selectedCitySlug: marketContext.city.slug,
+    selectedDistrictId: districtSlug || null,
+    selectedStateLabel: marketContext.state.label,
+    selectedCityLabel: marketContext.city.label,
+    selectedMarket: {
+      state: marketContext.state,
+      city: marketContext.city,
+    },
   };
 };
 
 const buildCopilotSummary = (
   context: AdminShellContextValue,
   currentRoute: string,
-  zoneOverride?: { zoneId: string; zoneLabel: string },
+  zoneOverride?: Partial<AdminShellContextValue> & { zoneId: string; zoneLabel: string },
 ) => {
   const effectiveZoneId = zoneOverride?.zoneId || context.routeZoneId;
   const effectiveZoneLabel = zoneOverride?.zoneLabel || context.zoneLabel;
-  const isGlobalMarket = GLOBAL_SIMULATION_CITIES.some((city) => city.id === effectiveZoneId);
-  const geoConfig = buildSimulationGeoConfig({
-    cityId: isGlobalMarket ? effectiveZoneId || undefined : undefined,
-    radiusKm: isGlobalMarket ? 14 : 10,
+  const geoConfig = buildMarketGeoConfig({
+    market: zoneOverride?.selectedMarket?.city || context.selectedMarket.city,
+    stateSlug: zoneOverride?.selectedStateSlug || context.selectedStateSlug,
+    citySlug: zoneOverride?.selectedCitySlug || context.selectedCitySlug,
+    districtSlug: zoneOverride?.selectedDistrictId ?? context.selectedDistrictId,
+    radiusKm: effectiveZoneId === "agra" ? 10 : 14,
   });
 
   return buildAgenticSystemSummary(
@@ -232,6 +277,13 @@ const buildCopilotSummary = (
       ...context,
       routeZoneId: effectiveZoneId,
       zoneLabel: effectiveZoneLabel,
+      selectedMarketLocation: zoneOverride?.selectedMarketLocation || context.selectedMarketLocation,
+      selectedStateSlug: zoneOverride?.selectedStateSlug || context.selectedStateSlug,
+      selectedCitySlug: zoneOverride?.selectedCitySlug || context.selectedCitySlug,
+      selectedDistrictId: zoneOverride?.selectedDistrictId ?? context.selectedDistrictId,
+      selectedStateLabel: zoneOverride?.selectedStateLabel || context.selectedStateLabel,
+      selectedCityLabel: zoneOverride?.selectedCityLabel || context.selectedCityLabel,
+      selectedMarket: zoneOverride?.selectedMarket || context.selectedMarket,
     },
     {
       geoConfig,
@@ -258,6 +310,9 @@ const buildNavigationAnnouncement = (
     const targetSystemSummary = buildSystemInsightsSummary({
       routeZoneId: targetZone.zoneId,
       zoneLabel: targetZone.zoneLabel,
+      stateSlug: targetZone.selectedStateSlug,
+      citySlug: targetZone.selectedCitySlug,
+      districtSlug: targetZone.selectedDistrictId,
       stats: context.stats,
       activeWorkerRate: context.activeWorkerRate,
       averageTicket: context.averageTicket,
@@ -461,6 +516,9 @@ export function AdminTechnicalCopilot({
   const systemSummary = useMemo(() => buildSystemInsightsSummary({
     routeZoneId: shellContext.routeZoneId,
     zoneLabel: shellContext.zoneLabel,
+    stateSlug: shellContext.selectedStateSlug,
+    citySlug: shellContext.selectedCitySlug,
+    districtSlug: shellContext.selectedDistrictId,
     stats: shellContext.stats,
     activeWorkerRate: shellContext.activeWorkerRate,
     averageTicket: shellContext.averageTicket,
@@ -471,6 +529,9 @@ export function AdminTechnicalCopilot({
   }), [
     shellContext.routeZoneId,
     shellContext.zoneLabel,
+    shellContext.selectedStateSlug,
+    shellContext.selectedCitySlug,
+    shellContext.selectedDistrictId,
     shellContext.stats,
     shellContext.activeWorkerRate,
     shellContext.averageTicket,

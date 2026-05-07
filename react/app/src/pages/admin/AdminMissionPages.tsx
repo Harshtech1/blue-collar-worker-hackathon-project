@@ -29,25 +29,28 @@ import { toast } from "sonner";
 import { API } from "@/lib/constants";
 import { DataTable } from "./components/DataTable";
 import { MissionControlMap } from "./components/MissionControlMap";
-import { StrategyChips } from "./components/StrategyChips";
+import { StrategyPulse } from "./components/StrategyPulse";
 import {
+  DEFAULT_WAR_ROOM_MARKET,
+  DEFAULT_WAR_ROOM_ZONE,
   buildMissionPath,
   buildObservabilityPath,
   buildWarRoomPath,
-  DEFAULT_WAR_ROOM_ZONE,
   OBSERVABILITY_PANEL_LABELS,
   type AdminObservabilityPanel,
 } from "./adminRoutes";
 import { useAdminShellContext } from "./adminShellContext";
 import { ADMIN_ISSUE_SEVERITY_WEIGHT, ADMIN_OBSERVABILITY_ISSUES, type ObservabilityIssue } from "./adminSignals";
+import { buildMarketGeoConfig, getMarketDistrictsForCity, listMarketCities, listMarketStates, listStateReadiness } from "./marketRegistry";
+import { downloadInvestorBriefPdf } from "./utils/investorBriefPdf";
 import { buildSystemInsightsSummary } from "./utils/systemInsights";
-import { buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
+import { buildDynamicSimulationGeoConfig, buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
 
 type CommandOption = {
   id: string;
   label: string;
   meta: string;
-  type: "market" | "sector" | "worker";
+  type: "state" | "market" | "district" | "worker";
 };
 
 type Tone = "navy" | "emerald" | "sky" | "amber";
@@ -142,49 +145,10 @@ const formatViewportLabel = ({ label, lat, lng }: ZoneViewport) => {
   return `VIEWPORT: ${label.toUpperCase()} // ${Math.abs(lat).toFixed(4)}° ${latSuffix}, ${Math.abs(lng).toFixed(4)}° ${lngSuffix}`;
 };
 
-const downloadInvestorBriefFromNode = async ({
-  node,
-  fileName,
-}: {
-  node: HTMLDivElement | null;
-  fileName: string;
-}) => {
-  if (!node) {
-    throw new Error("Investor scorecard is not ready yet.");
-  }
-
-  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-    import("html2canvas"),
-    import("jspdf"),
-  ]);
-
-  const canvas = await html2canvas(node, {
-    backgroundColor: "#f8fafc",
-    scale: 2,
-    useCORS: true,
-    logging: false,
-  });
-
-  const image = canvas.toDataURL("image/png");
-  const pdf = new jsPDF({
-    orientation: "portrait",
-    unit: "mm",
-    format: "a4",
-  });
-
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 10;
-  const usableWidth = pageWidth - (margin * 2);
-  const usableHeight = pageHeight - (margin * 2);
-  const ratio = Math.min(usableWidth / canvas.width, usableHeight / canvas.height);
-  const renderWidth = canvas.width * ratio;
-  const renderHeight = canvas.height * ratio;
-  const x = (pageWidth - renderWidth) / 2;
-  const y = (pageHeight - renderHeight) / 2;
-
-  pdf.addImage(image, "PNG", x, y, renderWidth, renderHeight, undefined, "FAST");
-  pdf.save(fileName);
+const formatViewportLabelSafe = ({ label, lat, lng }: ZoneViewport) => {
+  const latSuffix = lat >= 0 ? "N" : "S";
+  const lngSuffix = lng >= 0 ? "E" : "W";
+  return `VIEWPORT: ${label.toUpperCase()} // ${Math.abs(lat).toFixed(4)} deg ${latSuffix}, ${Math.abs(lng).toFixed(4)} deg ${lngSuffix}`;
 };
 
 type ProjectedAssetYieldSnapshot = {
@@ -264,6 +228,10 @@ export function AdminOverviewPage() {
     bookingsList,
     pitchMode,
     routeZoneId,
+    selectedMarket,
+    selectedStateSlug,
+    selectedCitySlug,
+    selectedDistrictId,
     zoneLabel,
     globalUptime,
     healthSnapshot,
@@ -272,8 +240,10 @@ export function AdminOverviewPage() {
     averageTicket,
     sevenDayBookings,
     investorSummary,
+    mapStyle,
+    onSelectMapStyle,
     onNavigateTab,
-    onSelectWarRoomZone,
+    onSelectMarketCity,
   } = useAdminShellContext();
   const investorBriefRef = useRef<HTMLDivElement | null>(null);
   const [isExportingInvestorBrief, setIsExportingInvestorBrief] = useState(false);
@@ -302,6 +272,9 @@ export function AdminOverviewPage() {
   const overviewSummary = useMemo(() => buildSystemInsightsSummary({
     routeZoneId,
     zoneLabel,
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtSlug: selectedDistrictId,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -317,12 +290,17 @@ export function AdminOverviewPage() {
     investorSummary,
     llmMode,
     routeZoneId,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedStateSlug,
     stats,
     zoneLabel,
   ]);
   const executiveBriefSummary = useMemo(() => buildSystemInsightsSummary({
-    routeZoneId: DEFAULT_WAR_ROOM_ZONE,
+    routeZoneId: DEFAULT_WAR_ROOM_MARKET.citySlug,
     zoneLabel: "Agra Cantt",
+    stateSlug: DEFAULT_WAR_ROOM_MARKET.stateSlug,
+    citySlug: DEFAULT_WAR_ROOM_MARKET.citySlug,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -340,7 +318,7 @@ export function AdminOverviewPage() {
     stats,
   ]);
   const executiveViewport = useMemo(
-    () => getZoneViewport(DEFAULT_WAR_ROOM_ZONE, "Agra Cantt"),
+    () => getZoneViewport(DEFAULT_WAR_ROOM_MARKET.citySlug, "Agra Cantt"),
     [],
   );
   const overviewAssetYield = useMemo(() => getProjectedAssetYieldSnapshot({
@@ -370,14 +348,21 @@ export function AdminOverviewPage() {
     yieldSnapshot.netProfitPerJob,
   ]);
   const handleDownloadInvestorBrief = async () => {
-    if (!investorBriefRef.current || isExportingInvestorBrief) return;
+    if (isExportingInvestorBrief) return;
 
     setIsExportingInvestorBrief(true);
 
     try {
-      await downloadInvestorBriefFromNode({
-        node: investorBriefRef.current,
+      await downloadInvestorBriefPdf({
         fileName: `Karigar-360-Investor-Scorecard-${new Date().toISOString().slice(0, 10)}.pdf`,
+        marketPathLabel: `Markets > ${selectedMarket.state.label} > ${selectedMarket.city.label}${selectedDistrictId ? ` > ${zoneLabel}` : ""}`,
+              viewportLabel: formatViewportLabelSafe(getZoneViewport(routeZoneId, zoneLabel)),
+        summary: overviewSummary,
+        yieldSnapshot,
+        assetYield: overviewAssetYield,
+        verifiedWorkers,
+        verifiedWorkerRate,
+        totalWorkers: stats.totalWorkers,
       });
       toast.success("Investor scorecard downloaded.");
     } catch (error) {
@@ -390,7 +375,7 @@ export function AdminOverviewPage() {
 
   return (
     <ScrollPage>
-      <StrategyChips summary={overviewSummary} />
+      <StrategyPulse summary={overviewSummary} />
 
       {pitchMode ? (
         <ProjectedAssetYieldHero
@@ -515,10 +500,10 @@ export function AdminOverviewPage() {
 
               <button
                 type="button"
-                onClick={() => onSelectWarRoomZone(routeZoneId || DEFAULT_WAR_ROOM_ZONE)}
+                onClick={() => onSelectMarketCity(selectedCitySlug, selectedStateSlug)}
                 className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
               >
-                Open Full Theater
+                Enter Full War Room
                 <ArrowRight className="h-4 w-4" />
               </button>
             </div>
@@ -528,10 +513,14 @@ export function AdminOverviewPage() {
             <div className="relative w-full h-full min-h-[450px] overflow-hidden rounded-xl border border-slate-200">
               <MissionControlMap
                 activeTab="overview"
-                routeZoneId={routeZoneId || DEFAULT_WAR_ROOM_ZONE}
+                routeZoneId={routeZoneId}
+                selectedMarket={selectedMarket.city}
+                selectedDistrictId={selectedDistrictId}
                 workers={workersList}
                 bookings={bookingsList}
                 variant="lite"
+                mapStyleMode={mapStyle}
+                onMapStyleChange={onSelectMapStyle}
                 className="h-full min-h-[450px]"
               />
             </div>
@@ -542,7 +531,7 @@ export function AdminOverviewPage() {
                   Tactical Preview
                 </p>
                 <p className="mt-2 text-sm leading-7 text-slate-700">
-                  Satellite Hybrid keeps Agra landmarks like Sikandra and Fatehabad Road readable while the overview stays inside the clean Karigar shell.
+                  Road-first mapping keeps streets, districts, and worker reach readable while the overview stays inside the clean Karigar shell.
                 </p>
               </div>
 
@@ -695,7 +684,7 @@ export function AdminOverviewPage() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {ADMIN_OBSERVABILITY_ISSUES.map((issue) => (
                 <div
-                  key={issue.domain}
+                  key={issue.id}
                   className="rounded-[22px] border border-slate-200 bg-slate-50/85 p-4"
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -723,7 +712,7 @@ export function AdminOverviewPage() {
             summary={executiveBriefSummary}
             yieldSnapshot={yieldSnapshot}
             assetYield={executiveAssetYield}
-            viewportLabel={formatViewportLabel(executiveViewport)}
+            viewportLabel={formatViewportLabelSafe(executiveViewport)}
             verifiedWorkers={verifiedWorkers}
             verifiedWorkerRate={verifiedWorkerRate}
             totalWorkers={stats.totalWorkers}
@@ -755,22 +744,51 @@ export function AdminWarRoomPage() {
     globalUptime,
     pitchMode,
     onSelectWarRoomZone,
+    onSelectMarketState,
+    onSelectMarketCity,
+    onSelectMarketDistrict,
+    mapStyle,
+    onSelectMapStyle,
+    selectedStateSlug,
+    selectedStateLabel,
+    selectedCitySlug,
+    selectedCityLabel,
+    selectedDistrictId,
+    selectedMarket,
   } = useAdminShellContext();
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightedWorkerId = searchParams.get("worker");
+  const allStateOptions = useMemo(() => listMarketStates(), []);
+  const allCityOptions = useMemo(() => listMarketCities(), []);
+  const districtOptions = useMemo(
+    () => getMarketDistrictsForCity(selectedCitySlug),
+    [selectedCitySlug],
+  );
+  const stateReadiness = useMemo(
+    () => listStateReadiness(selectedStateSlug),
+    [selectedStateSlug],
+  );
 
   const commandOptions = useMemo<CommandOption[]>(() => {
-    const markets = GLOBAL_SIMULATION_CITIES.map((city) => ({
-      id: city.id,
+    const stateOptions = allStateOptions.map((state) => ({
+      id: state.slug,
+      label: state.label,
+      meta: `${listMarketCities(state.slug).length} configured cities / state command scope`,
+      type: "state" as const,
+    }));
+    const markets = allCityOptions.map((city) => ({
+      id: city.slug,
       label: city.label,
-      meta: `${city.stateCode || city.country} / launch market`,
+      meta: `${city.stateLabel} / ${city.launchStatus === "pilot" ? "pilot market" : "launch market"}`,
       type: "market" as const,
     }));
-    const sectors = sectorSeeds.map((sector) => ({
-      id: sector.id,
-      label: sector.label,
-      meta: `${sector.city} / operating sector`,
-      type: "sector" as const,
+    const sectors = districtOptions.map((district) => ({
+      id: district.slug,
+      label: district.label,
+      meta: district.kind === "seeded"
+        ? `${selectedCityLabel} / seeded district`
+        : `${selectedCityLabel} / curated district`,
+      type: "district" as const,
     }));
     const workers = workersList
       .slice(0, 36)
@@ -782,8 +800,8 @@ export function AdminWarRoomPage() {
       }))
       .filter((worker) => worker.id);
 
-    return [...markets, ...sectors, ...workers];
-  }, [workersList]);
+    return [...stateOptions, ...markets, ...sectors, ...workers];
+  }, [allCityOptions, allStateOptions, districtOptions, selectedCityLabel, workersList]);
 
   const highlightedWorker = useMemo(
     () => workersList.find((worker) => String(worker._id || worker.id || "").toLowerCase() === String(highlightedWorkerId || "").toLowerCase()) || null,
@@ -799,14 +817,19 @@ export function AdminWarRoomPage() {
   const watchStatus = healthSnapshot?.status === "ok" && llmMode === "ready"
     ? "Healthy"
     : "Watch";
-  const activeMarketGeo = useMemo(() => {
-    const isGlobalMarket = GLOBAL_SIMULATION_CITIES.some((city) => city.id === routeZoneId);
-    return buildSimulationGeoConfig({
-      cityId: isGlobalMarket ? routeZoneId || undefined : undefined,
-      radiusKm: isGlobalMarket ? 14 : 10,
-    });
-  }, [routeZoneId]);
+  const activeMarketGeo = useMemo(() => buildMarketGeoConfig({
+    market: selectedMarket?.city,
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtSlug: selectedDistrictId,
+    radiusKm: routeZoneId === "agra" ? 10 : 14,
+  }), [routeZoneId, selectedCitySlug, selectedDistrictId, selectedMarket?.city, selectedStateSlug]);
+  const isPilotMarket = selectedMarket.city.launchStatus === "pilot";
   const marketContextLabel = useMemo(() => {
+    if (selectedMarket.city.launchStatus === "pilot") {
+      return "Pilot Optimization Context";
+    }
+
     switch (activeMarketGeo.cityTier) {
       case "pilot":
         return "Pilot Optimization Context";
@@ -819,18 +842,18 @@ export function AdminWarRoomPage() {
       default:
         return "International Expansion Context";
     }
-  }, [activeMarketGeo.cityTier]);
+  }, [activeMarketGeo.cityTier, selectedMarket.city.launchStatus]);
   const effectiveLlmSummary = useMemo(() => {
     if (llmSummary && llmSummary !== "Cloud Engine: Monitoring") {
       return llmSummary;
     }
 
-    if (activeMarketGeo.isExistingMarket) {
-      return `Pilot Optimization Context. ${activeMarketGeo.marketContext} Prioritize routing efficiency, worker density, and repeat-demand retention in the active pilot.`;
+    if (isPilotMarket) {
+      return `Pilot Optimization Context. ${activeMarketGeo.marketContext} Prioritize routing efficiency, worker density, and repeat-demand retention in ${selectedCityLabel}.`;
     }
 
-    return `${marketContextLabel}. ${activeMarketGeo.marketContext} Focus launch readiness on workforce seeding, controlled marketing CAC, and synthetic demand validation before live order history appears.`;
-  }, [activeMarketGeo, llmSummary, marketContextLabel]);
+    return `${marketContextLabel}. ${selectedCityLabel} is running through a shadow-launch command model inside ${selectedStateLabel}. Focus workforce seeding, controlled marketing CAC, and district-level demand validation before live order history appears.`;
+  }, [activeMarketGeo, isPilotMarket, llmSummary, marketContextLabel, selectedCityLabel, selectedStateLabel]);
 
   const totalRevenue = Number(investorSummary?.revenue ?? stats.totalRevenue ?? 0);
   const yieldSnapshot = getYieldSnapshot({
@@ -842,6 +865,9 @@ export function AdminWarRoomPage() {
   const warRoomSummary = useMemo(() => buildSystemInsightsSummary({
     routeZoneId,
     zoneLabel,
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtSlug: selectedDistrictId,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -857,6 +883,9 @@ export function AdminWarRoomPage() {
     investorSummary,
     llmMode,
     routeZoneId,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedStateSlug,
     stats,
     zoneLabel,
   ]);
@@ -869,12 +898,14 @@ export function AdminWarRoomPage() {
             activeZoneLabel={zoneLabel}
             highlightedWorkerLabel={highlightedWorker?.name || null}
             options={commandOptions}
-            onSelectMarket={onSelectWarRoomZone}
+            onSelectState={onSelectMarketState}
+            onSelectCity={onSelectMarketCity}
+            onSelectDistrict={onSelectMarketDistrict}
             onSelectWorker={handleWorkerSelect}
           />
 
           <div className="mt-4">
-            <StrategyChips summary={warRoomSummary} />
+            <StrategyPulse summary={warRoomSummary} />
           </div>
         </div>
 
@@ -888,13 +919,16 @@ export function AdminWarRoomPage() {
                 {zoneLabel} live command map
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
-                Keep the map as the operational foundation, but frame it in a cleaner enterprise container so the geography, workers, and market signals stay legible in daylight.
+                Keep the map as the operational foundation, but drive it with a road-first layer so streets, districts, and worker positioning stay legible during live dispatch.
               </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
               <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
-                Satellite Hybrid
+                {mapStyle === "road" ? "Standard Road" : mapStyle === "terrain" ? "Infrastructure Overlay" : "High-Contrast Dark"}
+              </div>
+              <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700">
+                {selectedStateLabel} / {selectedCityLabel}
               </div>
               <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
                 Fleet readiness {activeWorkerRate}%
@@ -907,12 +941,16 @@ export function AdminWarRoomPage() {
 
           <div className="mt-5 h-[32rem] min-h-[32rem] xl:h-[calc(100%-7.5rem)]">
             <MissionControlMap
-              activeTab="overview"
+              activeTab="intelligence"
               routeZoneId={routeZoneId}
+              selectedMarket={selectedMarket.city}
+              selectedDistrictId={selectedDistrictId}
               workers={workersList}
               bookings={bookingsList}
               onZoneSelect={onSelectWarRoomZone}
               highlightWorkerId={highlightedWorkerId}
+              mapStyleMode={mapStyle}
+              onMapStyleChange={onSelectMapStyle}
               className="h-full"
             />
           </div>
@@ -956,6 +994,21 @@ export function AdminWarRoomPage() {
             </SuitePanel>
 
             <SuitePanel
+              eyebrow="State-Wide Readiness"
+              title={`${selectedStateLabel} market cluster`}
+              description="State context stays visible so city operations can be explained as part of a larger expansion tree."
+              icon={Building2}
+              surface="flat"
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <MetricTile label="Configured cities" value={stateReadiness.totalCities.toLocaleString("en-IN")} tone="navy" />
+                <MetricTile label="Pilot cities" value={stateReadiness.pilotCities.toLocaleString("en-IN")} tone="emerald" />
+                <MetricTile label="Expansion cities" value={stateReadiness.expansionCities.toLocaleString("en-IN")} tone="sky" />
+                <MetricTile label="Focus city" value={stateReadiness.recommendedFocus} tone="amber" />
+              </div>
+            </SuitePanel>
+
+            <SuitePanel
               eyebrow={marketContextLabel}
               title="Market brief"
               description="Professional guidance should feel like a market memo, not a terminal dump."
@@ -988,7 +1041,7 @@ export function AdminWarRoomPage() {
                   </div>
                 ) : (
                   <p className="text-sm leading-6 text-slate-600">
-                    Use <span className="font-bold text-slate-900">Ctrl/Cmd + K</span> to jump to Chandigarh, Chennai, Kolkata, New Delhi, or a specific worker record.
+                    Use <span className="font-bold text-slate-900">Ctrl/Cmd + K</span> to jump across states, cities, districts, or a specific worker record.
                   </p>
                 )}
               </SuitePanel>
@@ -1309,6 +1362,10 @@ export function AdminFinancePage() {
     investorSummary,
     pitchMode,
     routeZoneId,
+    selectedMarket,
+    selectedStateSlug,
+    selectedCitySlug,
+    selectedDistrictId,
     zoneLabel,
     activeWorkerRate,
     averageTicket,
@@ -1344,6 +1401,9 @@ export function AdminFinancePage() {
   const financeSummary = useMemo(() => buildSystemInsightsSummary({
     routeZoneId,
     zoneLabel,
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtSlug: selectedDistrictId,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -1359,6 +1419,9 @@ export function AdminFinancePage() {
     investorSummary,
     llmMode,
     routeZoneId,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedStateSlug,
     stats,
     zoneLabel,
   ]);
@@ -1376,8 +1439,10 @@ export function AdminFinancePage() {
     stats.activeBookings,
   ]);
   const financeBriefSummary = useMemo(() => buildSystemInsightsSummary({
-    routeZoneId: DEFAULT_WAR_ROOM_ZONE,
+    routeZoneId: DEFAULT_WAR_ROOM_MARKET.citySlug,
     zoneLabel: "Agra Cantt",
+    stateSlug: DEFAULT_WAR_ROOM_MARKET.stateSlug,
+    citySlug: DEFAULT_WAR_ROOM_MARKET.citySlug,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -1395,18 +1460,25 @@ export function AdminFinancePage() {
     stats,
   ]);
   const financeExecutiveViewport = useMemo(
-    () => getZoneViewport(DEFAULT_WAR_ROOM_ZONE, "Agra Cantt"),
+    () => getZoneViewport(DEFAULT_WAR_ROOM_MARKET.citySlug, "Agra Cantt"),
     [],
   );
   const handleDownloadInvestorBrief = async () => {
-    if (!investorBriefRef.current || isExportingInvestorBrief) return;
+    if (isExportingInvestorBrief) return;
 
     setIsExportingInvestorBrief(true);
 
     try {
-      await downloadInvestorBriefFromNode({
-        node: investorBriefRef.current,
+      await downloadInvestorBriefPdf({
         fileName: `Karigar-360-Investor-Scorecard-${new Date().toISOString().slice(0, 10)}.pdf`,
+        marketPathLabel: `Markets > ${selectedMarket.state.label} > ${selectedMarket.city.label}${selectedDistrictId ? ` > ${zoneLabel}` : ""}`,
+              viewportLabel: formatViewportLabelSafe(getZoneViewport(routeZoneId, zoneLabel)),
+        summary: financeSummary,
+        yieldSnapshot,
+        assetYield: financeAssetYield,
+        verifiedWorkers,
+        verifiedWorkerRate,
+        totalWorkers: stats.totalWorkers,
       });
       toast.success("Investor scorecard downloaded.");
     } catch (error) {
@@ -1617,7 +1689,7 @@ export function AdminFinancePage() {
             summary={financeBriefSummary}
             yieldSnapshot={yieldSnapshot}
             assetYield={financeAssetYield}
-            viewportLabel={formatViewportLabel(financeExecutiveViewport)}
+            viewportLabel={formatViewportLabelSafe(financeExecutiveViewport)}
             verifiedWorkers={verifiedWorkers}
             verifiedWorkerRate={verifiedWorkerRate}
             totalWorkers={stats.totalWorkers}
@@ -2007,7 +2079,11 @@ export function AdminLegacyRedirect({
   const params = useParams();
 
   if (kind === "war-room") {
-    return <Navigate to={buildWarRoomPath(params.zoneId || DEFAULT_WAR_ROOM_ZONE)} replace />;
+    return <Navigate to={buildWarRoomPath(
+      params.stateSlug && params.citySlug
+        ? { stateSlug: params.stateSlug, citySlug: params.citySlug }
+        : params.zoneId || DEFAULT_WAR_ROOM_MARKET,
+    )} replace />;
   }
 
   if (kind === "workforce") {
@@ -2090,7 +2166,7 @@ function ObservabilityCopilotBubble({
           systemContext: {
             currentMission: "observability",
             currentObservabilityPanel: currentPanel,
-            currentZoneId: routeZoneId || DEFAULT_WAR_ROOM_ZONE,
+            currentZoneId: routeZoneId,
             zoneLabel,
             globalUptime: healthSnapshot?.status === "ok" ? "99.90%" : "Watch",
             latencyMs,
@@ -2483,38 +2559,40 @@ function ProjectedAssetYieldHero({
 }) {
   return (
     <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-500">
-            Projected Asset Yield
+            Projected 12-Month Asset Yield
           </p>
-          <h2 className="mt-2 text-2xl font-black tracking-tight text-[#0F172A]">
-            {marketLabel} is operating as a measurable asset, not just a dashboard.
+          <h2 className="mt-2 text-[1.55rem] font-black tracking-tight text-[#0F172A]">
+            {assetYield.roi12m.toFixed(0)}% projected ROI with disciplined CAC recovery.
           </h2>
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-            {postureLabel} stays disciplined when 12-month yield, CAC recovery, and payback remain visible above the fold.
+            Pitch Mode converts current job flow into an investor-safe annualized view. The model uses live platform yield, current flow, and expansion CAC to keep the narrative grounded in unit economics instead of vanity growth.
           </p>
         </div>
 
-        <div className="rounded-[20px] border border-[#0F172A] bg-[#0F172A] px-5 py-4 text-right text-white">
-          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
-            12M Yield
+        <div className="rounded-[24px] border border-[#0F172A] bg-[#0F172A] px-5 py-4 text-white">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-slate-300">
+            {postureLabel}
           </p>
-          <p className="mt-2 text-3xl font-black">
-            {assetYield.roi12m.toFixed(0)}%
-          </p>
-          <p className="mt-1 text-xs font-semibold text-slate-200">
-            {formatInr(assetYield.annualizedNetProfit)} annualized net profit
+          <p className="mt-2 text-3xl font-black">{marketLabel}</p>
+          <p className="mt-2 text-sm text-slate-200">
+            Payback window {paybackDays} days
           </p>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-4 md:grid-cols-4">
-        <MetricTile label="Run-rate jobs" value={assetYield.monthlyJobsRunRate.toLocaleString("en-IN")} tone="navy" />
-        <MetricTile label="Monthly yield" value={formatInr(assetYield.monthlyNetProfit)} tone="emerald" />
-        <MetricTile label="Payback window" value={`${paybackDays} days`} tone="amber" />
-        <MetricTile label="Profit / job" value={formatInr(yieldPerJob)} tone="sky" />
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricTile label="Monthly net profit" value={formatInr(assetYield.monthlyNetProfit)} tone="emerald" />
+        <MetricTile label="Expansion CAC" value={formatInr(assetYield.expansionCac)} tone="amber" />
+        <MetricTile label="Monthly run rate" value={`${assetYield.monthlyJobsRunRate} jobs`} tone="navy" />
+        <MetricTile label="Yield / job" value={formatInr(yieldPerJob)} tone="sky" />
       </div>
+
+      <p className="mt-4 text-sm leading-7 text-slate-600">
+        ROI_12m = ((Monthly Net Profit x 12) - Expansion CAC) / Expansion CAC
+      </p>
     </section>
   );
 }
@@ -2764,13 +2842,17 @@ function CommandBar({
   activeZoneLabel,
   highlightedWorkerLabel,
   options,
-  onSelectMarket,
+  onSelectState,
+  onSelectCity,
+  onSelectDistrict,
   onSelectWorker,
 }: {
   activeZoneLabel: string;
   highlightedWorkerLabel: string | null;
   options: CommandOption[];
-  onSelectMarket: (zoneId: string) => void;
+  onSelectState: (stateSlug: string) => void;
+  onSelectCity: (citySlug: string, stateSlug?: string) => void;
+  onSelectDistrict: (districtSlug: string, citySlug?: string, stateSlug?: string) => void;
   onSelectWorker: (workerId: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -2811,7 +2893,7 @@ function CommandBar({
             Search
           </p>
           <h2 className="mt-2 text-lg font-black text-slate-900">
-            Find a market or worker
+            Find a state, city, district, or worker
           </h2>
         </div>
 
@@ -2837,7 +2919,7 @@ function CommandBar({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          placeholder="Search Agra, Chandigarh, Chennai, Kolkata, New Delhi, or a worker"
+          placeholder="Search Punjab, Chandigarh, Agra Cantt, New Delhi, or a worker"
           className="w-full rounded-[12px] border border-slate-200 bg-slate-50 py-3 pl-11 pr-24 text-sm text-slate-900 outline-none transition focus:border-slate-400"
         />
         <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -2855,8 +2937,12 @@ function CommandBar({
                 onClick={() => {
                   if (option.type === "worker") {
                     onSelectWorker(option.id);
+                  } else if (option.type === "state") {
+                    onSelectState(option.id.replace(/^state:/, ""));
+                  } else if (option.type === "market") {
+                    onSelectCity(option.id.replace(/^city:/, ""));
                   } else {
-                    onSelectMarket(option.id);
+                    onSelectDistrict(option.id.replace(/^district:/, ""));
                   }
                   setOpen(false);
                   setQuery("");
@@ -2868,7 +2954,7 @@ function CommandBar({
                   <p className="mt-1 text-xs text-slate-500">{option.meta}</p>
                 </div>
                 <div className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">
-                  {option.type}
+                  {option.type === "market" ? "city" : option.type}
                 </div>
               </button>
             ))}

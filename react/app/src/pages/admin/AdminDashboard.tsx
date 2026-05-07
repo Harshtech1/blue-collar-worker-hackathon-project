@@ -24,30 +24,59 @@ import { AdminTechnicalCopilot } from "./components/AdminTechnicalCopilot";
 import {
   ADMIN_MISSION_LABELS,
   ADMIN_ROUTE_PREFIX,
+  DEFAULT_WAR_ROOM_MARKET,
   OBSERVABILITY_PANEL_LABELS,
+  buildMarketBreadcrumbLabel,
+  buildIntelligencePath,
   buildMissionPath,
   buildPathForTab,
   buildPathForTool,
   buildWarRoomPath,
   getMissionFromPath,
+  getWarRoomLocationFromPath,
   getObservabilityPanelFromPath,
-  getWarRoomZoneIdFromPath,
-  resolveMarketLabel,
   type AdminMission,
   type AdminTab,
   type AdminToolAction,
 } from "./adminRoutes";
+import {
+  findMarketCity,
+  getDefaultCityForState,
+  getDefaultDistrictForCity,
+  getDefaultMarketLocation,
+  getMarketDistrictBySlug,
+  getMarketDistrictsForCity,
+  listMarketCities,
+  listMarketStates,
+  resolveLegacyMarketTarget,
+  resolveMarketContext,
+  resolveMarketLabel,
+  resolveMarketLocation,
+  type MarketLocation,
+} from "./marketRegistry";
+import {
+  buildDemoMarketSnapshot,
+  findAdminMarketCity,
+  getAdminMarketBreadcrumb,
+  getAdminMarketCityOptions,
+  getAdminRegionOptionsForCity,
+  type AdminMarketSnapshot,
+} from "./utils/adminMarketSnapshot";
 import type {
   AdminActivityEntry,
+  AdminActiveMarket,
   AdminBooking,
   AdminDashboardStats,
   AdminInvestorAnalyticsSummary,
+  AdminMapStyle,
   AdminShellContextValue,
   AdminSystemHealthSnapshot,
 } from "./adminShellContext";
 
 const DEMO_ADMIN_TOKEN = "demo-admin-token";
 const ADMIN_PITCH_MODE_KEY = "adminPitchMode";
+const ADMIN_SELECTED_MARKET_KEY = "adminSelectedMarket";
+const ADMIN_MAP_STYLE_KEY = "adminMapStyle";
 
 const ADMIN_EMAIL_OPTIONS = [
   "rahiforbharat@gmail.com",
@@ -133,10 +162,22 @@ export default function AdminDashboard() {
     () => getObservabilityPanelFromPath(location.pathname),
     [location.pathname],
   );
-  const routeZoneId = useMemo(
-    () => getWarRoomZoneIdFromPath(location.pathname),
+  const routeMarketLocation = useMemo(
+    () => getWarRoomLocationFromPath(location.pathname),
     [location.pathname],
   );
+  const [selectedMarketLocation, setSelectedMarketLocation] = useState<MarketLocation>(() => {
+    try {
+      const raw = localStorage.getItem(ADMIN_SELECTED_MARKET_KEY);
+      if (!raw) return getDefaultMarketLocation();
+
+      const parsed = JSON.parse(raw) as Partial<MarketLocation>;
+      return resolveMarketLocation(parsed.stateSlug, parsed.citySlug, parsed.districtSlug);
+    } catch (error) {
+      console.warn("[AdminDashboard] Could not hydrate selected market:", error);
+      return getDefaultMarketLocation();
+    }
+  });
 
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("adminToken")));
   const [email, setEmail] = useState("");
@@ -145,6 +186,7 @@ export default function AdminDashboard() {
   const [recoveryMessage, setRecoveryMessage] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [pitchMode, setPitchMode] = useState(() => localStorage.getItem(ADMIN_PITCH_MODE_KEY) === "true");
+  const [marketSearchValue, setMarketSearchValue] = useState("");
 
   const [stats, setStats] = useState<AdminDashboardStats>(emptyStats);
   const [chartData, setChartData] = useState<Array<{ name: string; date?: string; bookings?: number; revenue?: number }>>([]);
@@ -164,12 +206,174 @@ export default function AdminDashboard() {
   const [error, setError] = useState("");
   const [healthSnapshot, setHealthSnapshot] = useState<AdminSystemHealthSnapshot | null>(null);
   const [channelLatencyMs, setChannelLatencyMs] = useState(42);
+  const [mapStyle, setMapStyle] = useState<AdminMapStyle>(() => {
+    const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
+    return persisted === "terrain" || persisted === "high-contrast" ? persisted : "road";
+  });
+  const [marketSnapshot, setMarketSnapshot] = useState<AdminMarketSnapshot | null>(null);
+  const [marketSnapshotLoading, setMarketSnapshotLoading] = useState(false);
   const systemReadyToastShown = useRef(false);
 
-  const zoneLabel = useMemo(
-    () => resolveMarketLabel(routeZoneId),
-    [routeZoneId],
+  useEffect(() => {
+    if (currentMission === "war-room") {
+      setSelectedMarketLocation(() => resolveMarketLocation(
+        routeMarketLocation.stateSlug,
+        routeMarketLocation.citySlug,
+        routeMarketLocation.districtSlug,
+      ));
+    }
+  }, [currentMission, routeMarketLocation.citySlug, routeMarketLocation.districtSlug, routeMarketLocation.stateSlug]);
+
+  useEffect(() => {
+    localStorage.setItem(ADMIN_SELECTED_MARKET_KEY, JSON.stringify(selectedMarketLocation));
+  }, [selectedMarketLocation]);
+
+  useEffect(() => {
+    localStorage.setItem(ADMIN_MAP_STYLE_KEY, mapStyle);
+  }, [mapStyle]);
+
+  const marketLocation = useMemo<MarketLocation>(() => (
+    currentMission === "war-room"
+      ? resolveMarketLocation(
+        routeMarketLocation.stateSlug,
+        routeMarketLocation.citySlug,
+        routeMarketLocation.districtSlug,
+      )
+      : resolveMarketLocation(
+        selectedMarketLocation.stateSlug,
+        selectedMarketLocation.citySlug,
+        selectedMarketLocation.districtSlug,
+      )
+  ), [
+    currentMission,
+    routeMarketLocation.citySlug,
+    routeMarketLocation.districtSlug,
+    routeMarketLocation.stateSlug,
+    selectedMarketLocation.citySlug,
+    selectedMarketLocation.districtSlug,
+    selectedMarketLocation.stateSlug,
+  ]);
+
+  const selectedDistrictId = marketLocation.districtSlug || null;
+
+  const selectedMarket = useMemo(
+    () => resolveMarketContext(marketLocation.stateSlug, marketLocation.citySlug, marketLocation.districtSlug),
+    [marketLocation.citySlug, marketLocation.districtSlug, marketLocation.stateSlug],
   );
+  const selectedStateSlug = selectedMarket.state.slug;
+  const selectedCitySlug = selectedMarket.city.slug;
+  const routeZoneId = selectedMarket.city.simulationCityId || selectedCitySlug;
+  const zoneLabel = useMemo(
+    () => resolveMarketLabel(selectedStateSlug, selectedCitySlug, selectedDistrictId),
+    [selectedCitySlug, selectedDistrictId, selectedStateSlug],
+  );
+  const selectedStateLabel = selectedMarket.state.label;
+  const selectedCityLabel = selectedMarket.city.label;
+  const districtOverlayMode = selectedDistrictId ? "district" as const : "city" as const;
+  const stateOptions = useMemo(() => listMarketStates(), []);
+  const cityOptions = useMemo(() => listMarketCities(selectedStateSlug), [selectedStateSlug]);
+  const districtOptions = useMemo(() => getMarketDistrictsForCity(selectedCitySlug), [selectedCitySlug]);
+  const selectedDistrictLabel = selectedMarket.district?.label || getMarketDistrictBySlug(selectedDistrictId, selectedCitySlug)?.label || null;
+  const marketCityOptions = useMemo(() => getAdminMarketCityOptions(), []);
+  const selectedCityOption = useMemo(
+    () => marketCityOptions.find((city) => city.cityId === selectedCitySlug) || null,
+    [marketCityOptions, selectedCitySlug],
+  );
+  const fallbackMarketSnapshot = useMemo(
+    () => buildDemoMarketSnapshot({
+      cityId: selectedCitySlug,
+      regionId: selectedDistrictId,
+    }),
+    [selectedCitySlug, selectedDistrictId],
+  );
+  const regionOptions = useMemo(
+    () => marketSnapshot?.regions || getAdminRegionOptionsForCity(selectedCitySlug),
+    [marketSnapshot, selectedCitySlug],
+  );
+  const activeMarket = useMemo<AdminActiveMarket>(() => ({
+    cityId: marketSnapshot?.market.cityId || selectedCitySlug,
+    cityLabel: marketSnapshot?.market.cityLabel || selectedCityLabel,
+    regionId: marketSnapshot?.market.regionId || selectedDistrictId,
+    regionLabel: marketSnapshot?.market.regionLabel || selectedDistrictLabel,
+    mode: marketSnapshot?.dataMode === "live" ? "live" : "demo-fallback",
+    mapStyle: pitchMode ? "road" : mapStyle,
+  }), [
+    mapStyle,
+    marketSnapshot,
+    pitchMode,
+    selectedCityLabel,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedDistrictLabel,
+  ]);
+
+  useEffect(() => {
+    setMarketSearchValue(selectedCityLabel);
+  }, [selectedCityLabel]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateMarketSnapshot = async () => {
+      const adminToken = localStorage.getItem("adminToken");
+      const demoMode = localStorage.getItem("adminDemoMode") === "true" || adminToken === DEMO_ADMIN_TOKEN;
+      const fallbackSnapshot = buildDemoMarketSnapshot({
+        cityId: selectedCitySlug,
+        regionId: selectedDistrictId,
+      });
+
+      if (cancelled) return;
+
+      if (demoMode || !adminToken) {
+        setMarketSnapshot(fallbackSnapshot);
+        setMarketSnapshotLoading(false);
+        return;
+      }
+
+      setMarketSnapshotLoading(true);
+
+      try {
+        const search = new URLSearchParams({
+          cityId: selectedCitySlug,
+        });
+
+        if (selectedDistrictId) {
+          search.set("regionId", selectedDistrictId);
+        }
+
+        const response = await fetch(`${API}/admin/market-snapshot?${search.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${adminToken}`,
+          },
+          cache: "no-store",
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.message || "Unable to load market snapshot");
+        }
+
+        if (!cancelled) {
+          setMarketSnapshot(payload?.data || fallbackSnapshot);
+        }
+      } catch (snapshotError) {
+        console.warn("[AdminDashboard] Market snapshot fallback engaged:", snapshotError);
+        if (!cancelled) {
+          setMarketSnapshot(fallbackSnapshot);
+        }
+      } finally {
+        if (!cancelled) {
+          setMarketSnapshotLoading(false);
+        }
+      }
+    };
+
+    void hydrateMarketSnapshot();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCitySlug, selectedDistrictId]);
 
   const loadDemoDashboardData = useCallback(() => {
     const completed = demoBookings.filter((booking) => booking.status === "completed");
@@ -414,7 +618,7 @@ export default function AdminDashboard() {
     localStorage.setItem("adminDemoMode", "true");
     setEmail("demo@rahi.local");
     setIsAuthenticated(true);
-    navigate(buildWarRoomPath(), { replace: true });
+    navigate(buildMissionPath("overview"), { replace: true });
     loadDemoDashboardData();
   }, [loadDemoDashboardData, navigate]);
 
@@ -571,20 +775,131 @@ export default function AdminDashboard() {
   }, [chartData]);
 
   const handleMissionNavigation = useCallback((mission: AdminMission) => {
-    navigate(buildMissionPath(mission, { zoneId: routeZoneId, panel: currentObservabilityPanel }));
-  }, [currentObservabilityPanel, navigate, routeZoneId]);
+    navigate(buildMissionPath(mission, { market: marketLocation, panel: currentObservabilityPanel }));
+  }, [currentObservabilityPanel, marketLocation, navigate]);
 
   const handleTabNavigation = useCallback((tab: AdminTab) => {
-    navigate(buildPathForTab(tab, routeZoneId));
-  }, [navigate, routeZoneId]);
+    navigate(buildPathForTab(tab, marketLocation));
+  }, [marketLocation, navigate]);
 
   const handleToolSelection = useCallback((tool: AdminToolAction) => {
     navigate(buildPathForTool(tool));
   }, [navigate]);
 
+  const syncAdminMarketLocation = useCallback((nextLocation: MarketLocation) => {
+    setSelectedMarketLocation(nextLocation);
+
+    if (currentMission !== "war-room") {
+      return;
+    }
+
+    const nextPath = location.pathname.includes("/intelligence/")
+      ? buildIntelligencePath(nextLocation)
+      : buildWarRoomPath(nextLocation);
+    navigate(nextPath);
+  }, [currentMission, location.pathname, navigate]);
+
+  const handleMarketStateSelect = useCallback((stateToken: string) => {
+    const nextStateSlug = stateToken.replace(/^state:/, "");
+    const nextCity = getDefaultCityForState(nextStateSlug);
+    if (!nextCity) return;
+
+    const nextDistrict = getDefaultDistrictForCity(nextCity.slug);
+    syncAdminMarketLocation({
+      stateSlug: nextStateSlug,
+      citySlug: nextCity.slug,
+      districtSlug: nextDistrict?.slug || null,
+    });
+  }, [syncAdminMarketLocation]);
+
+  const handleMarketCitySelect = useCallback((cityToken: string, stateSlug?: string) => {
+    const nextCitySlug = cityToken.replace(/^city:/, "");
+    const explicitCity = findMarketCity(nextCitySlug);
+    const nextStateSlug = stateSlug || explicitCity?.stateSlug || selectedStateSlug;
+    const nextDistrict = getDefaultDistrictForCity(nextCitySlug);
+    syncAdminMarketLocation({
+      stateSlug: nextStateSlug,
+      citySlug: nextCitySlug,
+      districtSlug: nextDistrict?.slug || null,
+    });
+  }, [selectedStateSlug, syncAdminMarketLocation]);
+  const handleMarketDistrictSelect = useCallback((districtToken: string, citySlug?: string, stateSlug?: string) => {
+    const nextDistrictSlug = districtToken.replace(/^district:/, "");
+    const nextCitySlug = citySlug || selectedCitySlug;
+    const nextStateSlug = stateSlug || selectedStateSlug;
+    syncAdminMarketLocation({
+      stateSlug: nextStateSlug,
+      citySlug: nextCitySlug,
+      districtSlug: nextDistrictSlug,
+    });
+  }, [selectedCitySlug, selectedStateSlug, syncAdminMarketLocation]);
+  const handleActiveMarketSelect = useCallback((cityId: string) => {
+    const selectedCity = findAdminMarketCity(cityId);
+    const targetCity = findMarketCity(selectedCity?.cityId || cityId);
+    if (!targetCity) return;
+
+    const nextDistrict = getDefaultDistrictForCity(targetCity.slug);
+    syncAdminMarketLocation({
+      stateSlug: targetCity.stateSlug,
+      citySlug: targetCity.slug,
+      districtSlug: nextDistrict?.slug || null,
+    });
+  }, [syncAdminMarketLocation]);
+  const handleActiveRegionSelect = useCallback((regionId: string | null) => {
+    syncAdminMarketLocation({
+      stateSlug: selectedStateSlug,
+      citySlug: selectedCitySlug,
+      districtSlug: regionId || null,
+    });
+  }, [selectedCitySlug, selectedStateSlug, syncAdminMarketLocation]);
+  const handleMapStyleSelect = useCallback((nextMapStyle: AdminMapStyle) => {
+    setMapStyle(nextMapStyle);
+  }, []);
+
   const handleWarRoomZoneSelect = useCallback((zoneId: string) => {
-    navigate(buildWarRoomPath(zoneId));
-  }, [navigate]);
+    if (zoneId.startsWith("state:")) {
+      const targetState = zoneId.replace("state:", "");
+      const nextCity = getDefaultCityForState(targetState);
+      if (nextCity) {
+        const nextDistrict = getDefaultDistrictForCity(nextCity.slug);
+        syncAdminMarketLocation({
+          stateSlug: targetState,
+          citySlug: nextCity.slug,
+          districtSlug: nextDistrict?.slug || null,
+        });
+      }
+      return;
+    }
+
+    if (zoneId.startsWith("city:")) {
+      const targetCity = zoneId.replace("city:", "");
+      const explicitTarget = listMarketCities().find((city) => city.slug === targetCity);
+      if (explicitTarget) {
+        const nextDistrict = getDefaultDistrictForCity(explicitTarget.slug);
+        syncAdminMarketLocation({
+          stateSlug: explicitTarget.stateSlug,
+          citySlug: explicitTarget.slug,
+          districtSlug: nextDistrict?.slug || null,
+        });
+        return;
+      }
+    }
+
+    const normalizedTarget = zoneId.startsWith("district:")
+      ? zoneId.replace("district:", "")
+      : zoneId;
+    const targetMarket = resolveLegacyMarketTarget(normalizedTarget);
+    if (!targetMarket) {
+      syncAdminMarketLocation(marketLocation);
+      return;
+    }
+
+    syncAdminMarketLocation({
+      stateSlug: targetMarket.stateSlug,
+      citySlug: targetMarket.citySlug,
+      districtSlug: targetMarket.districtSlug || null,
+    });
+  }, [marketLocation, syncAdminMarketLocation]);
   const handlePitchModeToggle = useCallback(() => {
     setPitchMode((current) => !current);
   }, []);
@@ -594,6 +909,10 @@ export default function AdminDashboard() {
     : currentMission === "observability"
       ? OBSERVABILITY_PANEL_LABELS[currentObservabilityPanel]
       : ADMIN_MISSION_LABELS[currentMission];
+  const marketBreadcrumb = useMemo(
+    () => marketSnapshot ? getAdminMarketBreadcrumb(marketSnapshot) : buildMarketBreadcrumbLabel(marketLocation),
+    [marketLocation, marketSnapshot],
+  );
   const usesDedicatedMapSurface = currentMission === "war-room";
 
   const shellContext = useMemo<AdminShellContextValue>(() => ({
@@ -601,6 +920,24 @@ export default function AdminDashboard() {
     loading,
     error,
     pitchMode,
+    activeMarket,
+    selectedMarketLocation: marketLocation,
+    selectedStateSlug,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedStateLabel,
+    selectedCityLabel,
+    selectedDistrictLabel,
+    selectedMarket: {
+      state: selectedMarket.state,
+      city: selectedMarket.city,
+    },
+    cityOptions: marketCityOptions,
+    regionOptions,
+    mapStyle: pitchMode ? "road" : mapStyle,
+    marketSnapshot: marketSnapshot || fallbackMarketSnapshot,
+    marketSnapshotLoading,
+    districtOverlayMode,
     routeZoneId,
     zoneLabel,
     currentMission,
@@ -627,9 +964,15 @@ export default function AdminDashboard() {
     onNavigateTab: handleTabNavigation,
     onSelectTool: handleToolSelection,
     onSelectWarRoomZone: handleWarRoomZoneSelect,
+    onSelectMarketState: handleMarketStateSelect,
+    onSelectMarketCity: handleMarketCitySelect,
+    onSelectActiveMarket: handleActiveMarketSelect,
+    onSelectActiveRegion: handleActiveRegionSelect,
+    onSelectMapStyle: handleMapStyleSelect,
     onOpenVerificationDocument: handleViewVerificationDocument,
     onTogglePitchMode: handlePitchModeToggle,
   }), [
+    activeMarket,
     activities,
     activeWorkerRate,
     averageTicket,
@@ -641,7 +984,14 @@ export default function AdminDashboard() {
     currentObservabilityPanel,
     error,
     globalUptime,
+    handleActiveMarketSelect,
+    handleActiveRegionSelect,
+    handleMapStyleSelect,
+    districtOverlayMode,
     handleMissionNavigation,
+    handleMarketCitySelect,
+    handleMarketDistrictSelect,
+    handleMarketStateSelect,
     handlePitchModeToggle,
     handleTabNavigation,
     handleToolSelection,
@@ -652,9 +1002,24 @@ export default function AdminDashboard() {
     llmSummary,
     loading,
     investorSummary,
+    fallbackMarketSnapshot,
+    mapStyle,
+    marketCityOptions,
+    marketLocation,
+    marketSnapshot,
+    marketSnapshotLoading,
     pendingPayouts,
     pitchMode,
+    regionOptions,
     routeZoneId,
+    selectedCityLabel,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedDistrictLabel,
+    selectedMarket.city,
+    selectedMarket.state,
+    selectedStateLabel,
+    selectedStateSlug,
     sevenDayBookings,
     sevenDayRevenue,
     stats,
@@ -864,9 +1229,54 @@ export default function AdminDashboard() {
                     ? missionNarratives[currentMission]
                     : "Cloud reasoning is degraded, but local fallback guidance is still steering the active shell."}
                 </p>
+                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  {marketBreadcrumb}
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
+                  <span>State</span>
+                  <select
+                    value={selectedStateSlug}
+                    onChange={(event) => handleMarketStateSelect(event.target.value)}
+                    className="min-w-[9rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                  >
+                    {stateOptions.map((state) => (
+                      <option key={state.slug} value={state.slug}>
+                        {state.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
+                  <span>City</span>
+                  <select
+                    value={selectedCitySlug}
+                    onChange={(event) => handleMarketCitySelect(event.target.value)}
+                    className="min-w-[9rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                  >
+                    {cityOptions.map((city) => (
+                      <option key={city.slug} value={city.slug}>
+                        {city.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  <span>District</span>
+                  <select
+                    value={selectedDistrictId || ""}
+                    onChange={(event) => handleMarketDistrictSelect(event.target.value)}
+                    className="rounded-full bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                  >
+                    {districtOptions.map((district) => (
+                      <option key={district.slug} value={district.slug}>
+                        {district.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   type="button"
                   onClick={handlePitchModeToggle}

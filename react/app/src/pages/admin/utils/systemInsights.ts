@@ -3,12 +3,22 @@ import {
   GLOBAL_SIMULATION_CITIES,
   sectorSeeds,
 } from "@/utils/simulationData";
-import { ADMIN_OBSERVABILITY_ISSUES, humanizeIssueCode } from "../adminSignals";
+import {
+  ADMIN_ISSUE_SEVERITY_WEIGHT,
+  type ObservabilityIssueCode,
+} from "../adminSignals";
 import type {
   AdminDashboardStats,
   AdminInvestorAnalyticsSummary,
   AdminSystemHealthSnapshot,
 } from "../adminShellContext";
+import {
+  findMarketCity,
+  getMarketDistrictBySlug,
+  getMarketDistrictsForCity,
+  resolveMarketContext,
+  resolveMarketLabel,
+} from "../marketRegistry";
 
 export type StrategyChipId =
   | "local_ops"
@@ -28,8 +38,12 @@ export interface StrategyChip {
 
 export interface SystemInsightsSummary {
   marketMetrics: {
+    state: string;
+    stateSlug: string;
     city: string;
+    citySlug: string;
     zoneLabel: string;
+    marketLabel: string;
     recommendedExpansionCity: string;
     density: number;
     surgeZones: string[];
@@ -52,6 +66,9 @@ export interface SystemInsightsSummary {
 export interface BuildSystemInsightsSummaryInput {
   routeZoneId: string;
   zoneLabel: string;
+  stateSlug?: string | null;
+  citySlug?: string | null;
+  districtSlug?: string | null;
   stats: AdminDashboardStats;
   activeWorkerRate: number;
   averageTicket: number;
@@ -61,14 +78,29 @@ export interface BuildSystemInsightsSummaryInput {
   investorSummary: AdminInvestorAnalyticsSummary | null;
 }
 
+type MarketIdentity = {
+  state: string;
+  stateSlug: string;
+  city: string;
+  citySlug: string;
+  zone: string;
+  cityTier: "pilot" | "tier_1" | "tier_2" | "tier_3" | "international";
+  isExistingMarket: boolean;
+};
+
 const AGRA_CITY_ID = "agra";
 const AGRA_CITY_NAME = "agra";
-const STRATEGIC_MARGIN_PERCENT = 14.2;
-const STRATEGIC_EXPANSION_CITIES = new Set(["chandigarh", "new delhi"]);
-const RUPEE_SYMBOL = "₹";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const roundTo = (value: number, digits = 2) => Number(value.toFixed(digits));
+
+const sanitizeInsightText = (value: string) => (
+  value
+    .replaceAll("ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹", "₹")
+    .replaceAll("ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹", "₹")
+    .replaceAll("Ã¢â€šÂ¹", "₹")
+    .replaceAll("â‚¹", "₹")
+);
 
 const parsePercent = (value: string | number | null | undefined) => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -78,20 +110,66 @@ const parsePercent = (value: string | number | null | undefined) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
-const resolveMarketIdentity = (routeZoneId: string, zoneLabel: string) => {
+const deriveExplicitMarketIdentity = (
+  stateSlug?: string | null,
+  citySlug?: string | null,
+  districtSlug?: string | null,
+): MarketIdentity | null => {
+  if (!stateSlug && !citySlug) return null;
+
+  const context = resolveMarketContext(stateSlug, citySlug);
+  return {
+    state: context.state.label,
+    stateSlug: context.state.slug,
+    city: context.city.label,
+    citySlug: context.city.slug,
+    zone: resolveMarketLabel(context.state.slug, context.city.slug, districtSlug || null),
+    cityTier: context.city.tier,
+    isExistingMarket: context.city.launchStatus === "pilot",
+  };
+};
+
+const resolveMarketIdentity = ({
+  routeZoneId,
+  zoneLabel,
+  stateSlug,
+  citySlug,
+  districtSlug,
+}: Pick<BuildSystemInsightsSummaryInput, "routeZoneId" | "zoneLabel" | "stateSlug" | "citySlug" | "districtSlug">): MarketIdentity => {
+  const explicitIdentity = deriveExplicitMarketIdentity(stateSlug, citySlug, districtSlug);
+  if (explicitIdentity) return explicitIdentity;
+
+  const matchedMarketCity = findMarketCity(routeZoneId);
+  if (matchedMarketCity) {
+    return {
+      state: matchedMarketCity.stateLabel,
+      stateSlug: matchedMarketCity.stateSlug,
+      city: matchedMarketCity.label,
+      citySlug: matchedMarketCity.slug,
+      zone: resolveMarketLabel(matchedMarketCity.stateSlug, matchedMarketCity.slug, districtSlug || null),
+      cityTier: matchedMarketCity.tier,
+      isExistingMarket: matchedMarketCity.launchStatus === "pilot",
+    };
+  }
+
   const matchedCity = GLOBAL_SIMULATION_CITIES.find((city) => city.id === routeZoneId) || null;
   const matchedSector = sectorSeeds.find((sector) => sector.id === routeZoneId) || null;
+  const inferredCityId = matchedCity?.id
+    || findMarketCity(matchedSector?.city?.toLowerCase().replace(/\s+/g, "-") || "")?.slug
+    || AGRA_CITY_ID;
   const geoConfig = buildSimulationGeoConfig({
-    cityId: matchedCity?.id || AGRA_CITY_ID,
+    cityId: inferredCityId,
     radiusKm: matchedCity ? 14 : 10,
   });
 
   return {
-    matchedCity,
-    matchedSector,
+    state: matchedCity?.stateName || "Uttar Pradesh",
+    stateSlug: findMarketCity(inferredCityId)?.stateSlug || "uttar-pradesh",
     city: matchedCity?.label || matchedSector?.city || geoConfig.cityLabel || "Agra",
+    citySlug: matchedCity?.id || inferredCityId,
     zone: zoneLabel || matchedSector?.label || matchedCity?.label || geoConfig.cityLabel || "Agra",
-    geoConfig,
+    cityTier: geoConfig.cityTier,
+    isExistingMarket: geoConfig.isExistingMarket,
   };
 };
 
@@ -138,80 +216,110 @@ const derivePaybackDays = (
     investorSummary?.unitEconomics?.commissionPerJob
     || Math.max(42, averageTicket * 0.18),
   );
-  const averageDailyCommissionPerWorker = Math.max(12, Math.round(commissionPerJob * 0.52));
-  return clamp(Math.round(projectedCac / averageDailyCommissionPerWorker), 9, 24);
+  const dailyCommissionPerWorker = Math.max(12, Math.round(commissionPerJob * 0.52));
+  return clamp(Math.round(projectedCac / dailyCommissionPerWorker), 9, 24);
 };
 
 const buildExpansionCity = (city: string, isExistingMarket: boolean) => {
-  if (!isExistingMarket) {
-    return city;
+  const normalizedCity = city.trim().toLowerCase();
+  if (normalizedCity === "new delhi" || normalizedCity === "chandigarh") {
+    return city.trim();
   }
 
-  return "Chandigarh";
+  return isExistingMarket ? "Chandigarh" : "New Delhi";
 };
 
-const resolveExpansionTargetCity = (summary: SystemInsightsSummary) => {
-  const currentCity = summary.marketMetrics.city.trim();
-  const recommendedCity = summary.marketMetrics.recommendedExpansionCity.trim();
-
-  if (STRATEGIC_EXPANSION_CITIES.has(currentCity.toLowerCase())) {
-    return currentCity;
+const buildSurgeZones = ({
+  citySlug,
+  cityLabel,
+  zoneLabel,
+  routeZoneId,
+  districtSlug,
+}: {
+  citySlug: string;
+  cityLabel: string;
+  zoneLabel: string;
+  routeZoneId: string;
+  districtSlug?: string | null;
+}) => {
+  const explicitDistrict = getMarketDistrictBySlug(districtSlug || null);
+  if (explicitDistrict?.label) {
+    return [explicitDistrict.label];
   }
 
-  if (STRATEGIC_EXPANSION_CITIES.has(recommendedCity.toLowerCase())) {
-    return recommendedCity;
+  const directSector = sectorSeeds.find((sector) => sector.id === routeZoneId);
+  if (directSector?.label) {
+    return [directSector.label];
   }
 
-  return recommendedCity || currentCity;
-};
+  const districtZones = getMarketDistrictsForCity(citySlug)
+    .slice(0, 2)
+    .map((district) => district.label);
 
-const buildSurgeZones = (city: string, zoneLabel: string, routeZoneId: string) => {
-  const sector = sectorSeeds.find((entry) => entry.id === routeZoneId);
-  if (sector?.label) {
-    return [sector.label];
+  if (districtZones.length > 0) {
+    return districtZones;
   }
 
-  const sameCitySectors = sectorSeeds
-    .filter((entry) => entry.city.toLowerCase() === city.toLowerCase())
+  const matchingSectors = sectorSeeds
+    .filter((sector) => sector.city.toLowerCase() === cityLabel.toLowerCase())
     .sort((left, right) => right.demandWeight - left.demandWeight)
     .slice(0, 2)
-    .map((entry) => entry.label);
+    .map((sector) => sector.label);
 
-  if (sameCitySectors.length > 0) {
-    return sameCitySectors;
+  if (matchingSectors.length > 0) {
+    return matchingSectors;
   }
 
-  return [zoneLabel];
+  return [`${cityLabel} Core`, zoneLabel].filter((value, index, array) => array.indexOf(value) === index);
 };
 
 const deriveCriticalIssueCodes = ({
+  stats,
+  activeWorkerRate,
   llmMode,
   healthSnapshot,
-}: {
-  stats: AdminDashboardStats;
-  activeWorkerRate: number;
-  llmMode: "ready" | "fallback";
-  healthSnapshot: AdminSystemHealthSnapshot | null;
-  investorSummary: AdminInvestorAnalyticsSummary | null;
-}) => {
-  const seededCriticals = ADMIN_OBSERVABILITY_ISSUES
-    .filter((issue) => issue.severity === "critical")
-    .map((issue) => issue.code);
+  investorSummary,
+}: Pick<BuildSystemInsightsSummaryInput, "stats" | "activeWorkerRate" | "llmMode" | "healthSnapshot" | "investorSummary">) => {
+  const issueSet = new Set<ObservabilityIssueCode>();
+  const completionRate = Number(investorSummary?.completionRate || 0);
+  const cancellationRate = Number(investorSummary?.cancellationRate || 0);
+  const pendingRatio = stats.totalBookings > 0 ? stats.pendingBookings / stats.totalBookings : 0;
 
-  if (llmMode === "fallback" && !seededCriticals.includes("LLM_FALLBACK")) {
-    seededCriticals.push("LLM_FALLBACK");
+  if (healthSnapshot?.status && healthSnapshot.status !== "ok") {
+    issueSet.add("PAYMENT_FAILURE");
   }
 
-  if (healthSnapshot?.media?.secureUploadsReady === false && !seededCriticals.includes("UPLOAD_LATENCY")) {
-    seededCriticals.push("UPLOAD_LATENCY");
+  if (pendingRatio >= 0.28 || cancellationRate >= 12) {
+    issueSet.add("BOOKING_ERROR");
   }
 
-  return seededCriticals;
+  if (completionRate > 0 && completionRate <= 78) {
+    issueSet.add("OTP_TIMEOUT");
+  }
+
+  if (healthSnapshot?.media?.secureUploadsReady === false) {
+    issueSet.add("PROOF_VERIFICATION_REJECTED");
+  }
+
+  if (activeWorkerRate < 42) {
+    issueSet.add("ASSIGNMENT_TIMEOUT");
+  }
+
+  if (llmMode === "fallback") {
+    issueSet.add("LLM_FALLBACK");
+  }
+
+  return Array.from(issueSet).sort((left, right) => (
+    (ADMIN_ISSUE_SEVERITY_WEIGHT[right] || 0) - (ADMIN_ISSUE_SEVERITY_WEIGHT[left] || 0)
+  ));
 };
 
 export const buildSystemInsightsSummary = ({
   routeZoneId,
   zoneLabel,
+  stateSlug,
+  citySlug,
+  districtSlug,
   stats,
   activeWorkerRate,
   averageTicket,
@@ -220,8 +328,14 @@ export const buildSystemInsightsSummary = ({
   healthSnapshot,
   investorSummary,
 }: BuildSystemInsightsSummaryInput): SystemInsightsSummary => {
-  const { city, zone, geoConfig } = resolveMarketIdentity(routeZoneId, zoneLabel);
-  const isNonAgraMarket = city.trim().toLowerCase() !== AGRA_CITY_NAME;
+  const marketIdentity = resolveMarketIdentity({
+    routeZoneId,
+    zoneLabel,
+    stateSlug,
+    citySlug,
+    districtSlug,
+  });
+  const isNonAgraMarket = marketIdentity.city.trim().toLowerCase() !== AGRA_CITY_NAME;
   const availableWorkers = Math.max(1, Math.round(stats.totalWorkers * (Math.max(activeWorkerRate, 1) / 100)));
   const density = roundTo(clamp(stats.activeBookings / availableWorkers, 0.35, 2.8));
   const yieldPerJob = deriveYieldPerJob(investorSummary, averageTicket);
@@ -235,16 +349,29 @@ export const buildSystemInsightsSummary = ({
     healthSnapshot,
     investorSummary,
   });
+  const criticalBugCount = criticalIssueCodes.filter((code) => (
+    ADMIN_ISSUE_SEVERITY_WEIGHT[code] >= ADMIN_ISSUE_SEVERITY_WEIGHT.ASSIGNMENT_TIMEOUT
+  )).length;
 
   return {
     marketMetrics: {
-      city,
-      zoneLabel: zone,
-      recommendedExpansionCity: buildExpansionCity(city, geoConfig.isExistingMarket),
+      state: marketIdentity.state,
+      stateSlug: marketIdentity.stateSlug,
+      city: marketIdentity.city,
+      citySlug: marketIdentity.citySlug,
+      zoneLabel: marketIdentity.zone,
+      marketLabel: `${marketIdentity.city}, ${marketIdentity.state}`,
+      recommendedExpansionCity: buildExpansionCity(marketIdentity.city, marketIdentity.isExistingMarket),
       density,
-      surgeZones: buildSurgeZones(city, zone, routeZoneId),
-      cityTier: geoConfig.cityTier,
-      isExistingMarket: geoConfig.isExistingMarket,
+      surgeZones: buildSurgeZones({
+        citySlug: marketIdentity.citySlug,
+        cityLabel: marketIdentity.city,
+        zoneLabel: marketIdentity.zone,
+        routeZoneId,
+        districtSlug,
+      }),
+      cityTier: marketIdentity.cityTier,
+      isExistingMarket: marketIdentity.isExistingMarket,
     },
     unitEconomics: {
       yieldPerJob,
@@ -252,7 +379,7 @@ export const buildSystemInsightsSummary = ({
       paybackDays,
     },
     systemHealth: {
-      criticalBugs: criticalIssueCodes.length,
+      criticalBugs: criticalBugCount,
       primaryCriticalBugCode: criticalIssueCodes[0] || null,
       uptime: roundTo(uptime, 1),
       llmMode,
@@ -262,41 +389,47 @@ export const buildSystemInsightsSummary = ({
 
 export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): StrategyChip[] => {
   const city = String(summary.marketMetrics.city || "Agra");
+  const zoneLabel = String(summary.marketMetrics.zoneLabel || city);
+  const expansionCity = String(summary.marketMetrics.recommendedExpansionCity || city);
+  const surgeZone = summary.marketMetrics.surgeZones[0] || zoneLabel;
   const criticalBugs = Math.round(Number(summary.systemHealth.criticalBugs || 0));
-  const primaryBugLabel = humanizeIssueCode(summary.systemHealth.primaryCriticalBugCode || "critical_bug");
-  const expansionCity = resolveExpansionTargetCity(summary);
-  const shouldPushShadowLaunch = STRATEGIC_EXPANSION_CITIES.has(expansionCity.trim().toLowerCase());
+  const isNonAgraMarket = city.trim().toLowerCase() !== AGRA_CITY_NAME;
+  const yieldPerJob = Math.round(summary.unitEconomics.yieldPerJob || 0);
+  const cacProjected = Math.round(summary.unitEconomics.cacProjected || 150);
+  const paybackDays = Math.round(summary.unitEconomics.paybackDays || 18);
 
   return [
     {
       id: "local_ops",
-      title: "Expansion",
-      tone: shouldPushShadowLaunch ? "sky" : "navy",
-      actionLabel: "Market Entry Brief",
-      copilotQuery: `Prepare the Market Entry Brief for ${expansionCity}. Focus on Shadow Launch Recommended, projected CAC of ${RUPEE_SYMBOL}150, payback in 18 days, freelancer-first supply coverage, trust rails, and the first 14-day rollout plan.`,
-      insight: shouldPushShadowLaunch
-        ? `Shadow Launch Recommended | Projected CAC: ${RUPEE_SYMBOL}150 | Payback: 18 Days.`
-        : `Expansion watchlist is active for ${expansionCity}. Protect the Agra pilot until CAC and payback stay inside launch guardrails.`,
+      title: "Local Ops",
+      tone: "sky",
+      actionLabel: "Explain Ops",
+      copilotQuery: `Explain the local ops recommendation for ${zoneLabel}. What should the operator do in the next 24 hours?`,
+      insight: summary.marketMetrics.density >= 1
+        ? `Protect ${surgeZone} first and shift standby coverage into the highest-density lane.`
+        : `Keep ${zoneLabel} on disciplined coverage while demand warms; avoid over-staffing before density crosses 1.0.`,
     },
     {
       id: "financial_stability",
-      title: "Risk",
-      tone: criticalBugs > 0 ? "amber" : "navy",
-      actionLabel: "Analyze RCA",
-      copilotQuery: criticalBugs > 0
-        ? `Operational Risk detected in ${city}. Read the STRICT_PERSISTENCE audit trail, explain why ${primaryBugLabel} is active, and recommend the next RCA step.`
-        : `Read the STRICT_PERSISTENCE audit trail and confirm whether any critical operational risk is active for ${city}.`,
+      title: "Financial Stability",
+      tone: criticalBugs > 0 ? "amber" : "emerald",
+      actionLabel: "Explain Yield",
+      copilotQuery: `Explain the unit economics for ${zoneLabel}. How do yield, CAC, and payback affect sustainability right now?`,
       insight: criticalBugs > 0
-        ? `Operational Risk: ${primaryBugLabel} detected. Analyze RCA?`
-        : "Operational Risk: No critical bug detected. Keep the verified rails under watch.",
+        ? `Protect yield at INR ${yieldPerJob} while ${criticalBugs} critical risks stay active; keep CAC near INR ${cacProjected} and hold payback inside ${paybackDays} days.`
+        : `Yield is holding near INR ${yieldPerJob}; keep projected CAC near INR ${cacProjected} and payback inside ${paybackDays} days.`,
     },
     {
       id: "expansion_posture",
-      title: "Finance",
-      tone: "emerald",
-      actionLabel: "Open Finance",
-      copilotQuery: `Show me the money for ${city} and walk me through unit economics before taking me to finance.`,
-      insight: `Yield Update: Current Margin at ${STRATEGIC_MARGIN_PERCENT.toFixed(1)}%. Optimization available.`,
+      title: "Expansion Posture",
+      tone: "navy",
+      actionLabel: "Open Playbook",
+      copilotQuery: isNonAgraMarket
+        ? `Prepare the expansion playbook for ${city}. Explain the Shadow Launch posture, projected CAC of INR 150, payback window of 18 days, freelancer-first supply coverage, trust rails, and the first 14-day operating plan.`
+        : `Explain the expansion playbook for moving from ${city} into ${expansionCity}. What must stay true before the launch window opens?`,
+      insight: isNonAgraMarket
+        ? "Shadow Launch (Freelancer-First) | Projected CAC: INR 150 | Payback Window: 18 Days"
+        : `Agra pilot first: protect the core, keep payback inside ${paybackDays} days, then export the playbook to ${expansionCity}.`,
     },
   ];
 };
@@ -319,11 +452,27 @@ export const normalizeStrategyChips = (
 
   return fallback.map((seed) => {
     const remote = sourceMap.get(seed.id);
+    const remoteInsight = typeof remote?.insight === "string" && remote.insight.trim().length > 0
+      ? sanitizeInsightText(remote.insight.trim())
+      : seed.insight;
+
+    if (seed.id === "expansion_posture" && !summary.marketMetrics.isExistingMarket) {
+      return {
+        ...seed,
+        insight: seed.insight,
+      };
+    }
+
+    if (seed.id === "financial_stability" && summary.systemHealth.criticalBugs > 0) {
+      return {
+        ...seed,
+        insight: seed.insight,
+      };
+    }
+
     return {
       ...seed,
-      tone: remote?.tone === "navy" || remote?.tone === "emerald" || remote?.tone === "sky" || remote?.tone === "amber"
-        ? remote.tone
-        : seed.tone,
+      insight: remoteInsight,
     };
   });
 };

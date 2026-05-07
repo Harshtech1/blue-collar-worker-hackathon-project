@@ -5,6 +5,12 @@ import type {
   AdminTab,
   AdminToolAction,
 } from "./adminRoutes";
+import type { MarketCity, MarketDistrict, MarketLocation, MarketState } from "./marketRegistry";
+import type {
+  AdminMarketCityOption,
+  AdminMarketSnapshot,
+  AdminRegionOption,
+} from "./utils/adminMarketSnapshot";
 
 export interface AdminBooking {
   _id: string;
@@ -80,11 +86,41 @@ export interface AdminActivityEntry {
   role?: string;
 }
 
+export type AdminMapStyle = "road" | "terrain" | "high-contrast";
+
+export interface AdminActiveMarket {
+  cityId: string;
+  cityLabel: string;
+  regionId: string | null;
+  regionLabel: string | null;
+  mode: "live" | "demo-fallback";
+  mapStyle: AdminMapStyle;
+}
+
 export interface AdminShellContextValue {
   stats: AdminDashboardStats;
   loading: boolean;
   error: string;
   pitchMode: boolean;
+  activeMarket: AdminActiveMarket;
+  selectedMarketLocation: MarketLocation;
+  selectedStateSlug: string;
+  selectedCitySlug: string;
+  selectedDistrictId: string | null;
+  selectedStateLabel: string;
+  selectedCityLabel: string;
+  selectedDistrictLabel: string | null;
+  selectedMarket: {
+    state: MarketState;
+    city: MarketCity;
+    district?: MarketDistrict | null;
+  };
+  cityOptions: AdminMarketCityOption[];
+  regionOptions: AdminRegionOption[];
+  mapStyle: AdminMapStyle;
+  marketSnapshot: AdminMarketSnapshot | null;
+  marketSnapshotLoading: boolean;
+  districtOverlayMode: "city" | "district";
   routeZoneId: string;
   zoneLabel: string;
   currentMission: AdminMission;
@@ -111,6 +147,12 @@ export interface AdminShellContextValue {
   onNavigateTab: (tab: AdminTab) => void;
   onSelectTool: (tool: AdminToolAction) => void;
   onSelectWarRoomZone: (zoneId: string) => void;
+  onSelectMarketState: (stateSlug: string) => void;
+  onSelectMarketCity: (citySlug: string, stateSlug?: string) => void;
+  onSelectMarketDistrict: (districtSlug: string, citySlug?: string, stateSlug?: string) => void;
+  onSelectActiveMarket: (cityId: string) => void;
+  onSelectActiveRegion: (regionId: string | null) => void;
+  onSelectMapStyle: (mapStyle: AdminMapStyle) => void;
   onOpenVerificationDocument: (worker: any, type?: "aadhaar" | "pan") => void;
   onTogglePitchMode: () => void;
 }

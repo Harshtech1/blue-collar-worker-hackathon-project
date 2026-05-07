@@ -230,9 +230,13 @@ const App = () => {
                     <Route path="/admin-portal-2026" element={<AdminDashboard />}>
                       <Route index element={<Navigate to="overview" replace />} />
                       <Route path="overview" element={<AdminOverviewRoute />} />
-                      <Route path="war-room" element={<Navigate to="/admin-portal-2026/war-room/agra-cantt" replace />} />
+                      <Route path="war-room" element={<Navigate to="/admin-portal-2026/war-room/uttar-pradesh/agra/agra-cantt" replace />} />
+                      <Route path="war-room/:stateSlug/:citySlug/:districtSlug" element={<AdminWarRoomRoute />} />
+                      <Route path="war-room/:stateSlug/:citySlug" element={<AdminWarRoomRoute />} />
                       <Route path="war-room/:zoneId" element={<AdminWarRoomRoute />} />
-                      <Route path="intelligence" element={<Navigate to="/admin-portal-2026/intelligence/agra-cantt" replace />} />
+                      <Route path="intelligence" element={<Navigate to="/admin-portal-2026/intelligence/uttar-pradesh/agra/agra-cantt" replace />} />
+                      <Route path="intelligence/:stateSlug/:citySlug/:districtSlug" element={<AdminWarRoomRoute />} />
+                      <Route path="intelligence/:stateSlug/:citySlug" element={<AdminWarRoomRoute />} />
                       <Route path="intelligence/:zoneId" element={<AdminWarRoomRoute />} />
                       <Route path="heatmap" element={<AdminHeatmapRoute />} />
                       <Route path="workforce" element={<AdminWorkforceRoute />} />
