@@ -1,9 +1,9 @@
-import { Loader2, Radar, Sparkles, ArrowRight } from "lucide-react";
+import { ArrowRight, Loader2, Radar, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitAdminCopilotSeed } from "../adminCopilotEvents";
 import { humanizeIssueCode } from "../adminSignals";
 import { useSystemInsights } from "../hooks/useSystemInsights";
-import type { StrategyChip, SystemInsightsSummary } from "@/pages/admin/utils/systemInsights";
+import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsights";
 
 interface StrategyPulseProps {
   summary: SystemInsightsSummary;
@@ -11,36 +11,40 @@ interface StrategyPulseProps {
 }
 
 const CHIP_TONES: Record<StrategyChip["id"], string> = {
-  local_ops: "border-sky-200 bg-sky-50/70 text-sky-900",
+  local_ops: "border-sky-200 bg-sky-50/70 text-sky-950",
   financial_stability: "border-amber-200 bg-amber-50/80 text-amber-950",
   expansion_posture: "border-emerald-200 bg-emerald-50/80 text-emerald-950",
 };
 
 const CHIP_ACTIONS: Record<StrategyChip["id"], string> = {
-  local_ops: "Market entry brief",
-  financial_stability: "Analyze RCA",
-  expansion_posture: "Open in copilot",
+  local_ops: "Explain local ops",
+  financial_stability: "Open finance brief",
+  expansion_posture: "Open market entry brief",
 };
 
 const buildCopilotPrompt = (chip: StrategyChip, summary: SystemInsightsSummary) => {
-  if (chip.id === "local_ops") {
+  if (chip.id === "expansion_posture") {
+    const targetCity = summary.marketMetrics.city.trim().toLowerCase() === "agra"
+      ? summary.marketMetrics.recommendedExpansionCity
+      : summary.marketMetrics.city;
+
     return {
-      prompt: `Prepare the Market Entry Brief for ${summary.marketMetrics.recommendedExpansionCity}. Focus on shadow launch posture, projected CAC of ₹150, payback in 18 days, freelancer-first supply coverage, trust rails, and the first 14-day operating plan.`,
-      sourceLabel: `Shadow Launch | ${summary.marketMetrics.recommendedExpansionCity}`,
+      prompt: `Explain the market entry playbook for ${targetCity}. Focus on Shadow Launch (Freelancer-First), projected CAC of INR ${Math.round(summary.unitEconomics.cacProjected)}, payback in ${Math.round(summary.unitEconomics.paybackDays)} days, trust rails, and the first 14-day rollout plan.`,
+      sourceLabel: `Shadow Launch | ${targetCity}`,
     };
   }
 
   if (chip.id === "financial_stability") {
-    const bugLabel = humanizeIssueCode(summary.systemHealth.primaryCriticalBugCode || "critical_bug");
     return {
-      prompt: `Operational Risk: analyze the RCA for ${bugLabel} and summarize the next mitigation steps from the persisted audit trail.`,
-      sourceLabel: `RCA | ${bugLabel}`,
+      prompt: `Show me the money for ${summary.marketMetrics.city}. Walk me through unit economics, yield per job, CAC, incentives, and the next financial protection move before expansion.`,
+      sourceLabel: "Finance | Unit Economics",
     };
   }
 
+  const bugLabel = humanizeIssueCode(summary.systemHealth.primaryCriticalBugCode || "critical_bug");
   return {
-    prompt: "Show me the money and walk me through unit economics before taking me to finance.",
-    sourceLabel: "Finance | Unit Economics",
+    prompt: `Explain the local ops recommendation for ${summary.marketMetrics.zoneLabel}. Highlight surge zones, staffing moves, and whether ${bugLabel} changes the next 24-hour operating plan.`,
+    sourceLabel: `Local Ops | ${summary.marketMetrics.zoneLabel}`,
   };
 };
 

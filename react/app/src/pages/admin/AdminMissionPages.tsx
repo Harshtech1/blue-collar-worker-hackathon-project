@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Activity,
@@ -7,6 +7,7 @@ import {
   BarChart3,
   Briefcase,
   Building2,
+  Download,
   DollarSign,
   Globe2,
   LineChart,
@@ -28,7 +29,6 @@ import { toast } from "sonner";
 import { API } from "@/lib/constants";
 import { DataTable } from "./components/DataTable";
 import { MissionControlMap } from "./components/MissionControlMap";
-import { StrategyChips } from "./components/StrategyChips";
 import { StrategyPulse } from "./components/StrategyPulse";
 import {
   buildMissionPath,
@@ -97,6 +97,16 @@ const getYieldSnapshot = ({
   };
 };
 
+const formatInr = (value: number) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+
+const countVerifiedWorkers = (workersList: any[]) => workersList.filter((worker) => (
+  worker?.status === "verified"
+  || worker?.is_verified === true
+  || worker?.aadhaar_verified === true
+  || worker?.verification_status === "verified"
+  || worker?.verificationStatus?.aadhaar === "verified"
+)).length;
+
 export function AdminOverviewPage() {
   const {
     stats,
@@ -116,6 +126,8 @@ export function AdminOverviewPage() {
     onNavigateTab,
     onSelectWarRoomZone,
   } = useAdminShellContext();
+  const investorBriefRef = useRef<HTMLDivElement | null>(null);
+  const [isExportingInvestorBrief, setIsExportingInvestorBrief] = useState(false);
 
   const weeklyDelta = chartData.length > 1
     ? Number(chartData[chartData.length - 1]?.bookings || 0) - Number(chartData[0]?.bookings || 0)
@@ -128,6 +140,16 @@ export function AdminOverviewPage() {
   const throughputPeak = chartData.reduce((highest, entry) => (
     Number(entry.bookings || 0) > highest ? Number(entry.bookings || 0) : highest
   ), 0);
+  const verifiedWorkers = useMemo(() => countVerifiedWorkers(workersList), [workersList]);
+  const verifiedWorkerRate = useMemo(() => (
+    Math.round((verifiedWorkers / Math.max(1, stats.totalWorkers || workersList.length || 1)) * 100)
+  ), [verifiedWorkers, stats.totalWorkers, workersList.length]);
+  const yieldSnapshot = useMemo(() => getYieldSnapshot({
+    totalRevenue: Number(stats.totalRevenue || 0),
+    completedCount: Number(stats.completedBookings || 0),
+    fallbackAverageTicket: Number(averageTicket || 0),
+    investorSummary,
+  }), [averageTicket, investorSummary, stats.completedBookings, stats.totalRevenue]);
   const overviewSummary = useMemo(() => buildSystemInsightsSummary({
     routeZoneId,
     zoneLabel,
@@ -149,10 +171,75 @@ export function AdminOverviewPage() {
     stats,
     zoneLabel,
   ]);
+  const executiveBriefSummary = useMemo(() => buildSystemInsightsSummary({
+    routeZoneId: DEFAULT_WAR_ROOM_ZONE,
+    zoneLabel: "Agra Cantt",
+    stats,
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    llmMode,
+    healthSnapshot,
+    investorSummary,
+  }), [
+    activeWorkerRate,
+    averageTicket,
+    globalUptime,
+    healthSnapshot,
+    investorSummary,
+    llmMode,
+    stats,
+  ]);
+  const handleDownloadInvestorBrief = async () => {
+    if (!investorBriefRef.current || isExportingInvestorBrief) return;
+
+    setIsExportingInvestorBrief(true);
+
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+
+      const canvas = await html2canvas(investorBriefRef.current, {
+        backgroundColor: "#f8fafc",
+        scale: 2,
+        useCORS: true,
+        logging: false,
+      });
+
+      const image = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const usableWidth = pageWidth - (margin * 2);
+      const usableHeight = pageHeight - (margin * 2);
+      const ratio = Math.min(usableWidth / canvas.width, usableHeight / canvas.height);
+      const renderWidth = canvas.width * ratio;
+      const renderHeight = canvas.height * ratio;
+      const x = (pageWidth - renderWidth) / 2;
+      const y = (pageHeight - renderHeight) / 2;
+
+      pdf.addImage(image, "PNG", x, y, renderWidth, renderHeight, undefined, "FAST");
+      pdf.save(`RAHI-Investor-Brief-${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.success("Investor brief downloaded.");
+    } catch (error) {
+      console.error("[investor-brief]", error);
+      toast.error("Investor brief generation failed.");
+    } finally {
+      setIsExportingInvestorBrief(false);
+    }
+  };
 
   return (
     <ScrollPage>
-      <StrategyChips summary={overviewSummary} />
+      <StrategyPulse summary={overviewSummary} />
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.28fr)_minmax(20rem,0.72fr)]">
         <SuitePanel
@@ -253,14 +340,26 @@ export function AdminOverviewPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => onSelectWarRoomZone(routeZoneId || DEFAULT_WAR_ROOM_ZONE)}
-              className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
-            >
-              Open Full Theater
-              <ArrowRight className="h-4 w-4" />
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleDownloadInvestorBrief}
+                disabled={isExportingInvestorBrief}
+                className="inline-flex min-h-12 items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isExportingInvestorBrief ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                Download Investor Brief
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onSelectWarRoomZone(routeZoneId || DEFAULT_WAR_ROOM_ZONE)}
+                className="inline-flex min-h-12 items-center gap-2 rounded-full border border-[#0F172A] bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                Open Full Theater
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
@@ -455,6 +554,18 @@ export function AdminOverviewPage() {
           </SuitePanel>
         </section>
       )}
+
+      <div className="pointer-events-none fixed left-[-99999px] top-0 z-[-1] w-[980px]">
+        <div ref={investorBriefRef}>
+          <ExecutiveInvestorBrief
+            summary={executiveBriefSummary}
+            yieldSnapshot={yieldSnapshot}
+            verifiedWorkers={verifiedWorkers}
+            verifiedWorkerRate={verifiedWorkerRate}
+            totalWorkers={stats.totalWorkers}
+          />
+        </div>
+      </div>
     </ScrollPage>
   );
 }
@@ -599,7 +710,7 @@ export function AdminWarRoomPage() {
           />
 
           <div className="mt-4">
-            <StrategyChips summary={warRoomSummary} />
+            <StrategyPulse summary={warRoomSummary} />
           </div>
         </div>
 
@@ -1844,6 +1955,255 @@ function ObservabilityCopilotBubble({
       >
         <MessageSquare className="h-5 w-5" />
       </button>
+    </div>
+  );
+}
+
+function ExecutiveInvestorBrief({
+  summary,
+  yieldSnapshot,
+  verifiedWorkers,
+  verifiedWorkerRate,
+  totalWorkers,
+}: {
+  summary: ReturnType<typeof buildSystemInsightsSummary>;
+  yieldSnapshot: ReturnType<typeof getYieldSnapshot>;
+  verifiedWorkers: number;
+  verifiedWorkerRate: number;
+  totalWorkers: number;
+}) {
+  const expansionTimeline = [
+    {
+      city: "Agra Cantt",
+      stage: "Pilot Base",
+      note: `Density ${summary.marketMetrics.density.toFixed(2)} with yield ${formatInr(yieldSnapshot.netProfitPerJob)} per completed job.`,
+    },
+    {
+      city: "Chandigarh",
+      stage: "Shadow Launch",
+      note: `Freelancer-first expansion with projected CAC ${formatInr(summary.unitEconomics.cacProjected)} and ${summary.unitEconomics.paybackDays}-day payback.`,
+    },
+    {
+      city: "New Delhi",
+      stage: "Tier-1 Reserve",
+      note: "Enter only after Chandigarh trust coverage and margin discipline remain above target thresholds.",
+    },
+  ];
+
+  return (
+    <section
+      className="w-[980px] bg-slate-50 p-8 text-slate-900"
+      style={{ fontFamily: "\"Plus Jakarta Sans\", Inter, system-ui, sans-serif" }}
+    >
+      <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_24px_70px_-38px_rgba(15,23,42,0.18)]">
+        <div className="border-b border-slate-200 bg-slate-50/80 px-8 py-5">
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.24em] text-slate-500">
+                RAHI Investor Brief
+              </p>
+              <h1 className="mt-2 text-[2rem] font-black tracking-tight text-[#0F172A]">
+                Karigar 360 expansion and unit-economics scorecard
+              </h1>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
+                Executive snapshot of the Agra command base, verified-worker trust coverage, and the next shadow-launch sequence for Chandigarh and New Delhi.
+              </p>
+            </div>
+
+            <div className="rounded-[22px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-right">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Trust badge</p>
+              <p className="mt-2 text-3xl font-black text-emerald-700">{verifiedWorkerRate}%</p>
+              <p className="mt-1 text-xs font-semibold text-emerald-800">
+                {verifiedWorkers}/{Math.max(1, totalWorkers)} workers verified
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-6 px-8 py-7" style={{ gridTemplateColumns: "1.15fr 0.85fr" }}>
+          <div className="space-y-6">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                Net Profit per Job
+              </p>
+              <div className="mt-4 rounded-[24px] border border-slate-200 bg-slate-50 px-5 py-5">
+                <p className="text-lg font-bold text-[#0F172A]">
+                  {formatInr(yieldSnapshot.netProfitPerJob)}
+                </p>
+                <p className="mt-3 text-sm leading-7 text-slate-700">
+                  <span className="font-bold text-slate-900">Formula:</span>{" "}
+                  Net Profit per Job = Platform Commission - (Marketing CAC + Incentives)
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <BriefMetric label="Commission" value={formatInr(yieldSnapshot.commissionPerJob)} tone="navy" />
+                  <BriefMetric label="Marketing CAC" value={formatInr(yieldSnapshot.marketingPerJob)} tone="sky" />
+                  <BriefMetric label="Incentives" value={formatInr(yieldSnapshot.incentivesPerJob)} tone="amber" />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                    Agra Cantt density map
+                  </p>
+                  <h2 className="mt-2 text-xl font-black tracking-tight text-[#0F172A]">
+                    Executive density thumbnail
+                  </h2>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
+                  D={summary.marketMetrics.density.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="mt-5">
+                <ExecutiveDensityThumbnail
+                  zoneLabel={summary.marketMetrics.zoneLabel}
+                  density={summary.marketMetrics.density}
+                  activeJobs={Math.max(12, Math.round(summary.marketMetrics.density * 10))}
+                  workerCoverage={Math.max(6, Math.round((100 - verifiedWorkerRate) * 0.08 + 8))}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
+                Shadow launch timeline
+              </p>
+              <h2 className="mt-2 text-xl font-black tracking-tight text-[#0F172A]">
+                Chandigarh and New Delhi scaling path
+              </h2>
+
+              <div className="mt-5 space-y-4">
+                {expansionTimeline.map((step, index) => (
+                  <div key={step.city} className="rounded-[22px] border border-slate-200 bg-slate-50/80 px-4 py-4">
+                    <div className="flex items-start gap-4">
+                      <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-black text-[#0F172A]">
+                        {index + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-slate-900">{step.city}</p>
+                        <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-500">{step.stage}</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-700">{step.note}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-[#0F172A] px-6 py-6 text-white shadow-sm">
+              <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-300">
+                Executive summary
+              </p>
+              <p className="mt-3 text-sm leading-7 text-slate-200">
+                RAHI is demonstrating city-scale logistics discipline in Agra first, with verified-worker trust coverage, visible unit economics, and a controlled shadow-launch path into new markets.
+              </p>
+              <div className="mt-5 grid gap-3">
+                <div className="flex items-center justify-between rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Verified trust</span>
+                  <span className="text-sm font-bold text-white">{verifiedWorkerRate}% coverage</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Expansion posture</span>
+                  <span className="text-sm font-bold text-white">Shadow Launch / Freelancer-first</span>
+                </div>
+                <div className="flex items-center justify-between rounded-[18px] border border-white/10 bg-white/5 px-4 py-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Generated</span>
+                  <span className="text-sm font-bold text-white">
+                    {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ExecutiveDensityThumbnail({
+  zoneLabel,
+  density,
+  activeJobs,
+  workerCoverage,
+}: {
+  zoneLabel: string;
+  density: number;
+  activeJobs: number;
+  workerCoverage: number;
+}) {
+  return (
+    <div className="relative h-[260px] overflow-hidden rounded-[28px] border border-slate-200 bg-[#0B1220]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_22%_20%,rgba(56,189,248,0.22),transparent_34%),radial-gradient(circle_at_78%_28%,rgba(16,185,129,0.18),transparent_26%),radial-gradient(circle_at_55%_72%,rgba(245,158,11,0.26),transparent_30%)]" />
+      <div className="absolute inset-0 opacity-25 [background-image:linear-gradient(rgba(148,163,184,0.35)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.35)_1px,transparent_1px)] [background-size:34px_34px]" />
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-900/30 via-transparent to-slate-900/50" />
+
+      <div className="absolute left-[14%] top-[22%] rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold text-slate-100">
+        Civil Lines
+      </div>
+      <div className="absolute right-[12%] top-[18%] rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold text-slate-100">
+        Taj Ganj
+      </div>
+      <div className="absolute right-[16%] bottom-[18%] rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold text-slate-100">
+        Fatehabad Rd
+      </div>
+
+      <div className="absolute left-1/2 top-1/2 h-[138px] w-[138px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-sky-300/50 bg-sky-400/10 shadow-[0_0_0_18px_rgba(56,189,248,0.08),0_0_0_42px_rgba(14,165,233,0.08)]" />
+      <div className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 border-white bg-emerald-400 shadow-[0_0_0_10px_rgba(16,185,129,0.26)]" />
+
+      <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between gap-4 rounded-[22px] border border-white/10 bg-slate-950/55 px-4 py-3 backdrop-blur-sm">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Active focus</p>
+          <p className="mt-1 text-lg font-black text-white">{zoneLabel}</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-right">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Density</p>
+            <p className="mt-1 text-sm font-bold text-white">{density.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Active jobs</p>
+            <p className="mt-1 text-sm font-bold text-white">{activeJobs}</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Coverage</p>
+            <p className="mt-1 text-sm font-bold text-white">{workerCoverage} workers</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Status</p>
+            <p className="mt-1 text-sm font-bold text-emerald-300">Mission green</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BriefMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: Tone;
+}) {
+  return (
+    <div className={cn(
+      "rounded-[18px] border px-4 py-3",
+      tone === "navy" && "border-slate-200 bg-white text-slate-900",
+      tone === "sky" && "border-sky-100 bg-sky-50/70 text-sky-900",
+      tone === "emerald" && "border-emerald-100 bg-emerald-50/70 text-emerald-900",
+      tone === "amber" && "border-amber-100 bg-amber-50/70 text-amber-950",
+    )}>
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-current/60">{label}</p>
+      <p className="mt-2 text-sm font-bold text-current">{value}</p>
     </div>
   );
 }
