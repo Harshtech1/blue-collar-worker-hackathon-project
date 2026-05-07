@@ -514,33 +514,6 @@ const formatAuditTimestamp = (value = new Date()) => (
   value.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 );
 
-const useTypewriterText = (script: string[], speedMs = 14) => {
-  const [visibleLineCount, setVisibleLineCount] = useState(0);
-
-  useEffect(() => {
-    setVisibleLineCount(0);
-
-    if (!script.length) {
-      return undefined;
-    }
-
-    const intervalId = window.setInterval(() => {
-      setVisibleLineCount((current) => {
-        if (current >= script.length) {
-          window.clearInterval(intervalId);
-          return current;
-        }
-
-        return current + 1;
-      });
-    }, Math.max(8, speedMs));
-
-    return () => window.clearInterval(intervalId);
-  }, [script, speedMs]);
-
-  return useMemo(() => script.slice(0, visibleLineCount), [script, visibleLineCount]);
-};
-
 const clampNumber = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
 
 const getDensityTone = (density: number) => {
@@ -2768,38 +2741,6 @@ function usePrefersReducedMotion() {
   }, []);
 
   return prefersReducedMotion;
-}
-
-function useTypewriterText(text: string, intervalMs = 14) {
-  const prefersReducedMotion = usePrefersReducedMotion();
-  const [displayedText, setDisplayedText] = useState(text);
-
-  useEffect(() => {
-    if (prefersReducedMotion) {
-      setDisplayedText(text);
-      return undefined;
-    }
-
-    if (!text) {
-      setDisplayedText("");
-      return undefined;
-    }
-
-    setDisplayedText("");
-    let cursor = 0;
-    const step = text.length > 420 ? 8 : text.length > 220 ? 4 : 2;
-    const timer = window.setInterval(() => {
-      cursor = Math.min(text.length, cursor + step);
-      setDisplayedText(text.slice(0, cursor));
-      if (cursor >= text.length) {
-        window.clearInterval(timer);
-      }
-    }, intervalMs);
-
-    return () => window.clearInterval(timer);
-  }, [intervalMs, prefersReducedMotion, text]);
-
-  return displayedText;
 }
 
 function HeroSignal({
