@@ -360,23 +360,16 @@ export function MissionControlMap({
 
   useEffect(() => {
     if (pitchMode) {
-      setMapViewMode("road");
-      setShowSectorOverlays(false);
+      setMapViewMode("night-ops");
+      setShowSectorOverlays(true);
       setShowMoatOverlay(false);
       return;
     }
 
     const nextMapStyle = mapStyleMode || "road";
     setMapViewMode(nextMapStyle);
-
-    if (nextMapStyle === "terrain") {
-      setShowSectorOverlays(true);
-      setShowMoatOverlay(true);
-      return;
-    }
-
-    setShowSectorOverlays(false);
     setShowMoatOverlay(false);
+    setShowSectorOverlays(nextMapStyle !== "satellite");
   }, [mapStyleMode, pitchMode]);
 
   const simulationGeoConfig = useMemo(() => {

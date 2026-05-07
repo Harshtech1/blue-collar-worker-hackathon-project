@@ -926,7 +926,7 @@ export function AdminWarRoomPage() {
             <div className="flex flex-wrap gap-2">
               <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
                 {mapStyle === "satellite"
-                  ? "Ground Truth Satellite"
+                  ? "Operational Satellite"
                   : mapStyle === "night-ops"
                     ? "Night Ops"
                     : "Standard Road"}
