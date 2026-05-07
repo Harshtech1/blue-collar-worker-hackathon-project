@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, Phone, MessageSquare, Shield, Star, Clock,
   Check, MapPin, User, IndianRupee, Copy, Navigation,
-  AlertCircle, ChevronRight, Share2, Info, Loader2, Rocket, Play
+  AlertCircle, ChevronRight, Share2, Info, Loader2, Rocket, Play, ImageIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -93,6 +93,7 @@ export default function Tracking() {
   });
   const [isChatOpen, setIsChatOpen] = useState(false);
   const currentUserId = localStorage.getItem('userId') || '';
+  const [proofImageLoading, setProofImageLoading] = useState({ before: false, after: false });
   const statusRef = useRef<BookingStatus>('pending');
 
   useEffect(() => {
@@ -367,6 +368,56 @@ export default function Tracking() {
     : 'syncing';
   const beforeProofUrl = extractMediaUrl(bookingData?.beforeWorkPhoto);
   const afterProofUrl = extractMediaUrl(bookingData?.afterWorkPhoto);
+
+  useEffect(() => {
+    setProofImageLoading({
+      before: Boolean(beforeProofUrl),
+      after: Boolean(afterProofUrl),
+    });
+  }, [beforeProofUrl, afterProofUrl]);
+
+  const renderProofCard = (
+    label: 'Before' | 'After',
+    url: string | null | undefined,
+    loadingKey: 'before' | 'after',
+    emptyMessage: string,
+  ) => (
+    <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{label} Photo</p>
+        <Badge className={url ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-50' : 'bg-slate-100 text-slate-500 hover:bg-slate-100'}>
+          {url ? 'Uploaded' : 'Pending'}
+        </Badge>
+      </div>
+      <div className="relative h-48 overflow-hidden rounded-2xl border border-slate-100 bg-white">
+        {url ? (
+          <>
+            {proofImageLoading[loadingKey] && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-slate-100">
+                <div className="h-12 w-12 animate-pulse rounded-2xl bg-slate-200" />
+                <span className="text-xs font-bold text-slate-400">Loading verified proof...</span>
+              </div>
+            )}
+            <img
+              src={url}
+              alt={`${label} work proof`}
+              onLoad={() => setProofImageLoading((prev) => ({ ...prev, [loadingKey]: false }))}
+              onError={() => setProofImageLoading((prev) => ({ ...prev, [loadingKey]: false }))}
+              className={`h-full w-full object-cover transition-opacity duration-300 ${proofImageLoading[loadingKey] ? 'opacity-0' : 'opacity-100'}`}
+            />
+            <span className="absolute left-3 top-3 rounded-full bg-slate-950/80 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white">
+              {label}
+            </span>
+          </>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+            <ImageIcon className="h-10 w-10 text-slate-300" />
+            <p className="text-sm font-bold text-slate-500">{emptyMessage}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -710,41 +761,26 @@ export default function Tracking() {
                 </CardContent>
               </Card>
 
-              {(beforeProofUrl || afterProofUrl) && (
-                <Card className="overflow-hidden rounded-[2.5rem] border-slate-100 shadow-lg">
-                  <CardContent className="p-8">
-                    <div className="mb-5 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">RAHI Verified Job Proof</p>
-                        <h4 className="text-xl font-black text-slate-900">Before & After work photos</h4>
-                      </div>
-                      <Badge className="bg-emerald-50 text-emerald-700 hover:bg-emerald-50">Trust trail</Badge>
+              <Card className="overflow-hidden rounded-[2.5rem] border-slate-100 shadow-lg">
+                <CardContent className="p-8">
+                  <div className="mb-5 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600">RAHI Verified Job Proof</p>
+                      <h4 className="text-xl font-black text-slate-900">Before & After work photos</h4>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">
+                        Workers must upload proof before each OTP handoff. This gallery updates as the job moves forward.
+                      </p>
                     </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                        <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Before Photo</p>
-                        {beforeProofUrl ? (
-                          <img src={beforeProofUrl} alt="Before work proof" className="h-48 w-full rounded-2xl object-cover" />
-                        ) : (
-                          <div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm font-medium text-slate-400">
-                            Waiting for worker arrival proof
-                          </div>
-                        )}
-                      </div>
-                      <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
-                        <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">After Photo</p>
-                        {afterProofUrl ? (
-                          <img src={afterProofUrl} alt="After work proof" className="h-48 w-full rounded-2xl object-cover" />
-                        ) : (
-                          <div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-sm font-medium text-slate-400">
-                            Waiting for completion proof
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+                    <Badge className={beforeProofUrl || afterProofUrl ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-50' : 'bg-amber-50 text-amber-700 hover:bg-amber-50'}>
+                      {beforeProofUrl || afterProofUrl ? 'Trust trail active' : 'Awaiting proof'}
+                    </Badge>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {renderProofCard('Before', beforeProofUrl, 'before', 'Waiting for worker arrival proof')}
+                    {renderProofCard('After', afterProofUrl, 'after', 'Waiting for completion proof')}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
           </div>
         </div>

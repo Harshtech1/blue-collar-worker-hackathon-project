@@ -165,6 +165,8 @@ const buildBookingPayload = (booking, candidate = null) => ({
   customer_user_id: booking.customer_user_id || null,
   bookingType: booking.bookingType || 'instant',
   description: booking.description || null,
+  beforeWorkPhoto: booking.beforeWorkPhoto || null,
+  afterWorkPhoto: booking.afterWorkPhoto || null,
   matchScore: candidate?.matchScore,
   distanceKm: candidate?.distanceKm,
   skillFit: candidate?.skillFit,
@@ -324,6 +326,8 @@ const emitBookingUpdate = (bookingId, booking) => {
     workerName: booking.workerName,
     workerPhone: booking.workerPhone,
     worker_user_id: booking.worker_user_id,
+    beforeWorkPhoto: booking.beforeWorkPhoto || null,
+    afterWorkPhoto: booking.afterWorkPhoto || null,
   };
 
   if (booking.customer_user_id) {

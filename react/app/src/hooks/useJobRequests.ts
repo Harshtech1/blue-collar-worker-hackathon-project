@@ -52,6 +52,15 @@ type ProofPhotoPayload = {
 
 const ACTIVE_STATUSES = ['accepted', 'arriving', 'otp_verify', 'in_progress'];
 
+const readApiErrorMessage = async (res: Response, fallback: string) => {
+  try {
+    const body = await res.json();
+    return body?.message || body?.error || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 const normalizeJob = (job: any) => ({
   ...job,
   id: job.id || job._id,
@@ -214,15 +223,16 @@ export function useJobRequests() {
       });
 
       if (!res.ok) {
+        const message = await readApiErrorMessage(res, 'Failed to start job');
         if (res.status === 400) {
           toast({
-            title: 'Invalid OTP',
-            description: 'Please ask the customer for the correct OTP.',
+            title: message.toLowerCase().includes('photo') ? 'Proof photo required' : 'Invalid OTP',
+            description: message.toLowerCase().includes('photo') ? message : 'Please ask the customer for the correct OTP.',
             variant: 'destructive',
           });
-          return { error: new Error('Invalid OTP') };
+          return { error: new Error(message) };
         }
-        throw new Error('Failed to start job');
+        throw new Error(message);
       }
 
       toast({
@@ -260,15 +270,16 @@ export function useJobRequests() {
       });
 
       if (!res.ok) {
+        const message = await readApiErrorMessage(res, 'Failed to complete job');
         if (res.status === 400) {
           toast({
-            title: 'Invalid OTP',
-            description: 'Please ask the customer for the correct finish OTP.',
+            title: message.toLowerCase().includes('photo') ? 'Proof photo required' : 'Invalid OTP',
+            description: message.toLowerCase().includes('photo') ? message : 'Please ask the customer for the correct finish OTP.',
             variant: 'destructive',
           });
-          return { error: new Error('Invalid OTP') };
+          return { error: new Error(message) };
         }
-        throw new Error('Failed to complete job');
+        throw new Error(message);
       }
 
       toast({

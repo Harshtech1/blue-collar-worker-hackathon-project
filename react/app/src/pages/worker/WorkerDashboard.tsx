@@ -955,8 +955,8 @@ const WorkerDashboard = () => {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="dashboard-proof-photo">
-                {otpType === 'start' ? 'Take Photo of Work Site' : 'Take Photo of Finished Work'}
+              <Label className="text-sm font-bold">
+                {otpType === 'start' ? 'Before-work proof photo' : 'After-work proof photo'}
               </Label>
               <Input
                 id="dashboard-proof-photo"
@@ -965,8 +965,24 @@ const WorkerDashboard = () => {
                 capture="environment"
                 disabled={proofUploading}
                 onChange={(e) => handleProofUpload(e.target.files?.[0])}
-                className="h-12"
+                className="sr-only"
               />
+              <Label
+                htmlFor="dashboard-proof-photo"
+                aria-disabled={proofUploading}
+                className={`flex min-h-24 cursor-pointer flex-col justify-center rounded-2xl border-2 border-dashed p-4 transition ${
+                  proofMedia
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                    : 'border-slate-200 bg-slate-50 text-slate-800 hover:border-indigo-300 hover:bg-indigo-50'
+                } ${proofUploading ? 'pointer-events-none opacity-70' : ''}`}
+              >
+                <span className="text-base font-black">
+                  {otpType === 'start' ? 'Take Before-Work Photo' : 'Take After-Work Photo'}
+                </span>
+                <span className="mt-1 text-xs font-medium text-muted-foreground">
+                  The OTP field unlocks only after this proof uploads successfully.
+                </span>
+              </Label>
               <p className="text-xs text-muted-foreground">
                 RAHI compresses the image under 500KB for faster upload in low-signal areas.
               </p>
@@ -979,9 +995,12 @@ const WorkerDashboard = () => {
               {proofMedia && (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-emerald-800">Proof photo uploaded</p>
-                      <p className="text-xs text-emerald-700">RAHI verified job proof is attached to this OTP step.</p>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <CheckCircle className="mt-0.5 h-5 w-5 flex-none text-emerald-600" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-emerald-800">Proof photo uploaded</p>
+                        <p className="text-xs text-emerald-700">RAHI verified job proof is attached to this OTP step.</p>
+                      </div>
                     </div>
                     {extractMediaUrl(proofMedia) && (
                       <img
@@ -999,11 +1018,12 @@ const WorkerDashboard = () => {
               <Input
                 id="otp"
                 type="text"
-                placeholder="Enter 4-digit OTP"
+                placeholder={proofMedia ? 'Enter 4-digit OTP' : 'Upload proof photo first'}
                 value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 maxLength={4}
-                className="text-center text-2xl tracking-widest h-14"
+                disabled={!proofMedia || proofUploading}
+                className={`h-14 text-center text-2xl tracking-widest ${!proofMedia || proofUploading ? 'cursor-not-allowed bg-slate-100 opacity-60' : ''}`}
               />
             </div>
           </div>
