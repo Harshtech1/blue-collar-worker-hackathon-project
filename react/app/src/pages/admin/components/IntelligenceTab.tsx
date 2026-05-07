@@ -514,6 +514,39 @@ const formatAuditTimestamp = (value = new Date()) => (
   value.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
 );
 
+const useTypewriterText = (script: string, speedMs = 14) => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const [visibleCharCount, setVisibleCharCount] = useState(script.length);
+
+  useEffect(() => {
+    if (prefersReducedMotion) {
+      setVisibleCharCount(script.length);
+      return undefined;
+    }
+
+    if (!script) {
+      setVisibleCharCount(0);
+      return undefined;
+    }
+
+    setVisibleCharCount(0);
+    const step = script.length > 420 ? 8 : script.length > 220 ? 4 : 2;
+    const intervalId = window.setInterval(() => {
+      setVisibleCharCount((current) => {
+        const nextValue = Math.min(script.length, current + step);
+        if (nextValue >= script.length) {
+          window.clearInterval(intervalId);
+        }
+        return nextValue;
+      });
+    }, Math.max(8, speedMs));
+
+    return () => window.clearInterval(intervalId);
+  }, [prefersReducedMotion, script, speedMs]);
+
+  return useMemo(() => script.slice(0, visibleCharCount), [script, visibleCharCount]);
+};
+
 const clampNumber = (value: number, lower: number, upper: number) => Math.min(upper, Math.max(lower, value));
 
 const getDensityTone = (density: number) => {
