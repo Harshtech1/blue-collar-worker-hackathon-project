@@ -191,7 +191,7 @@ export const downloadInvestorBriefPdf = async ({
   pdf.setTextColor(71, 85, 105);
   writeWrappedText(
     pdf,
-    "Run-rate, CAC recovery, and annualized profit stay visible together so the board can compare launch confidence against capital efficiency.",
+    "Run-rate, CAC recovery, annualized profit, and revenue potential stay visible together so the board can compare launch confidence against capital efficiency.",
     margin + 98,
     cursorY + 13,
     94,
@@ -228,7 +228,7 @@ export const downloadInvestorBriefPdf = async ({
     {
       title: summary.marketMetrics.recommendedExpansionCity,
       stage: "Next launch lane",
-      detail: `State ${summary.marketMetrics.state} | Burn-to-scale ${summary.unitEconomics.burnToScaleRatio.toFixed(2)}x | Density gate protected.`,
+      detail: `State ${summary.marketMetrics.state} | Revenue ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}%`,
     },
   ];
 
@@ -275,8 +275,8 @@ export const downloadInvestorBriefPdf = async ({
     cursorY + 31,
   );
   pdf.text(
-    `${marketPathLabel} | Regional Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | ROI Target ${assetYield.roi12m.toFixed(0)}%`,
-    margin + 70,
+    `${marketPathLabel} | Regional Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | Revenue ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}% | ROI Target ${assetYield.roi12m.toFixed(0)}%`,
+    margin + 40,
     cursorY + 31,
   );
 

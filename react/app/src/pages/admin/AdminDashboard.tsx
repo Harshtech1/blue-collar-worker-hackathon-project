@@ -45,7 +45,6 @@ import {
   getDefaultDistrictForCity,
   getDefaultMarketLocation,
   getMarketDistrictBySlug,
-  getMarketDistrictsForCity,
   listMarketCities,
   listMarketStates,
   resolveLegacyMarketTarget,
@@ -77,6 +76,7 @@ const DEMO_ADMIN_TOKEN = "demo-admin-token";
 const ADMIN_PITCH_MODE_KEY = "adminPitchMode";
 const ADMIN_SELECTED_MARKET_KEY = "adminSelectedMarket";
 const ADMIN_MAP_STYLE_KEY = "adminMapStyle";
+const ADMIN_ROLE_FLAG_KEY = "isAdmin";
 
 const ADMIN_EMAIL_OPTIONS = [
   "rahiforbharat@gmail.com",
@@ -179,14 +179,16 @@ export default function AdminDashboard() {
     }
   });
 
-  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem("adminToken")));
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const token = localStorage.getItem("adminToken");
+    return Boolean(token);
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState("");
   const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [pitchMode, setPitchMode] = useState(() => localStorage.getItem(ADMIN_PITCH_MODE_KEY) === "true");
-  const [marketSearchValue, setMarketSearchValue] = useState("");
 
   const [stats, setStats] = useState<AdminDashboardStats>(emptyStats);
   const [chartData, setChartData] = useState<Array<{ name: string; date?: string; bookings?: number; revenue?: number }>>([]);
@@ -206,10 +208,16 @@ export default function AdminDashboard() {
   const [error, setError] = useState("");
   const [healthSnapshot, setHealthSnapshot] = useState<AdminSystemHealthSnapshot | null>(null);
   const [channelLatencyMs, setChannelLatencyMs] = useState(42);
-  const [mapStyle, setMapStyle] = useState<AdminMapStyle>(() => {
+  const [mapStyle, setMapStyle] = useState<AdminMapStyle>(((): AdminMapStyle => {
     const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
-    return persisted === "terrain" || persisted === "high-contrast" ? persisted : "road";
-  });
+    if (persisted === "road") return "road";
+    if (persisted === "satellite" || persisted === "terrain") {
+      return "satellite";
+    }
+    if (persisted === "night-ops" || persisted === "high-contrast") return "satellite";
+
+    return "road";
+  })());
   const [marketSnapshot, setMarketSnapshot] = useState<AdminMarketSnapshot | null>(null);
   const [marketSnapshotLoading, setMarketSnapshotLoading] = useState(false);
   const systemReadyToastShown = useRef(false);
@@ -270,10 +278,12 @@ export default function AdminDashboard() {
   const selectedStateLabel = selectedMarket.state.label;
   const selectedCityLabel = selectedMarket.city.label;
   const districtOverlayMode = selectedDistrictId ? "district" as const : "city" as const;
-  const stateOptions = useMemo(() => listMarketStates(), []);
-  const cityOptions = useMemo(() => listMarketCities(selectedStateSlug), [selectedStateSlug]);
-  const districtOptions = useMemo(() => getMarketDistrictsForCity(selectedCitySlug), [selectedCitySlug]);
   const selectedDistrictLabel = selectedMarket.district?.label || getMarketDistrictBySlug(selectedDistrictId, selectedCitySlug)?.label || null;
+  const marketStateOptions = useMemo(() => listMarketStates(), []);
+  const filteredCityOptions = useMemo(
+    () => listMarketCities(selectedStateSlug),
+    [selectedStateSlug],
+  );
   const marketCityOptions = useMemo(() => getAdminMarketCityOptions(), []);
   const selectedCityOption = useMemo(
     () => marketCityOptions.find((city) => city.cityId === selectedCitySlug) || null,
@@ -306,10 +316,6 @@ export default function AdminDashboard() {
     selectedDistrictId,
     selectedDistrictLabel,
   ]);
-
-  useEffect(() => {
-    setMarketSearchValue(selectedCityLabel);
-  }, [selectedCityLabel]);
 
   useEffect(() => {
     let cancelled = false;
@@ -418,6 +424,16 @@ export default function AdminDashboard() {
     setError("");
   }, []);
 
+  const clearAdminSession = useCallback((nextError = "") => {
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem(ADMIN_ROLE_FLAG_KEY);
+    localStorage.removeItem("adminDemoMode");
+    setIsAuthenticated(false);
+    if (nextError) {
+      setError(nextError);
+    }
+  }, []);
+
   const fetchHealthSnapshot = useCallback(async () => {
     const startedAt = performance.now();
 
@@ -444,6 +460,12 @@ export default function AdminDashboard() {
       return;
     }
 
+    if (!token) {
+      clearAdminSession("Admin session missing. Please log in again.");
+      if (!isBackground) setLoading(false);
+      return;
+    }
+
     const headers = { Authorization: `Bearer ${token}` } as HeadersInit;
 
     try {
@@ -453,6 +475,17 @@ export default function AdminDashboard() {
         fetch(`${API}/admin/workers`, { headers }),
         fetch(`${API}/admin/investor-analytics`, { headers }),
       ]);
+
+      const authRejected = [usersRes, bookingsRes, workersRes, analyticsRes].some((response) => response.status === 401);
+      if (authRejected) {
+        clearAdminSession("Admin session expired. Please log in again.");
+        return;
+      }
+
+      const failedResponse = [usersRes, bookingsRes, workersRes, analyticsRes].find((response) => !response.ok);
+      if (failedResponse) {
+        throw new Error(`Admin data sync failed with status ${failedResponse.status}`);
+      }
 
       const usersData = await usersRes.json();
       const bookingsData = await bookingsRes.json();
@@ -549,7 +582,7 @@ export default function AdminDashboard() {
     } finally {
       if (!isBackground) setLoading(false);
     }
-  }, [loadDemoDashboardData]);
+  }, [clearAdminSession, loadDemoDashboardData]);
 
   const handleViewVerificationDocument = useCallback(async (worker: any, type: "aadhaar" | "pan" = "aadhaar") => {
     const token = localStorage.getItem("adminToken");
@@ -597,15 +630,13 @@ export default function AdminDashboard() {
         return;
       }
 
-      const { token } = await response.json();
+      const { token, role } = await response.json();
       localStorage.setItem("adminToken", token);
+      localStorage.setItem(ADMIN_ROLE_FLAG_KEY, role === "admin" ? "true" : "false");
       localStorage.removeItem("adminDemoMode");
       setIsAuthenticated(true);
       await fetchDashboardData();
-
-      if (location.pathname === ADMIN_ROUTE_PREFIX || location.pathname === `${ADMIN_ROUTE_PREFIX}/`) {
-        navigate(buildMissionPath("overview"), { replace: true });
-      }
+      navigate(buildMissionPath("overview"), { replace: true });
     } catch (_loginError) {
       setError("Server unreachable. Is the backend running?");
     } finally {
@@ -615,6 +646,7 @@ export default function AdminDashboard() {
 
   const handleDemoBypass = useCallback(() => {
     localStorage.setItem("adminToken", DEMO_ADMIN_TOKEN);
+    localStorage.setItem(ADMIN_ROLE_FLAG_KEY, "true");
     localStorage.setItem("adminDemoMode", "true");
     setEmail("demo@rahi.local");
     setIsAuthenticated(true);
@@ -649,11 +681,9 @@ export default function AdminDashboard() {
   }, [email]);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem("adminToken");
-    localStorage.removeItem("adminDemoMode");
-    setIsAuthenticated(false);
+    clearAdminSession();
     navigate(buildMissionPath("overview"), { replace: true });
-  }, [navigate]);
+  }, [clearAdminSession, navigate]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -817,12 +847,17 @@ export default function AdminDashboard() {
     const explicitCity = findMarketCity(nextCitySlug);
     const nextStateSlug = stateSlug || explicitCity?.stateSlug || selectedStateSlug;
     const nextDistrict = getDefaultDistrictForCity(nextCitySlug);
-    syncAdminMarketLocation({
+    const nextLocation = {
       stateSlug: nextStateSlug,
       citySlug: nextCitySlug,
       districtSlug: nextDistrict?.slug || null,
-    });
-  }, [selectedStateSlug, syncAdminMarketLocation]);
+    };
+
+    syncAdminMarketLocation(nextLocation);
+    if (currentMission !== "war-room") {
+      navigate(buildWarRoomPath(nextLocation));
+    }
+  }, [currentMission, navigate, selectedStateSlug, syncAdminMarketLocation]);
   const handleMarketDistrictSelect = useCallback((districtToken: string, citySlug?: string, stateSlug?: string) => {
     const nextDistrictSlug = districtToken.replace(/^district:/, "");
     const nextCitySlug = citySlug || selectedCitySlug;
@@ -833,18 +868,23 @@ export default function AdminDashboard() {
       districtSlug: nextDistrictSlug,
     });
   }, [selectedCitySlug, selectedStateSlug, syncAdminMarketLocation]);
-  const handleActiveMarketSelect = useCallback((cityId: string) => {
+  function handleActiveMarketSelect(cityId: string) {
     const selectedCity = findAdminMarketCity(cityId);
     const targetCity = findMarketCity(selectedCity?.cityId || cityId);
     if (!targetCity) return;
 
     const nextDistrict = getDefaultDistrictForCity(targetCity.slug);
-    syncAdminMarketLocation({
+    const nextLocation = {
       stateSlug: targetCity.stateSlug,
       citySlug: targetCity.slug,
       districtSlug: nextDistrict?.slug || null,
-    });
-  }, [syncAdminMarketLocation]);
+    };
+
+    syncAdminMarketLocation(nextLocation);
+    if (currentMission !== "war-room") {
+      navigate(buildWarRoomPath(nextLocation));
+    }
+  }
   const handleActiveRegionSelect = useCallback((regionId: string | null) => {
     syncAdminMarketLocation({
       stateSlug: selectedStateSlug,
@@ -1237,13 +1277,14 @@ export default function AdminDashboard() {
 
               <div className="flex flex-wrap items-center gap-2">
                 <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
+                  <Globe2 className="h-3.5 w-3.5 text-[#0F172A]" />
                   <span>State</span>
                   <select
                     value={selectedStateSlug}
                     onChange={(event) => handleMarketStateSelect(event.target.value)}
-                    className="min-w-[9rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    className="min-w-[11rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
-                    {stateOptions.map((state) => (
+                    {marketStateOptions.map((state) => (
                       <option key={state.slug} value={state.slug}>
                         {state.label}
                       </option>
@@ -1251,33 +1292,50 @@ export default function AdminDashboard() {
                   </select>
                 </label>
                 <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
+                  <MapPin className="h-3.5 w-3.5 text-[#0F172A]" />
                   <span>City</span>
                   <select
                     value={selectedCitySlug}
-                    onChange={(event) => handleMarketCitySelect(event.target.value)}
-                    className="min-w-[9rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    onChange={(event) => handleMarketCitySelect(event.target.value, selectedStateSlug)}
+                    className="min-w-[13rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
-                    {cityOptions.map((city) => (
+                    {filteredCityOptions.map((city) => (
                       <option key={city.slug} value={city.slug}>
                         {city.label}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
+                  <MapPin className="h-3.5 w-3.5 text-[#0F172A]" />
                   <span>District</span>
                   <select
                     value={selectedDistrictId || ""}
-                    onChange={(event) => handleMarketDistrictSelect(event.target.value)}
-                    className="rounded-full bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    onChange={(event) => handleActiveRegionSelect(event.target.value || null)}
+                    className="min-w-[13rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
-                    {districtOptions.map((district) => (
-                      <option key={district.slug} value={district.slug}>
-                        {district.label}
+                    <option value="">City overview</option>
+                    {regionOptions.map((region) => (
+                      <option key={region.id} value={region.id}>
+                        {region.label}
                       </option>
                     ))}
                   </select>
                 </label>
+                {selectedCityOption ? (
+                  <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    {selectedCityOption.label} | {selectedCityOption.readiness}% ready
+                  </span>
+                ) : null}
+                <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                  Markets {">"} {selectedStateLabel} {">"} {selectedCityLabel}
+                </span>
+                {activeMarket.regionLabel ? (
+                  <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                    <MapPin className="h-3.5 w-3.5" />
+                    {activeMarket.regionLabel}
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   onClick={handlePitchModeToggle}

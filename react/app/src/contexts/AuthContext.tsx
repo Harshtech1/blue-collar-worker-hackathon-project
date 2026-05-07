@@ -2,6 +2,8 @@ import React, { createContext, useContext, useCallback, useEffect, useState, Rea
 import { API } from '@/lib/constants';
 import { extractMediaUrl } from '@/lib/upload';
 
+const ADMIN_ROLE_FLAG_KEY = 'isAdmin';
+
 interface Profile {
   id: string;
   full_name?: string;
@@ -171,11 +173,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         
         if (data.token) {
-          if (data.role === 'admin') {
+          const adminRole = data.role === 'admin' || data.user?.role === 'admin';
+          if (adminRole) {
             localStorage.setItem('adminToken', data.token);
-            window.location.href = '/admin-portal-2026';
+            localStorage.setItem(ADMIN_ROLE_FLAG_KEY, 'true');
+            const adminUser = data.user
+              ? { ...data.user, id: data.user.id || data.user._id || 'admin-session' }
+              : { id: 'admin-session', email, role: 'admin', full_name: 'RAHI Admin' };
+            setUser(adminUser);
+            setProfile({
+              id: adminUser.id,
+              full_name: adminUser.full_name,
+              email: adminUser.email,
+              role: 'admin',
+            });
+            window.location.href = '/admin-portal-2026/overview';
             return { data, error: null };
           }
+          localStorage.removeItem(ADMIN_ROLE_FLAG_KEY);
           localStorage.setItem('token', data.token);
           setUser(data.user ? { ...data.user, id: data.user.id || data.user._id } : data.user);
           const userId = data.user?.id || data.user?._id;
@@ -265,6 +280,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     localStorage.removeItem('token');
     localStorage.removeItem('userId');
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem(ADMIN_ROLE_FLAG_KEY);
     setUser(null);
     setProfile(null);
   };

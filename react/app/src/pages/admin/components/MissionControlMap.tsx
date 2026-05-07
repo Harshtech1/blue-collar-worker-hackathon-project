@@ -97,6 +97,8 @@ interface ViewportTelemetry {
   zoom: number;
 }
 
+type MapViewMode = AdminMapStyle;
+
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 const toDegrees = (radians: number) => (radians * 180) / Math.PI;
 const EARTH_RADIUS_KM = 6371;
@@ -254,23 +256,34 @@ export function MissionControlMap({
   routeZoneId,
   selectedMarket,
   selectedDistrictId,
+  marketSnapshot,
   workers,
   bookings,
   onZoneSelect,
   highlightWorkerId,
   mapStyleMode,
   onMapStyleChange,
+  pitchMode = false,
   variant = "full",
   className,
 }: MissionControlMapProps) {
   const isLite = variant === "lite";
   const agraZoneAnchors = useMemo(() => buildZoneAnchors(), []);
-  const activeCitySlug = selectedMarket?.simulationCityId || routeZoneId || DEFAULT_SIMULATION_CITY_ID;
+  const activeCitySlug = marketSnapshot?.market.cityId || selectedMarket?.simulationCityId || routeZoneId || DEFAULT_SIMULATION_CITY_ID;
   const selectedGlobalCity = useMemo(
     () => GLOBAL_SIMULATION_CITIES.find((city) => city.id === activeCitySlug) || null,
     [activeCitySlug],
   );
   const resolvedCitySurface = useMemo(() => {
+    if (marketSnapshot) {
+      return {
+        id: marketSnapshot.market.cityId,
+        label: marketSnapshot.market.cityLabel,
+        lat: marketSnapshot.market.mapCenter.lat,
+        lng: marketSnapshot.market.mapCenter.lng,
+      };
+    }
+
     if (selectedGlobalCity) {
       return {
         id: selectedGlobalCity.id,
@@ -295,37 +308,50 @@ export function MissionControlMap({
       lat: 27.1767,
       lng: 78.0081,
     };
-  }, [selectedGlobalCity, selectedMarket]);
+  }, [marketSnapshot, selectedGlobalCity, selectedMarket]);
   const seededDistricts = useMemo(
     () => getMarketDistrictsForCity(selectedMarket?.slug || activeCitySlug),
     [activeCitySlug, selectedMarket?.slug],
   );
-  const usingGlobalCityScope = (selectedMarket?.slug || activeCitySlug) !== "agra";
+  const snapshotZoneAnchors = useMemo(
+    () => (marketSnapshot?.regions?.length ? buildSnapshotZoneAnchors(marketSnapshot) : []),
+    [marketSnapshot],
+  );
+  const usingGlobalCityScope = (selectedMarket?.slug || activeCitySlug) !== "agra" || snapshotZoneAnchors.length > 0;
   const zoneAnchors = useMemo(
-    () => usingGlobalCityScope
-      ? buildCityAnchors(resolvedCitySurface)
-      : agraZoneAnchors,
-    [agraZoneAnchors, resolvedCitySurface, usingGlobalCityScope],
+    () => {
+      if (snapshotZoneAnchors.length > 0) {
+        return snapshotZoneAnchors;
+      }
+
+      return usingGlobalCityScope
+        ? buildCityAnchors(resolvedCitySurface)
+        : agraZoneAnchors;
+    },
+    [agraZoneAnchors, resolvedCitySurface, snapshotZoneAnchors, usingGlobalCityScope],
   );
   const highlightedZone = useMemo(
     () => {
-      if (selectedDistrictId) {
-        const matchedDistrict = zoneAnchors.find((zone) => zone.id === selectedDistrictId);
+      const preferredRegionId = selectedDistrictId || marketSnapshot?.market.regionId || null;
+      if (preferredRegionId) {
+        const matchedDistrict = zoneAnchors.find((zone) => zone.id === preferredRegionId);
         if (matchedDistrict) return matchedDistrict;
       }
 
-      if (!usingGlobalCityScope) {
-        return zoneAnchors[0];
+      if (marketSnapshot?.market.regionLabel) {
+        const matchedByLabel = zoneAnchors.find((zone) => zone.label === marketSnapshot.market.regionLabel);
+        if (matchedByLabel) return matchedByLabel;
       }
 
       return zoneAnchors[0];
     },
-    [selectedDistrictId, usingGlobalCityScope, zoneAnchors],
+    [marketSnapshot, selectedDistrictId, zoneAnchors],
   );
-  const [mapViewMode, setMapViewMode] = useState<"road" | "satellite">(
-    mapStyleMode === "road" ? "road" : "satellite",
+  const [mapViewMode, setMapViewMode] = useState<MapViewMode>(
+    pitchMode ? "road" : (mapStyleMode || "road"),
   );
-  const [showSectorOverlays, setShowSectorOverlays] = useState(true);
+  const [showSectorOverlays, setShowSectorOverlays] = useState<boolean>(true);
+  const [showMoatOverlay, setShowMoatOverlay] = useState<boolean>(false);
   const [showMapSettings, setShowMapSettings] = useState(false);
   const activeDistrict = useMemo(
     () => getMarketDistrictBySlug(selectedDistrictId, selectedMarket?.slug || activeCitySlug),
@@ -333,23 +359,21 @@ export function MissionControlMap({
   );
 
   useEffect(() => {
-    if (!mapStyleMode) return;
-
-    if (mapStyleMode === "road") {
+    if (pitchMode) {
       setMapViewMode("road");
-      setShowSectorOverlays(true);
+      setShowSectorOverlays(false);
+      setShowMoatOverlay(false);
       return;
     }
 
-    setMapViewMode("satellite");
-    setShowSectorOverlays(true);
-  }, [mapStyleMode]);
+    setMapViewMode(mapStyleMode || "road");
+  }, [mapStyleMode, pitchMode]);
 
   const simulationGeoConfig = useMemo(() => {
     return buildMarketGeoConfig({
       market: selectedMarket || undefined,
-      citySlug: selectedMarket?.slug || activeCitySlug,
-      districtSlug: selectedDistrictId,
+      citySlug: marketSnapshot?.market.cityId || selectedMarket?.slug || activeCitySlug,
+      districtSlug: marketSnapshot?.market.regionId || selectedDistrictId,
       center: {
         lat: highlightedZone.center[0],
         lng: highlightedZone.center[1],
@@ -359,6 +383,7 @@ export function MissionControlMap({
   }, [
     activeCitySlug,
     highlightedZone.center,
+    marketSnapshot,
     selectedMarket,
     selectedDistrictId,
     usingGlobalCityScope,
@@ -381,7 +406,37 @@ export function MissionControlMap({
 
   const workerReticles = useMemo(() => {
     const normalizedHighlightWorkerId = String(highlightWorkerId || "").trim().toLowerCase();
-    const source = workers.length > 0 ? workers : Array.from({ length: 12 }, (_, index) => ({
+    const snapshotWorkers = marketSnapshot?.workers || [];
+
+    if (snapshotWorkers.length > 0) {
+      return snapshotWorkers.map((worker) => {
+        const normalizedWorkerId = String(worker.id || "").toLowerCase();
+        const normalizedWorkerName = String(worker.name || "").toLowerCase();
+        const matchedZone = zoneAnchors.find((zone) => zone.id === selectedDistrictId || zone.label === worker.regionName) || highlightedZone;
+        const isHighlighted = Boolean(
+          normalizedHighlightWorkerId
+          && (normalizedWorkerId === normalizedHighlightWorkerId || normalizedWorkerName === normalizedHighlightWorkerId),
+        );
+
+        return {
+          id: worker.id,
+          zoneId: matchedZone.id,
+          name: worker.name,
+          profession: worker.regionName,
+          currentJob: `${worker.activeJobs} active jobs`,
+          isAvailable: worker.status === "online",
+          status: worker.status === "online" ? "LIVE" : "BUSY",
+          trustScore: worker.qualityScore,
+          position: [worker.lat, worker.lng] as [number, number],
+          isHighlighted,
+          regionName: worker.regionName,
+          workerCount: worker.workerCount,
+          activeJobs: worker.activeJobs,
+        };
+      });
+    }
+
+    const source: MissionControlWorker[] = workers.length > 0 ? workers : Array.from({ length: 12 }, (_, index) => ({
       _id: `synthetic-worker-${index}`,
       name: `Worker ${index + 1}`,
       profession: index % 3 === 0 ? "Plumbing Specialist" : index % 3 === 1 ? "Electrical Pro" : "Cleaning Lead",
@@ -390,6 +445,10 @@ export function MissionControlMap({
       logisticsScore: 78 + ((index * 7) % 19),
       acceptanceRate: 71 + ((index * 9) % 21),
       reliabilityScore: 76 + ((index * 11) % 18),
+      qualityScore: 80 + ((index * 5) % 14),
+      regionName: zoneAnchors[index % zoneAnchors.length]?.label,
+      workerCount: zoneAnchors[index % zoneAnchors.length]?.baseWorkers || 0,
+      activeJobs: index % 4,
       service: index % 3 === 0 ? "Plumbing Repair" : index % 3 === 1 ? "Wiring Check" : "Deep Cleaning",
     }));
 
@@ -398,9 +457,11 @@ export function MissionControlMap({
       const workerId = worker._id || ("id" in worker ? worker.id : undefined) || `worker-${index}`;
       const bearing = (hashString(`${workerId || worker.name || index}`) % 360);
       const distanceKm = 0.35 + ((index % 5) * 0.12);
-      const position = offsetCoordinate(zone.center[0], zone.center[1], distanceKm, bearing);
+      const position = typeof worker.lat === "number" && typeof worker.lng === "number"
+        ? [worker.lat, worker.lng] as [number, number]
+        : offsetCoordinate(zone.center[0], zone.center[1], distanceKm, bearing);
       const trustScore = Math.round((
-        Number(worker.logisticsScore || 0) * 0.55
+        Number(worker.qualityScore || worker.logisticsScore || 0) * 0.55
         + Number(worker.acceptanceRate || 0) * 0.2
         + Number(worker.reliabilityScore || 0) * 0.25
       ) || (78 + (index % 16)));
@@ -415,16 +476,19 @@ export function MissionControlMap({
         id: workerId,
         zoneId: zone.id,
         name: worker.name || `RAHI Worker ${index + 1}`,
-        profession: worker.profession || worker.service || "General Field Ops",
-        currentJob: worker.service || bookings[index % Math.max(1, bookings.length)]?.service || "Standby dispatch",
+        profession: worker.profession || worker.regionName || worker.service || "General Field Ops",
+        currentJob: worker.service || (worker.activeJobs ? `${worker.activeJobs} active jobs` : bookings[index % Math.max(1, bookings.length)]?.service) || "Standby dispatch",
         isAvailable: worker.isAvailable ?? worker.status !== "busy",
         status: worker.isAvailable ?? worker.status !== "busy" ? "LIVE" : String(worker.status || "BUSY").toUpperCase(),
         trustScore,
         position,
         isHighlighted,
+        regionName: worker.regionName || zone.label,
+        workerCount: worker.workerCount || zone.baseWorkers || 0,
+        activeJobs: worker.activeJobs || 0,
       };
     });
-  }, [bookings, highlightWorkerId, workers, zoneAnchors]);
+  }, [bookings, highlightWorkerId, highlightedZone, marketSnapshot, selectedDistrictId, workers, zoneAnchors]);
 
   const zonePressure = useMemo(() => {
     const base = new Map<string, { total: number; emergency: number }>();
@@ -507,6 +571,25 @@ export function MissionControlMap({
     })
   ), [workerCountsByZone, zonePressure]);
 
+  const marketMoatZones = useMemo(() => (
+    labeledZones.map((zone) => {
+      const rawCoverage = ((zone.activeWorkers * 2.4) / Math.max(1, zone.total)) * 100;
+      const moatShare = Math.max(
+        24,
+        Math.min(
+          92,
+          Math.round(rawCoverage + ((zone.readinessScore || 72) * 0.34)),
+        ),
+      );
+
+      return {
+        ...zone,
+        moatShare,
+        moatRadius: 2500 + Math.min(zone.activeWorkers * 320, 3400),
+      };
+    })
+  ), [labeledZones]);
+
   const visibleZoneLabels = useMemo(() => {
     return labeledZones.filter((zone, index) => {
       if (usingGlobalCityScope) return true;
@@ -549,25 +632,37 @@ export function MissionControlMap({
     () => formatAltitude(estimateObservationAltitude(viewportTelemetry.center[0], viewportTelemetry.zoom)),
     [viewportTelemetry.center, viewportTelemetry.zoom],
   );
+  const viewportReadout = useMemo(() => {
+    const latSuffix = viewportTelemetry.center[0] >= 0 ? "N" : "S";
+    const lngSuffix = viewportTelemetry.center[1] >= 0 ? "E" : "W";
+    return [
+      `LAT ${Math.abs(viewportTelemetry.center[0]).toFixed(4)} ${latSuffix}`,
+      `LNG ${Math.abs(viewportTelemetry.center[1]).toFixed(4)} ${lngSuffix}`,
+      `ALT ${coordinateAltitude}`,
+      `ZOOM ${viewportTelemetry.zoom.toFixed(2)}`,
+    ].join("  //  ");
+  }, [coordinateAltitude, viewportTelemetry.center, viewportTelemetry.zoom]);
 
   const marketBadgeLabel = useMemo(() => {
-    const activeCityLabel = selectedMarket?.label || selectedGlobalCity?.label || highlightedZone.city || "Agra";
-    const activeCityId = selectedMarket?.simulationCityId || selectedGlobalCity?.id || DEFAULT_SIMULATION_CITY_ID;
+    const activeCityLabel = marketSnapshot?.market.cityLabel || selectedMarket?.label || selectedGlobalCity?.label || highlightedZone.city || "Agra";
+    const activeCityId = marketSnapshot?.market.cityId || selectedMarket?.simulationCityId || selectedGlobalCity?.id || DEFAULT_SIMULATION_CITY_ID;
     const tierBadge = MARKET_TIER_BADGES[activeCityId]
-      || (selectedMarket?.tier === "tier_1"
+      || (marketSnapshot?.market.tier === "tier_1" || selectedMarket?.tier === "tier_1"
         ? "TIER-1"
-        : selectedMarket?.tier === "tier_2"
+        : marketSnapshot?.market.tier === "tier_2" || selectedMarket?.tier === "tier_2"
           ? "TIER-2"
-          : selectedMarket?.tier === "tier_3"
+          : marketSnapshot?.market.tier === "tier_3" || selectedMarket?.tier === "tier_3"
             ? "TIER-3"
-            : selectedMarket?.tier === "pilot"
+            : marketSnapshot?.market.tier === "pilot" || selectedMarket?.tier === "pilot"
               ? "PILOT"
               : "LIVE");
-    const breadcrumbLabel = selectedMarket
-      ? buildMarketBreadcrumb(selectedMarket.stateSlug, selectedMarket.slug, selectedDistrictId)
-      : `Markets > India > ${activeCityLabel}`;
+    const breadcrumbLabel = marketSnapshot
+      ? `Markets > ${marketSnapshot.market.regionGroup} > ${marketSnapshot.market.cityLabel} > ${marketSnapshot.market.regionLabel || "City Overview"}`
+      : selectedMarket
+        ? buildMarketBreadcrumb(selectedMarket.stateSlug, selectedMarket.slug, selectedDistrictId)
+        : `Markets > India > ${activeCityLabel}`;
     return `${breadcrumbLabel} | ${tierBadge}`;
-  }, [highlightedZone.city, selectedDistrictId, selectedGlobalCity, selectedMarket]);
+  }, [highlightedZone.city, marketSnapshot, selectedDistrictId, selectedGlobalCity, selectedMarket]);
 
   return (
     <div className={cn("relative w-full h-full min-h-[450px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_24px_50px_-30px_rgba(15,23,42,0.18)]", className)}>
@@ -581,8 +676,8 @@ export function MissionControlMap({
 
         .rahi-map-shell .leaflet-tile-pane {
           filter: ${mapViewMode === "road"
-            ? "contrast(1.02) brightness(1) saturate(0.92)"
-            : "contrast(1.08) brightness(0.94) saturate(1.02)"};
+            ? "contrast(1.01) brightness(1.02) saturate(0.88)"
+            : "contrast(1.04) brightness(0.98) saturate(0.95)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -678,22 +773,54 @@ export function MissionControlMap({
             onViewportChange={setViewportTelemetry}
           />
           {mapViewMode === "road" ? (
+            <>
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              />
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              />
+            </>
+          ) : mapViewMode === "terrain" ? (
             <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
               attribution="&copy; OpenStreetMap contributors &copy; CARTO"
             />
           ) : (
-            <>
-              <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                attribution="Tiles &copy; Esri"
-              />
-              <TileLayer
-                url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-                attribution="Labels &copy; Esri"
-              />
-            </>
+            <TileLayer
+              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+            />
           )}
+
+          <Pane name="market-moat" style={{ zIndex: 419 }}>
+            {showMoatOverlay && marketMoatZones.map((zone) => (
+              <Circle
+                key={`${zone.id}-moat`}
+                center={zone.center}
+                radius={zone.moatRadius}
+                pathOptions={{
+                  color: zone.id === highlightedZone.id ? "#0f766e" : "#14b8a6",
+                  fillColor: "#14b8a6",
+                  fillOpacity: zone.id === highlightedZone.id ? 0.12 : 0.08,
+                  opacity: zone.id === highlightedZone.id ? 0.48 : 0.26,
+                  weight: zone.id === highlightedZone.id ? 1.35 : 1,
+                }}
+              >
+                <Tooltip sticky className="rahi-mission-tooltip" direction="top">
+                  <div className="space-y-2 text-[11px]">
+                    <p className="font-semibold uppercase tracking-[0.18em] text-slate-500">Captured neighborhood</p>
+                    <p className="text-sm font-bold text-slate-900">{zone.label}</p>
+                    <p className="text-teal-700">Moat share: {zone.moatShare}%</p>
+                    <p className="text-slate-600">Active workers: {zone.activeWorkers.toLocaleString("en-IN")}</p>
+                    <p className="text-slate-600">Pressure ratio: {zone.pressureRatio.toFixed(2)}x</p>
+                  </div>
+                </Tooltip>
+              </Circle>
+            ))}
+          </Pane>
 
           <Pane name="sector-boxes" style={{ zIndex: 418 }}>
             {showSectorOverlays && !usingGlobalCityScope && labeledZones.filter((zone) => zone.bounds).map((zone) => (
@@ -702,12 +829,12 @@ export function MissionControlMap({
                 bounds={zone.bounds!}
                 eventHandlers={onZoneSelect ? { click: () => onZoneSelect(zone.id) } : undefined}
                 pathOptions={{
-                  color: zone.id === highlightedZone.id ? activePressureColor : zone.badgeTone === "critical" ? "#b45309" : zone.badgeTone === "surge" ? "#c2410c" : "#94a3b8",
-                  fillColor: zone.id === highlightedZone.id ? "#1E3A8A" : zone.badgeTone === "critical" ? "#f59e0b" : zone.badgeTone === "surge" ? "#fdba74" : "#cbd5e1",
-                  fillOpacity: zone.id === highlightedZone.id ? 0.05 : 0.025,
-                  opacity: zone.id === highlightedZone.id ? 0.58 : 0.28,
-                  weight: zone.id === highlightedZone.id ? 1.6 : 0.95,
-                  dashArray: zone.id === highlightedZone.id ? "5 8" : "3 8",
+                  color: zone.id === highlightedZone.id ? "#1d4ed8" : "#60a5fa",
+                  fillColor: zone.id === highlightedZone.id ? "#bfdbfe" : "#dbeafe",
+                  fillOpacity: zone.id === highlightedZone.id ? 0.08 : 0.028,
+                  opacity: zone.id === highlightedZone.id ? 0.72 : 0.34,
+                  weight: zone.id === highlightedZone.id ? 1.55 : 1.05,
+                  dashArray: zone.id === highlightedZone.id ? "6 10" : "4 10",
                 }}
               />
             ))}
@@ -721,10 +848,10 @@ export function MissionControlMap({
                 radius={4200 + Math.min(zone.total * 12, 3200)}
                 eventHandlers={onZoneSelect ? { click: () => onZoneSelect(zone.id) } : undefined}
                 pathOptions={{
-                  color: zone.id === highlightedZone.id ? activePressureColor : "#94a3b8",
-                  fillColor: zone.id === highlightedZone.id ? "#1E3A8A" : "#cbd5e1",
-                  fillOpacity: zone.id === highlightedZone.id ? 0.1 : 0.04,
-                  weight: zone.id === highlightedZone.id ? 1.4 : 0.8,
+                  color: zone.id === highlightedZone.id ? "#1d4ed8" : "#60a5fa",
+                  fillColor: zone.id === highlightedZone.id ? "#93c5fd" : "#bfdbfe",
+                  fillOpacity: zone.id === highlightedZone.id ? 0.12 : 0.05,
+                  weight: zone.id === highlightedZone.id ? 1.35 : 0.85,
                 }}
               >
                 <Tooltip sticky className="rahi-mission-tooltip" direction="top">
@@ -760,9 +887,9 @@ export function MissionControlMap({
                 center={point.center}
                 radius={240 + Math.min(point.value / 2.6, 1420)}
                 pathOptions={{
-                  color: point.isEmergency ? "#d97706" : "#1d4ed8",
-                  fillColor: point.isEmergency ? "#f59e0b" : "#1d4ed8",
-                  fillOpacity: point.isEmergency ? 0.12 : index % 2 === 0 ? 0.08 : 0.045,
+                  color: point.isEmergency ? "#0f766e" : "#2563eb",
+                  fillColor: point.isEmergency ? "#2dd4bf" : "#60a5fa",
+                  fillOpacity: point.isEmergency ? 0.12 : index % 2 === 0 ? 0.08 : 0.05,
                   weight: 0,
                 }}
               />
@@ -790,7 +917,7 @@ export function MissionControlMap({
                 center={worker.position}
                 radius={worker.isHighlighted ? 780 : worker.isAvailable ? 620 : 430}
                 pathOptions={{
-                  color: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#f59e0b",
+                  color: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
                   fillOpacity: 0,
                   opacity: worker.isHighlighted ? 0.48 : 0.28,
                   weight: worker.isHighlighted ? 1.6 : 1.1,
@@ -803,8 +930,8 @@ export function MissionControlMap({
                 center={worker.position}
                 radius={worker.isHighlighted ? 9 : worker.isAvailable ? 7 : 6}
                 pathOptions={{
-                  color: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#f59e0b",
-                  fillColor: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#f59e0b",
+                  color: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
+                  fillColor: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
                   fillOpacity: 0.88,
                   weight: worker.isHighlighted ? 2.2 : 1.5,
                 }}
@@ -823,6 +950,7 @@ export function MissionControlMap({
                         Focus selected
                       </p>
                     ) : null}
+                    <p className="text-slate-600">{worker.regionName || highlightedZone.label} | {worker.workerCount || 0} workers | {worker.activeJobs || 0} live jobs</p>
                     <p className="text-slate-600">Current Job: {worker.currentJob}</p>
                   </div>
                 </Tooltip>
@@ -890,7 +1018,6 @@ export function MissionControlMap({
                   type="button"
                   onClick={() => {
                     setMapViewMode("road");
-                    setShowSectorOverlays(true);
                     onMapStyleChange?.("road");
                   }}
                   className={cn(
@@ -906,11 +1033,17 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setShowSectorOverlays((current) => !current);
+                    setShowSectorOverlays((current) => {
+                      const nextValue = !current;
+                      setShowMoatOverlay(nextValue);
+                      return nextValue;
+                    });
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showSectorOverlays ? "bg-sky-50 text-sky-700" : "text-slate-700 hover:bg-slate-50",
+                    showSectorOverlays
+                      ? "bg-sky-50 text-sky-700"
+                      : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
                   <span>Sector Overlays</span>
@@ -920,8 +1053,9 @@ export function MissionControlMap({
                   type="button"
                   onClick={() => {
                     setMapViewMode("satellite");
-                    setShowSectorOverlays(true);
-                    onMapStyleChange?.("high-contrast");
+                    setShowSectorOverlays(false);
+                    setShowMoatOverlay(false);
+                    onMapStyleChange?.("satellite");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
@@ -931,7 +1065,7 @@ export function MissionControlMap({
                   )}
                 >
                   <span>Satellite</span>
-                  <span>{mapViewMode === "satellite" ? "Verification" : "Off"}</span>
+                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}
@@ -939,7 +1073,7 @@ export function MissionControlMap({
         ) : null}
         {!isLite ? (
           <div className="absolute bottom-4 right-4 rounded-full border border-slate-900 bg-slate-900 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-white shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
-            VIEWPORT: {(selectedMarket?.label || selectedGlobalCity?.label || highlightedZone.city || "Agra").toUpperCase()} // {viewportTelemetry.center[0].toFixed(4)}° N, {viewportTelemetry.center[1].toFixed(4)}° E
+            {viewportReadout}
           </div>
         ) : null}
         {!isLite && seededDistricts.length > 0 ? (

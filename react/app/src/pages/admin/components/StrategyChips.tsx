@@ -16,6 +16,7 @@ const CHIP_ACCENTS: Record<string, string> = {
   financial_stability: "bg-emerald-500",
   expansion_posture: "bg-[#0F172A]",
   expansion_budget: "bg-amber-500",
+  revenue_potential: "bg-teal-500",
 };
 
 export function StrategyChips({ summary, className, onChipClick }: StrategyChipsProps) {

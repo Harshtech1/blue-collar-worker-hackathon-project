@@ -18,7 +18,7 @@ import notificationRoutes from "./routes/notification.routes.js";
 import thekedarRoutes from "./routes/thekedar.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import analyticsRoutes from "./routes/analytics.routes.js";
-import { getInvestorAnalytics } from "./controllers/admin.analytics.js";
+import { getAdminMarketSnapshot, getInvestorAnalytics } from "./controllers/admin.analytics.js";
 import {
   analyzeStrategyBrief,
   analyzeSystemInsights,
@@ -300,6 +300,7 @@ connectDB()
     });
 
 app.get("/api/admin/investor-analytics", protect, authorize("admin"), getInvestorAnalytics);
+app.get("/api/admin/market-snapshot", protect, authorize("admin"), getAdminMarketSnapshot);
 app.post("/api/admin/analyze-strategy", protect, authorize("admin"), analyzeStrategyBrief);
 app.post("/api/admin/system-insights", protect, authorize("admin"), analyzeSystemInsights);
 app.post("/api/admin/copilot", protect, authorize("admin"), askAdminCopilot);

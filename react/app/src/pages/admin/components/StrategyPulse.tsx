@@ -14,6 +14,7 @@ const CHIP_TONES: Record<StrategyChip["id"], string> = {
   financial_stability: "border-amber-200 bg-amber-50/80 text-amber-950",
   expansion_posture: "border-emerald-200 bg-emerald-50/80 text-emerald-950",
   expansion_budget: "border-slate-200 bg-slate-50 text-slate-950",
+  revenue_potential: "border-teal-200 bg-teal-50/80 text-teal-950",
 };
 
 export function StrategyPulse({ summary, className }: StrategyPulseProps) {

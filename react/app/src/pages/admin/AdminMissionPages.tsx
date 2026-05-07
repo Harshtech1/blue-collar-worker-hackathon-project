@@ -925,7 +925,7 @@ export function AdminWarRoomPage() {
 
             <div className="flex flex-wrap gap-2">
               <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
-                {mapStyle === "road" ? "Standard Road" : mapStyle === "terrain" ? "Infrastructure Overlay" : "High-Contrast Dark"}
+                {mapStyle === "satellite" ? "Satellite" : "Standard Road"}
               </div>
               <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700">
                 {selectedStateLabel} / {selectedCityLabel}
