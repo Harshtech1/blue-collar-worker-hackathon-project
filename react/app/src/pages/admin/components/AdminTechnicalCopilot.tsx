@@ -336,6 +336,7 @@ const buildNavigationAnnouncement = (
       llmMode: context.llmMode,
       healthSnapshot: context.healthSnapshot,
       investorSummary: context.investorSummary,
+      marketSnapshot: context.marketSnapshot,
     });
     const underservedSector = targetSystemSummary.marketMetrics.underservedSector
       || targetSystemSummary.marketMetrics.surgeZones[0]
@@ -377,6 +378,7 @@ const buildLocalCopilotResponse = (
     llmMode: context.llmMode,
     healthSnapshot: context.healthSnapshot,
     investorSummary: context.investorSummary,
+    marketSnapshot: context.marketSnapshot,
   });
   const paymentIssue = ADMIN_OBSERVABILITY_ISSUES.find((issue) => issue.code === "PAYMENT_FAILURE");
   const criticalBugCount = summary.systemHealth.criticalBugCount;
@@ -441,11 +443,23 @@ const buildLocalCopilotResponse = (
       || systemSummary.marketMetrics.surgeZones[0]
       || summary.currentCity;
     return {
-      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture, ${systemSummary.unitEconomics.roi12m.toFixed(0)}% projected 12-month ROI, and a ${systemSummary.unitEconomics.paybackDays}-day payback period. The strongest underserved sector is ${underservedSector}, where demand is rising without dense competitor pressure. The scalability multiplier is Delta Profit = (New Workers x Efficiency Gain) x Current Margin. For the next ${scalabilityNewWorkers} workers, that adds about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit and ${formatCompactCurrency(scalabilityDeltaProfitAnnualized)} annualized while burn-to-scale stays at ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x.`,
+      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture, ${systemSummary.unitEconomics.roi12m.toFixed(0)}% projected 12-month ROI, and a ${systemSummary.unitEconomics.paybackDays}-day payback period. The strongest underserved sector is ${underservedSector}, where demand is rising without dense competitor pressure. The scalability multiplier is Delta Profit = (New Workers x Efficiency Gain) x Current Margin. For the next ${scalabilityNewWorkers} workers, that adds about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit and ${formatCompactCurrency(scalabilityDeltaProfitAnnualized)} annualized while burn-to-scale stays at ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x. If competitor red zones intensify, activate a temporary defensive payout to protect the captured moat before entering a deeper discount battle.`,
       navigationTarget: null,
       navigationReason: null,
       auditHighlights: highlights,
       confidence: "high",
+    };
+  }
+
+  if (/defensive posture|loyalty multiplier|replacement cac|churn prevention|fleet protection|competitor activity/.test(query)) {
+    const defense = systemSummary.marketDefense;
+    const hotspotLabel = defense.targetHotspot?.label || summary.currentCity;
+    return {
+      reply: `High rival pressure is active in ${hotspotLabel}. RAHI's worker-side defense is a temporary ${(defense.loyaltyMultiplier * 100).toFixed(0)}% loyalty multiplier for ${defense.defendedWorkers} defended workers, covering about ${defense.estimatedJobsAtRisk} at-risk jobs. Churn prevention cost is ${formatCompactCurrency(defense.churnPreventionCost)}, while replacement CAC would be about ${formatCompactCurrency(defense.replacementCac)}. That protects roughly ${defense.protectedMarketShare}% market capture and preserves an estimated ${formatCompactCurrency(defense.projectedSavings)} versus re-acquiring the same workforce.`,
+      navigationTarget: null,
+      navigationReason: null,
+      auditHighlights: highlights.length > 0 ? highlights : [`[DEFENSE] ${hotspotLabel} loyalty multiplier active`],
+      confidence: defense.targetHotspot?.pressure === "high" ? "high" : "medium",
     };
   }
 
@@ -520,6 +534,7 @@ const buildCopilotPayload = (
     llmMode: context.llmMode,
     llmSummary: context.llmSummary,
     marketMetrics: systemSummary.marketMetrics,
+    marketDefense: systemSummary.marketDefense,
     yieldPerJob: systemSummary.unitEconomics.yieldPerJob,
     criticalBugCount: systemSummary.systemHealth.criticalBugs,
     activeWorkerRate: context.activeWorkerRate,
@@ -575,6 +590,7 @@ export function AdminTechnicalCopilot({
     llmMode: shellContext.llmMode,
     healthSnapshot: shellContext.healthSnapshot,
     investorSummary: shellContext.investorSummary,
+    marketSnapshot: shellContext.marketSnapshot,
   }), [
     shellContext.routeZoneId,
     shellContext.zoneLabel,
@@ -588,6 +604,7 @@ export function AdminTechnicalCopilot({
     shellContext.llmMode,
     shellContext.healthSnapshot,
     shellContext.investorSummary,
+    shellContext.marketSnapshot,
   ]);
   const strategySummary = useMemo(() => (
     buildCopilotSummary(shellContext, location.pathname)
@@ -950,3 +967,4 @@ export function AdminTechnicalCopilot({
     </div>
   );
 }
+

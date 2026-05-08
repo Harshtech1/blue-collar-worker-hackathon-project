@@ -7,6 +7,10 @@ import type {
 } from "./adminRoutes";
 import type { MarketCity, MarketDistrict, MarketLocation, MarketState } from "./marketRegistry";
 import type {
+  AdminCompetitorHotspot,
+  AdminMapOverlays,
+} from "./utils/marketDefense";
+import type {
   AdminMarketCityOption,
   AdminMarketSnapshot,
   AdminRegionOption,
@@ -86,7 +90,7 @@ export interface AdminActivityEntry {
   role?: string;
 }
 
-export type AdminMapStyle = "road" | "terrain" | "high-contrast" | "satellite" | "night-ops";
+export type AdminMapStyle = "road" | "satellite";
 
 export interface AdminActiveMarket {
   cityId: string;
@@ -118,6 +122,9 @@ export interface AdminShellContextValue {
   cityOptions: AdminMarketCityOption[];
   regionOptions: AdminRegionOption[];
   mapStyle: AdminMapStyle;
+  mapOverlays: AdminMapOverlays;
+  defensivePostureActive: boolean;
+  activeCompetitorHotspot: AdminCompetitorHotspot | null;
   marketSnapshot: AdminMarketSnapshot | null;
   marketSnapshotLoading: boolean;
   districtOverlayMode: "city" | "district";
@@ -153,9 +160,16 @@ export interface AdminShellContextValue {
   onSelectActiveMarket: (cityId: string) => void;
   onSelectActiveRegion: (regionId: string | null) => void;
   onSelectMapStyle: (mapStyle: AdminMapStyle) => void;
+  onSetMapOverlays: (nextOverlays: Partial<AdminMapOverlays>) => void;
+  onActivateDefensivePosture: () => void;
+  onClearDefensivePosture: () => void;
   onOpenVerificationDocument: (worker: any, type?: "aadhaar" | "pan") => void;
   onTogglePitchMode: () => void;
 }
 
 export const useAdminShellContext = () => useOutletContext<AdminShellContextValue>();
+
+
+
+
 

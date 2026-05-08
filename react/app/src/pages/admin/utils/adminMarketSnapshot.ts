@@ -4,6 +4,21 @@ import {
   GLOBAL_SIMULATION_CITIES,
   sectorSeeds,
 } from "@/utils/simulationData";
+import {
+  findMarketCity,
+  getMarketDistrictBySlug,
+  getMarketDistrictMetrics,
+  getMarketHierarchyMeta,
+  listMarketCities,
+  resolveMarketContext,
+} from "../marketRegistry";
+import {
+  findPunjabDistrictEntry,
+  findPunjabVillageEntry,
+  isPunjabDistrictSlug,
+  listPunjabDistrictEntries,
+  PUNJAB_VILLAGE_REGISTRY,
+} from "../data/punjabVillageRegistry";
 
 export type AdminMarketSnapshotWorker = {
   id: string;
@@ -26,6 +41,10 @@ export type AdminRegionOption = {
   lat: number;
   lng: number;
   readiness: number;
+  villageCode?: string;
+  projectedCac?: number;
+  laborAvailabilityIndex?: number;
+  connectivityStability?: number;
 };
 
 export type AdminMarketSnapshot = {
@@ -34,6 +53,10 @@ export type AdminMarketSnapshot = {
     cityLabel: string;
     regionId: string | null;
     regionLabel: string | null;
+    level2Label: string;
+    level3Label: string;
+    level2Kind: string;
+    level3Kind: string;
     state: string;
     stateCode: string;
     country: string;
@@ -45,6 +68,18 @@ export type AdminMarketSnapshot = {
       lng: number;
     };
     zoom: number;
+    villageMetrics?: {
+      laborAvailabilityIndex: number;
+      connectivityStability: number;
+      infrastructureGapScore: number;
+      villageReadinessScore: number;
+      projectedCac: number;
+      popDensity: number;
+      domesticPowerHours: number;
+      hhSize: number;
+      agriPowerHours: number;
+      villageCode: string;
+    } | null;
   };
   stats: {
     workerCount: number;
@@ -133,6 +168,9 @@ const buildPresetFromGlobalCity = (
   };
 };
 
+const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+const average = (values: number[]) => (values.length > 0 ? sum(values) / values.length : 0);
+
 const agraRegions: RegionPreset[] = sectorSeeds.map((seed, index) => ({
   id: seed.id,
   label: seed.label,
@@ -208,6 +246,151 @@ const CITY_PRESET_MAP = new Map(PRESET_MARKETS.map((city) => [city.cityId, city]
 const REGION_CITY_LOOKUP = new Map(
   PRESET_MARKETS.flatMap((city) => city.regions.map((region) => [region.id, city.cityId] as const)),
 );
+const PUNJAB_DISTRICT_CITY_OPTIONS: AdminMarketCityOption[] = listPunjabDistrictEntries().map((district) => ({
+  cityId: district.slug,
+  label: district.label,
+  state: "Punjab",
+  stateCode: "PB",
+  regionGroup: "Punjab District Grid",
+  readiness: district.readinessScore,
+}));
+const PUNJAB_DISTRICT_CITY_LOOKUP = new Map(
+  PUNJAB_DISTRICT_CITY_OPTIONS.map((district) => [district.cityId, district]),
+);
+
+const isPunjabDistrictCityId = (cityId?: string | null) => Boolean(cityId && isPunjabDistrictSlug(cityId));
+
+const buildPunjabVillageWorkers = (region: AdminRegionOption, districtLabel: string): AdminMarketSnapshotWorker[] => {
+  const workerSlots = Math.min(4, Math.max(2, Math.round(region.workerCount / 3)));
+  return Array.from({ length: workerSlots }).map((_, index) => {
+    const offset = [
+      [-0.0038, -0.0026],
+      [0.0031, -0.0018],
+      [0.0024, 0.0034],
+      [-0.0026, 0.0032],
+    ][index % 4];
+    const position = offsetCoordinate(region.lat, region.lng, offset[0], offset[1]);
+    return {
+      id: `${region.id}-worker-${index + 1}`,
+      name: `${districtLabel} Worker ${index + 1}`,
+      lat: position.lat,
+      lng: position.lng,
+      status: index % 3 === 0 ? "busy" : "online",
+      qualityScore: Math.min(97, 80 + (region.readiness % 12) + index * 2),
+      regionName: region.label,
+      workerCount: region.workerCount,
+      activeJobs: Math.max(1, Math.round(region.activeJobs / Math.max(1, region.workerCount))),
+    };
+  });
+};
+
+const buildPunjabRegionOption = (villageId: string): AdminRegionOption | null => {
+  const village = findPunjabVillageEntry(villageId);
+  if (!village) return null;
+
+  const workerCount = Math.max(4, Math.round((village.metrics.laborAvailabilityIndex / 12) + (village.metrics.hhSize / 2.3)));
+  const activeJobs = Math.max(2, Math.round((village.metrics.connectivityStability / 18) + (village.metrics.popDensity * 0.45)));
+
+  return {
+    id: village.id,
+    label: village.label,
+    cityId: village.districtSlug,
+    workerCount,
+    activeJobs,
+    lat: village.centerCoords[0],
+    lng: village.centerCoords[1],
+    readiness: village.metrics.villageReadinessScore,
+    villageCode: village.villageCode,
+    projectedCac: village.metrics.projectedCac,
+    laborAvailabilityIndex: village.metrics.laborAvailabilityIndex,
+    connectivityStability: village.metrics.connectivityStability,
+  };
+};
+
+const buildPunjabMarketSnapshot = ({
+  cityId,
+  regionId,
+}: {
+  cityId: string;
+  regionId?: string | null;
+}): AdminMarketSnapshot => {
+  const district = findPunjabDistrictEntry(cityId) || findPunjabDistrictEntry("gurdaspur")!;
+  const regions = (PUNJAB_VILLAGE_REGISTRY.districtVillageIds[district.slug] || [])
+    .map((villageId) => buildPunjabRegionOption(villageId))
+    .filter((region): region is AdminRegionOption => Boolean(region));
+  const selectedRegion = regions.find((region) => region.id === regionId) || null;
+  const focusRegion = selectedRegion || regions[0] || null;
+  const village = focusRegion ? findPunjabVillageEntry(focusRegion.id) : null;
+  const stats = {
+    workerCount: selectedRegion
+      ? selectedRegion.workerCount
+      : regions.reduce((sum, region) => sum + region.workerCount, 0),
+    activeJobs: selectedRegion
+      ? selectedRegion.activeJobs
+      : regions.reduce((sum, region) => sum + region.activeJobs, 0),
+    completedJobs: selectedRegion
+      ? Math.max(selectedRegion.activeJobs * 2, 6)
+      : Math.max(regions.reduce((sum, region) => sum + region.activeJobs, 0) * 2, 24),
+    revenue: selectedRegion
+      ? Math.max(9800, Math.round((selectedRegion.activeJobs * 2600) + (selectedRegion.readiness * 70)))
+      : Math.max(42000, Math.round(
+        regions.reduce((total, region) => total + (region.activeJobs * 2200) + (region.readiness * 42), 0),
+      )),
+    avgResponseTime: selectedRegion
+      ? Math.max(12, 28 - Math.round((selectedRegion.connectivityStability || 50) / 8))
+      : Math.max(
+        12,
+        28 - Math.round(
+          (
+            regions.reduce((total, region) => total + (region.connectivityStability || 50), 0)
+            / Math.max(1, regions.length)
+          ) / 8,
+        ),
+      ),
+  };
+
+  return {
+    market: {
+      cityId: district.slug,
+      cityLabel: district.label,
+      regionId: selectedRegion?.id || null,
+      regionLabel: selectedRegion?.label || null,
+      level2Label: "District",
+      level3Label: "Village",
+      level2Kind: "district",
+      level3Kind: "village",
+      state: "Punjab",
+      stateCode: "PB",
+      country: "India",
+      tier: "tier_2",
+      regionGroup: "Punjab Rural Command",
+      readiness: focusRegion?.readiness || district.readinessScore,
+      mapCenter: focusRegion
+        ? { lat: focusRegion.lat, lng: focusRegion.lng }
+        : { lat: district.centerCoords[0], lng: district.centerCoords[1] },
+      zoom: selectedRegion ? 15 : district.zoomLevel,
+      villageMetrics: village
+        ? {
+            laborAvailabilityIndex: village.metrics.laborAvailabilityIndex,
+            connectivityStability: village.metrics.connectivityStability,
+            infrastructureGapScore: village.metrics.infrastructureGapScore,
+            villageReadinessScore: village.metrics.villageReadinessScore,
+            projectedCac: village.metrics.projectedCac,
+            popDensity: village.metrics.popDensity,
+            domesticPowerHours: village.metrics.domesticPowerHours,
+            hhSize: village.metrics.hhSize,
+            agriPowerHours: village.metrics.agriPowerHours,
+            villageCode: village.villageCode,
+          }
+        : null,
+    },
+    stats,
+    workers: (selectedRegion ? [selectedRegion] : regions.slice(0, 5))
+      .flatMap((region) => buildPunjabVillageWorkers(region, district.label)),
+    regions,
+    dataMode: "demo",
+  };
+};
 
 const buildWorkerMarker = (
   city: CityPreset,
@@ -241,19 +424,30 @@ const buildWorkerMarker = (
 };
 
 export const getAdminMarketCityOptions = (): AdminMarketCityOption[] => (
-  PRESET_MARKETS.map((city) => ({
-    cityId: city.cityId,
-    label: city.label,
-    state: city.state,
-    stateCode: city.stateCode,
-    regionGroup: city.regionGroup,
-    readiness: city.readiness,
-  }))
+  [
+    ...PRESET_MARKETS.map((city) => ({
+      cityId: city.cityId,
+      label: city.label,
+      state: city.state,
+      stateCode: city.stateCode,
+      regionGroup: city.regionGroup,
+      readiness: city.readiness,
+    })),
+    ...PUNJAB_DISTRICT_CITY_OPTIONS,
+  ]
 );
 
 export const findAdminMarketCity = (value?: string | null): AdminMarketCityOption | null => {
   if (!value) return null;
   const normalized = slugify(value);
+  const punjabDistrict = PUNJAB_DISTRICT_CITY_OPTIONS.find((district) => (
+    district.cityId === normalized
+    || slugify(district.label) === normalized
+  ));
+  if (punjabDistrict) {
+    return punjabDistrict;
+  }
+
   const preset = PRESET_MARKETS.find((city) => (
     city.cityId === normalized
     || slugify(city.label) === normalized
@@ -277,6 +471,12 @@ export const inferAdminCityIdFromRegion = (regionId?: string | null) => {
 };
 
 export const getAdminRegionOptionsForCity = (cityId?: string | null): AdminRegionOption[] => {
+  if (isPunjabDistrictCityId(cityId)) {
+    return (PUNJAB_VILLAGE_REGISTRY.districtVillageIds[cityId || ""] || [])
+      .map((villageId) => buildPunjabRegionOption(villageId))
+      .filter((region): region is AdminRegionOption => Boolean(region));
+  }
+
   const resolvedCityId = cityId || "agra";
   const preset = CITY_PRESET_MAP.get(resolvedCityId) || CITY_PRESET_MAP.get("agra");
 
@@ -299,6 +499,13 @@ export const buildDemoMarketSnapshot = ({
   cityId?: string | null;
   regionId?: string | null;
 }): AdminMarketSnapshot => {
+  if (isPunjabDistrictCityId(cityId)) {
+    return buildPunjabMarketSnapshot({
+      cityId: cityId || "gurdaspur",
+      regionId,
+    });
+  }
+
   const selectedCityId = cityId || inferAdminCityIdFromRegion(regionId) || "agra";
   const preset = CITY_PRESET_MAP.get(selectedCityId) || CITY_PRESET_MAP.get("agra")!;
   const geoConfig = buildSimulationGeoConfig({ cityId: preset.cityId });
@@ -315,6 +522,7 @@ export const buildDemoMarketSnapshot = ({
   const center = focusRegion
     ? { lat: focusRegion.lat, lng: focusRegion.lng }
     : { lat: geoConfig.center.lat, lng: geoConfig.center.lng };
+  const hierarchyMeta = getMarketHierarchyMeta(findMarketCity(preset.cityId)?.stateSlug, preset.cityId);
 
   return {
     market: {
@@ -322,6 +530,10 @@ export const buildDemoMarketSnapshot = ({
       cityLabel: preset.label,
       regionId: selectedRegion?.id || null,
       regionLabel: selectedRegion?.label || null,
+      level2Label: hierarchyMeta.level2Label,
+      level3Label: hierarchyMeta.level3Label,
+      level2Kind: hierarchyMeta.level2Kind,
+      level3Kind: hierarchyMeta.level3Kind,
       state: preset.state,
       stateCode: preset.stateCode,
       country: preset.country,
@@ -363,6 +575,13 @@ export const resolveMarketSelectionFromPath = (pathname: string) => {
 
   if (marketSegments.length >= 3) {
     const cityCandidate = slugify(marketSegments[2]);
+    if (isPunjabDistrictCityId(cityCandidate)) {
+      return {
+        cityId: cityCandidate,
+        regionId: marketSegments[3] ? slugify(marketSegments[3]) : null,
+      };
+    }
+
     if (CITY_PRESET_MAP.has(cityCandidate)) {
       return { cityId: cityCandidate, regionId: null };
     }
@@ -388,7 +607,7 @@ export const resolveMarketSelectionFromPath = (pathname: string) => {
 export const getAdminMarketBreadcrumb = (snapshot: AdminMarketSnapshot) => (
   [
     "Markets",
-    snapshot.market.regionGroup || "India",
+    snapshot.market.state || snapshot.market.regionGroup || "India",
     snapshot.market.cityLabel,
     snapshot.market.regionLabel || "City Overview",
   ].join(" > ")

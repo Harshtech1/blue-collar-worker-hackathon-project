@@ -8,6 +8,8 @@ import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsight
 interface StrategyPulseProps {
   summary: SystemInsightsSummary;
   className?: string;
+  extraChips?: StrategyChip[];
+  onChipClick?: (chip: StrategyChip) => void;
 }
 
 const CHIP_TONES: Record<StrategyChip["id"], string> = {
@@ -16,10 +18,23 @@ const CHIP_TONES: Record<StrategyChip["id"], string> = {
   expansion_posture: "border-emerald-200 bg-emerald-50/80 text-emerald-950",
   expansion_budget: "border-slate-200 bg-slate-50 text-slate-950",
   revenue_potential: "border-teal-200 bg-teal-50/80 text-teal-950",
+  defensive_posture: "border-rose-200 bg-rose-50/80 text-rose-950",
 };
 
-export function StrategyPulse({ summary, className }: StrategyPulseProps) {
+const CHIP_PRIORITY: Record<string, number> = {
+  revenue_potential: 0,
+  financial_stability: 1,
+  local_ops: 2,
+  expansion_posture: 3,
+  expansion_budget: 4,
+  defensive_posture: 5,
+};
+
+export function StrategyPulse({ summary, className, extraChips = [], onChipClick }: StrategyPulseProps) {
   const { chips, loading, provider, fallback } = useSystemInsights(summary);
+  const visibleChips = [...chips, ...extraChips].sort((left, right) => (
+    (CHIP_PRIORITY[left.id] ?? 99) - (CHIP_PRIORITY[right.id] ?? 99)
+  ));
   const statusLabel = loading
     ? "Refreshing strategic pulse"
     : fallback
@@ -56,11 +71,16 @@ export function StrategyPulse({ summary, className }: StrategyPulseProps) {
       </div>
 
       <div className="mission-scrollbar mt-4 flex gap-3 overflow-x-auto pb-1">
-        {chips.map((chip) => (
+        {visibleChips.map((chip) => (
           <button
             key={`${chip.id}-${chip.insight}`}
             type="button"
             onClick={() => {
+              if (onChipClick) {
+                onChipClick(chip);
+                return;
+              }
+
               if (chip.id === "revenue_potential") {
                 emitAdminMapCommand({
                   command: "focus_revenue_moat",

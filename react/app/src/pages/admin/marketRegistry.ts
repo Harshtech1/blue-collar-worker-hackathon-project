@@ -7,9 +7,17 @@ import {
   type MarketTier,
   type SimulationGeoConfig,
 } from "@/utils/simulationData";
+import {
+  findPunjabDistrictEntry,
+  isPunjabDistrictSlug,
+  listPunjabDistrictEntries,
+  PUNJAB_VILLAGE_REGISTRY,
+  type PunjabVillageMetrics,
+} from "./data/punjabVillageRegistry";
 
 export type MarketLaunchStatus = "pilot" | "shadow-launch" | "expansion" | "international";
-export type MarketDistrictKind = "seeded" | "synthetic";
+export type MarketDistrictKind = "seeded" | "synthetic" | "registry";
+export type MarketHierarchyKind = "city" | "region" | "district" | "village";
 
 export interface MarketState {
   slug: string;
@@ -17,6 +25,10 @@ export interface MarketState {
   country: string;
   code: string;
   defaultCitySlug: string;
+  level2Label: string;
+  level3Label: string;
+  level2Kind: MarketHierarchyKind;
+  level3Kind: MarketHierarchyKind;
 }
 
 export interface MarketCity {
@@ -32,6 +44,7 @@ export interface MarketCity {
   tier: MarketTier;
   launchStatus: MarketLaunchStatus;
   simulationCityId: string;
+  hiddenFromSelector?: boolean;
 }
 
 export interface MarketDistrict {
@@ -45,6 +58,9 @@ export interface MarketDistrict {
   zoomLevel?: number;
   landmarkLabel?: string;
   aliases?: string[];
+  villageCode?: string;
+  hierarchyKind?: MarketHierarchyKind;
+  metrics?: PunjabVillageMetrics;
 }
 
 export interface MarketLocation {
@@ -96,7 +112,7 @@ const CITY_LAUNCH_STATUS_OVERRIDES: Partial<Record<string, MarketLaunchStatus>> 
 
 const CURATED_STATE_DEFAULTS: Record<string, string> = {
   "uttar-pradesh": "agra",
-  punjab: "chandigarh",
+  punjab: "gurdaspur",
   delhi: "new-delhi",
 };
 
@@ -350,6 +366,26 @@ const inferStateMeta = (city: GlobalSimulationCity) => {
   };
 };
 
+const getHierarchyMetaForState = (
+  stateSlug: string,
+): Pick<MarketState, "level2Label" | "level3Label" | "level2Kind" | "level3Kind"> => {
+  if (stateSlug === "punjab") {
+    return {
+      level2Label: PUNJAB_VILLAGE_REGISTRY.meta.level2Label,
+      level3Label: PUNJAB_VILLAGE_REGISTRY.meta.level3Label,
+      level2Kind: "district" as const,
+      level3Kind: "village" as const,
+    };
+  }
+
+  return {
+    level2Label: "City",
+    level3Label: "Region",
+    level2Kind: "city" as const,
+    level3Kind: "region" as const,
+  };
+};
+
 const inferLaunchStatus = (city: GlobalSimulationCity): MarketLaunchStatus => {
   if (city.country !== "India") return "international";
   return CITY_LAUNCH_STATUS_OVERRIDES[city.id] || "expansion";
@@ -380,8 +416,44 @@ const GLOBAL_MARKET_CITIES: MarketCity[] = GLOBAL_SIMULATION_CITIES.map((city) =
   };
 });
 
+const PUNJAB_DISTRICT_CITIES: MarketCity[] = listPunjabDistrictEntries().map((district) => ({
+  slug: district.slug,
+  label: district.label,
+  stateSlug: "punjab",
+  stateLabel: "Punjab",
+  stateCode: "PB",
+  country: "India",
+  lat: district.centerCoords[0],
+  lng: district.centerCoords[1],
+  zoomLevel: district.zoomLevel,
+  tier: "tier_2" as const,
+  launchStatus: "shadow-launch" as const,
+  simulationCityId: "chandigarh",
+  hiddenFromSelector: true,
+}));
+
+const PUNJAB_VILLAGE_DISTRICTS: MarketDistrict[] = PUNJAB_VILLAGE_REGISTRY.villages.map((village) => ({
+  slug: village.slug,
+  label: village.label,
+  citySlug: village.districtSlug,
+  stateSlug: "punjab",
+  kind: "registry" as const,
+  centerCoords: village.centerCoords,
+  readinessScore: village.readinessScore,
+  zoomLevel: village.zoomLevel,
+  landmarkLabel: `${village.districtLabel} village grid`,
+  aliases: [
+    village.label.toLowerCase(),
+    village.slug.replace(/-/g, " "),
+    village.villageCode,
+  ],
+  villageCode: village.villageCode,
+  hierarchyKind: "village",
+  metrics: village.metrics,
+}));
+
 const MARKET_CITIES: MarketCity[] = Array.from(
-  [...GLOBAL_MARKET_CITIES, ...CURATED_MARKET_CITIES].reduce<Map<string, MarketCity>>((acc, city) => {
+  [...PUNJAB_DISTRICT_CITIES, ...GLOBAL_MARKET_CITIES, ...CURATED_MARKET_CITIES].reduce<Map<string, MarketCity>>((acc, city) => {
     acc.set(city.slug, city);
     return acc;
   }, new Map<string, MarketCity>()).values(),
@@ -390,12 +462,14 @@ const MARKET_CITIES: MarketCity[] = Array.from(
 const MARKET_STATES: MarketState[] = Object.values(
   MARKET_CITIES.reduce<Record<string, MarketState>>((acc, city) => {
     if (!acc[city.stateSlug]) {
+      const hierarchyMeta = getHierarchyMetaForState(city.stateSlug);
       acc[city.stateSlug] = {
         slug: city.stateSlug,
         label: city.stateLabel,
         country: city.country,
         code: city.stateCode,
         defaultCitySlug: CURATED_STATE_DEFAULTS[city.stateSlug] || city.slug,
+        ...hierarchyMeta,
       };
       return acc;
     }
@@ -447,19 +521,26 @@ const SEEDED_DISTRICTS: MarketDistrict[] = fallbackAgraDistricts
 
 export const listMarketStates = () => MARKET_STATES;
 
-export const listMarketCities = (stateSlug?: string | null) => (
-  stateSlug
+export const listMarketCities = (
+  stateSlug?: string | null,
+  options: { includeHidden?: boolean } = {},
+) => (
+  (stateSlug
     ? MARKET_CITIES.filter((city) => city.stateSlug === stateSlug)
-    : MARKET_CITIES
+    : MARKET_CITIES)
+    .filter((city) => options.includeHidden || !city.hiddenFromSelector)
 );
 
 export const findMarketState = (stateSlug?: string | null) => (
   MARKET_STATES.find((state) => state.slug === stateSlug) || null
 );
 
-export const findMarketCity = (citySlug?: string | null) => (
-  MARKET_CITIES.find((city) => city.slug === citySlug || city.simulationCityId === citySlug) || null
-);
+export const findMarketCity = (citySlug?: string | null) => {
+  if (!citySlug) return null;
+  return MARKET_CITIES.find((city) => city.slug === citySlug)
+    || MARKET_CITIES.find((city) => city.simulationCityId === citySlug)
+    || null;
+};
 
 export const buildSyntheticDistrictsForCity = (city: MarketCity): MarketDistrict[] => {
   const curatedBlueprints = CURATED_DISTRICT_BLUEPRINTS[city.slug];
@@ -510,6 +591,10 @@ export const getMarketDistrictsForCity = (citySlug?: string | null): MarketDistr
   const city = findMarketCity(citySlug);
   if (!city) return [];
 
+  if (city.stateSlug === "punjab" && isPunjabDistrictSlug(city.slug)) {
+    return PUNJAB_VILLAGE_DISTRICTS.filter((district) => district.citySlug === city.slug);
+  }
+
   if (city.slug === "agra") {
     return SEEDED_DISTRICTS;
   }
@@ -517,9 +602,22 @@ export const getMarketDistrictsForCity = (citySlug?: string | null): MarketDistr
   return buildSyntheticDistrictsForCity(city);
 };
 
-export const getMarketDistrictBySlug = (districtSlug?: string | null, citySlug?: string | null) => {
+export const getMarketDistrictBySlug = (
+  districtSlug?: string | null,
+  citySlug?: string | null,
+): MarketDistrict | null => {
   if (!districtSlug) return null;
   const normalizedDistrictSlug = slugify(districtSlug);
+
+  const punjabVillage: MarketDistrict | null = PUNJAB_VILLAGE_DISTRICTS.find((district) => (
+    district.slug === normalizedDistrictSlug
+    || district.villageCode === normalizedDistrictSlug
+    || slugify(district.label) === normalizedDistrictSlug
+    || district.aliases?.some((alias) => slugify(alias) === normalizedDistrictSlug)
+  )) || null;
+  if (punjabVillage && (!citySlug || punjabVillage.citySlug === citySlug)) {
+    return punjabVillage;
+  }
 
   const seeded = SEEDED_DISTRICTS.find((district) => (
     district.slug === normalizedDistrictSlug
@@ -586,10 +684,15 @@ export function resolveMarketLocation(
 export const getDefaultCityForState = (stateSlug?: string | null) => {
   const state = findMarketState(stateSlug);
   if (!state) return findMarketCity(DEFAULT_MARKET_LOCATION.citySlug);
-  return findMarketCity(state.defaultCitySlug);
+  const defaultCity = findMarketCity(state.defaultCitySlug);
+  if (defaultCity && !defaultCity.hiddenFromSelector) {
+    return defaultCity;
+  }
+
+  return listMarketCities(state.slug)[0] || defaultCity || null;
 };
 
-export const getDefaultDistrictForCity = (citySlug?: string | null) => (
+export const getDefaultDistrictForCity = (citySlug?: string | null): MarketDistrict | null => (
   getMarketDistrictsForCity(citySlug)[0] || null
 );
 
@@ -667,6 +770,30 @@ export const resolveLegacyMarketTarget = (target?: string | null): MarketLocatio
 
   return null;
 };
+
+export const getMarketHierarchyMeta = (stateSlug?: string | null, citySlug?: string | null) => {
+  const state = findMarketState(stateSlug) || findMarketState(DEFAULT_MARKET_LOCATION.stateSlug)!;
+  const resolvedCity = findMarketCity(citySlug);
+  if (state.slug === "punjab" && citySlug && resolvedCity && !resolvedCity.hiddenFromSelector) {
+    return {
+      level2Label: "City",
+      level3Label: "Region",
+      level2Kind: "city",
+      level3Kind: "region",
+    };
+  }
+
+  return {
+    level2Label: state.level2Label,
+    level3Label: state.level3Label,
+    level2Kind: state.level2Kind,
+    level3Kind: state.level3Kind,
+  };
+};
+
+export const getMarketDistrictMetrics = (districtSlug?: string | null, citySlug?: string | null) => (
+  getMarketDistrictBySlug(districtSlug, citySlug)?.metrics || null
+);
 
 export const buildMarketBreadcrumb = (
   stateSlug?: string | null,

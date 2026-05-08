@@ -13,19 +13,32 @@ import type {
   AdminSystemHealthSnapshot,
 } from "../adminShellContext";
 import {
+  getPressureFactor,
+  labelsOverlap,
+  resolveCompetitorHotspot,
+  type AdminCompetitorHotspot,
+} from "./marketDefense";
+import type { AdminMarketSnapshot } from "./adminMarketSnapshot";
+import {
   findMarketCity,
   getMarketDistrictBySlug,
   getMarketDistrictsForCity,
   resolveMarketContext,
   resolveMarketLabel,
 } from "../marketRegistry";
+import {
+  findPunjabVillageEntry,
+  PUNJAB_STATE_AVERAGES,
+  type PunjabVillageMetrics,
+} from "../data/punjabVillageRegistry";
 
 export type StrategyChipId =
   | "local_ops"
   | "financial_stability"
   | "expansion_posture"
   | "expansion_budget"
-  | "revenue_potential";
+  | "revenue_potential"
+  | "defensive_posture";
 
 export type StrategyChipTone = "navy" | "emerald" | "sky" | "amber";
 
@@ -52,9 +65,12 @@ export interface SystemInsightsSummary {
     underservedSector: string | null;
     cityTier: "pilot" | "tier_1" | "tier_2" | "tier_3" | "international";
     isExistingMarket: boolean;
+    entryPosture: string;
+    hierarchyPath: string;
   };
   unitEconomics: {
     yieldPerJob: number;
+    averageWorkerEarningPerJob: number;
     cacProjected: number;
     paybackDays: number;
     launchCacPerWorker: number;
@@ -74,12 +90,41 @@ export interface SystemInsightsSummary {
     scalabilityDeltaProfit: number;
     scalabilityDeltaProfitAnnualized: number;
   };
+  marketReadiness: PunjabVillageReadinessSummary | null;
+  marketDefense: {
+    targetHotspot: AdminCompetitorHotspot | null;
+    loyaltyMultiplier: number;
+    pressureFactor: number;
+    activeWorkersInThreatZone: number;
+    defendedWorkers: number;
+    estimatedJobsAtRisk: number;
+    churnPreventionCost: number;
+    replacementCac: number;
+    projectedSavings: number;
+    protectedMarketShare: number;
+  };
   systemHealth: {
     criticalBugs: number;
     primaryCriticalBugCode: string | null;
     uptime: number;
     llmMode: "ready" | "fallback";
   };
+}
+
+export interface PunjabVillageReadinessSummary {
+  villageCode: string;
+  laborAvailabilityIndex: number;
+  connectivityStability: number;
+  infrastructureGapScore: number;
+  villageReadinessScore: number;
+  projectedCac: number;
+  popDensity: number;
+  domesticPowerHours: number;
+  hhSize: number;
+  agriPowerHours: number;
+  deltas: PunjabVillageMetrics["deltas"];
+  benchmarkLabel: string;
+  comparisonNarrative: string;
 }
 
 export interface BuildSystemInsightsSummaryInput {
@@ -96,6 +141,7 @@ export interface BuildSystemInsightsSummaryInput {
   llmMode: "ready" | "fallback";
   healthSnapshot: AdminSystemHealthSnapshot | null;
   investorSummary: AdminInvestorAnalyticsSummary | null;
+  marketSnapshot?: AdminMarketSnapshot | null;
 }
 
 type MarketIdentity = {
@@ -104,8 +150,13 @@ type MarketIdentity = {
   city: string;
   citySlug: string;
   zone: string;
+  districtSlug: string | null;
+  districtLabel: string | null;
   cityTier: "pilot" | "tier_1" | "tier_2" | "tier_3" | "international";
   isExistingMarket: boolean;
+  isPunjabVillage: boolean;
+  entryPosture: string;
+  hierarchyPath: string;
 };
 
 type RegionalBudgetProfile = {
@@ -129,6 +180,7 @@ type ScalabilityProfile = {
 const AGRA_CITY_ID = "agra";
 const AGRA_CITY_NAME = "agra";
 const SCALABILITY_NEW_WORKER_BLOCK = 100;
+const LOYALTY_MULTIPLIER = 0.15;
 const UNDERSERVED_SECTOR_HINTS: Record<string, string> = {
   agra: "Sikandra",
   amritsar: "Ranjit Avenue",
@@ -192,6 +244,49 @@ const parsePercent = (value: string | number | null | undefined) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const formatSignedDelta = (value: number, digits = 0) => {
+  const normalized = Number(value || 0);
+  const formatted = digits > 0
+    ? normalized.toFixed(digits)
+    : Math.round(normalized).toString();
+  return `${normalized >= 0 ? "+" : ""}${formatted}`;
+};
+
+const buildPunjabVillageReadinessSummary = (
+  villageSlug?: string | null,
+): PunjabVillageReadinessSummary | null => {
+  const village = findPunjabVillageEntry(villageSlug || null);
+  if (!village) return null;
+
+  const laborDelta = village.metrics.deltas.laborAvailabilityIndex;
+  const connectivityDelta = village.metrics.deltas.domesticPowerHours;
+  const readinessDelta = village.metrics.deltas.villageReadinessScore;
+  const normalizedConnectivityDelta = roundTo(Math.abs(Number(connectivityDelta || 0)), 1);
+  const laborQualifier = laborDelta >= 0 ? "above" : "below";
+  const connectivityQualifier = connectivityDelta >= 0 ? "stronger" : "lighter";
+  const comparisonNarrative = [
+    `${village.label} sits ${Math.abs(Math.round(laborDelta))} points ${laborQualifier} the Punjab labor baseline`,
+    `with ${normalizedConnectivityDelta} hours ${connectivityQualifier} household power stability`,
+    `and a readiness score ${formatSignedDelta(readinessDelta)} versus the state average.`,
+  ].join(", ");
+
+  return {
+    villageCode: village.villageCode,
+    laborAvailabilityIndex: village.metrics.laborAvailabilityIndex,
+    connectivityStability: village.metrics.connectivityStability,
+    infrastructureGapScore: village.metrics.infrastructureGapScore,
+    villageReadinessScore: village.metrics.villageReadinessScore,
+    projectedCac: village.metrics.projectedCac,
+    popDensity: village.metrics.popDensity,
+    domesticPowerHours: village.metrics.domesticPowerHours,
+    hhSize: village.metrics.hhSize,
+    agriPowerHours: village.metrics.agriPowerHours,
+    deltas: village.metrics.deltas,
+    benchmarkLabel: "Punjab state average",
+    comparisonNarrative,
+  };
+};
+
 const deriveExplicitMarketIdentity = (
   stateSlug?: string | null,
   citySlug?: string | null,
@@ -199,15 +294,32 @@ const deriveExplicitMarketIdentity = (
 ): MarketIdentity | null => {
   if (!stateSlug && !citySlug) return null;
 
-  const context = resolveMarketContext(stateSlug, citySlug);
+  const context = resolveMarketContext(stateSlug, citySlug, districtSlug);
+  const district = getMarketDistrictBySlug(districtSlug || null, context.city.slug) || null;
+  const punjabVillage = context.state.slug === "punjab"
+    ? findPunjabVillageEntry(districtSlug || null)
+    : null;
+  const districtLabel = district?.label || punjabVillage?.label || null;
+  const entryPosture = context.city.launchStatus === "pilot"
+    ? "Pilot Optimization"
+    : punjabVillage
+      ? "Micro-Market Entry"
+      : "Shadow Launch (Freelancer-First)";
   return {
     state: context.state.label,
     stateSlug: context.state.slug,
     city: context.city.label,
     citySlug: context.city.slug,
     zone: resolveMarketLabel(context.state.slug, context.city.slug, districtSlug || null),
+    districtSlug: district?.slug || punjabVillage?.slug || null,
+    districtLabel,
     cityTier: context.city.tier,
     isExistingMarket: context.city.launchStatus === "pilot",
+    isPunjabVillage: Boolean(punjabVillage),
+    entryPosture,
+    hierarchyPath: districtLabel
+      ? `${context.state.label} > ${context.city.label} > ${districtLabel}`
+      : `${context.state.label} > ${context.city.label}`,
   };
 };
 
@@ -229,8 +341,23 @@ const resolveMarketIdentity = ({
       city: matchedMarketCity.label,
       citySlug: matchedMarketCity.slug,
       zone: resolveMarketLabel(matchedMarketCity.stateSlug, matchedMarketCity.slug, districtSlug || null),
+      districtSlug: districtSlug || null,
+      districtLabel: getMarketDistrictBySlug(districtSlug || null, matchedMarketCity.slug)?.label || null,
       cityTier: matchedMarketCity.tier,
       isExistingMarket: matchedMarketCity.launchStatus === "pilot",
+      isPunjabVillage: Boolean(
+        matchedMarketCity.stateSlug === "punjab" && findPunjabVillageEntry(districtSlug || null),
+      ),
+      entryPosture: matchedMarketCity.launchStatus === "pilot"
+        ? "Pilot Optimization"
+        : matchedMarketCity.stateSlug === "punjab" && findPunjabVillageEntry(districtSlug || null)
+          ? "Micro-Market Entry"
+          : "Shadow Launch (Freelancer-First)",
+      hierarchyPath: buildMarketPathLabel(
+        matchedMarketCity.stateLabel,
+        matchedMarketCity.label,
+        getMarketDistrictBySlug(districtSlug || null, matchedMarketCity.slug)?.label || null,
+      ),
     };
   }
 
@@ -250,10 +377,31 @@ const resolveMarketIdentity = ({
     city: matchedCity?.label || matchedSector?.city || geoConfig.cityLabel || "Agra",
     citySlug: matchedCity?.id || inferredCityId,
     zone: zoneLabel || matchedSector?.label || matchedCity?.label || geoConfig.cityLabel || "Agra",
+    districtSlug: districtSlug || null,
+    districtLabel: getMarketDistrictBySlug(districtSlug || null, inferredCityId)?.label || null,
     cityTier: geoConfig.cityTier,
     isExistingMarket: geoConfig.isExistingMarket,
+    isPunjabVillage: Boolean(
+      findMarketCity(inferredCityId)?.stateSlug === "punjab" && findPunjabVillageEntry(districtSlug || null),
+    ),
+    entryPosture: geoConfig.isExistingMarket ? "Pilot Optimization" : "Shadow Launch (Freelancer-First)",
+    hierarchyPath: buildMarketPathLabel(
+      matchedCity?.stateName || "Uttar Pradesh",
+      matchedCity?.label || matchedSector?.city || geoConfig.cityLabel || "Agra",
+      getMarketDistrictBySlug(districtSlug || null, inferredCityId)?.label || null,
+    ),
   };
 };
+
+const buildMarketPathLabel = (
+  stateLabel: string,
+  cityLabel: string,
+  districtLabel?: string | null,
+) => (
+  districtLabel
+    ? `${stateLabel} > ${cityLabel} > ${districtLabel}`
+    : `${stateLabel} > ${cityLabel}`
+);
 
 const deriveYieldPerJob = (
   investorSummary: AdminInvestorAnalyticsSummary | null,
@@ -268,9 +416,23 @@ const deriveYieldPerJob = (
 };
 
 const getRegionalBudgetProfile = (
-  cityTier: MarketIdentity["cityTier"],
-  isExistingMarket: boolean,
+  marketIdentity: MarketIdentity,
+  villageReadiness: PunjabVillageReadinessSummary | null,
 ): RegionalBudgetProfile => {
+  if (marketIdentity.isPunjabVillage && villageReadiness) {
+    return {
+      launchCacPerWorker: villageReadiness.projectedCac,
+      marketCapacity: clamp(
+        Math.round(140 + (villageReadiness.laborAvailabilityIndex * 1.4)),
+        120,
+        280,
+      ),
+      setupOverhead: 18000,
+      launchMode: "Micro-Market Entry",
+    };
+  }
+
+  const { cityTier, isExistingMarket } = marketIdentity;
   if (cityTier === "tier_1" || cityTier === "international") {
     return {
       launchCacPerWorker: 150,
@@ -288,7 +450,19 @@ const getRegionalBudgetProfile = (
   };
 };
 
-const getRevenueProjectionProfile = (cityTier: MarketIdentity["cityTier"]): RevenueProjectionProfile => {
+const getRevenueProjectionProfile = (
+  marketIdentity: MarketIdentity,
+  villageReadiness: PunjabVillageReadinessSummary | null,
+): RevenueProjectionProfile => {
+  if (marketIdentity.isPunjabVillage && villageReadiness) {
+    return {
+      jobsPerWorkerPerMonth: clamp(Math.round(8 + (villageReadiness.connectivityStability / 18)), 8, 13),
+      commissionPerJob: clamp(Math.round(55 + (villageReadiness.laborAvailabilityIndex / 5)), 55, 78),
+      marketShareCapture: clamp(Math.round(6 + (villageReadiness.villageReadinessScore / 18)), 6, 12),
+    };
+  }
+
+  const { cityTier } = marketIdentity;
   if (cityTier === "tier_1" || cityTier === "international") {
     return {
       jobsPerWorkerPerMonth: 20,
@@ -314,9 +488,14 @@ const deriveProjectedCac = (
   marketIdentity: MarketIdentity,
   investorSummary: AdminInvestorAnalyticsSummary | null,
   yieldPerJob: number,
+  villageReadiness: PunjabVillageReadinessSummary | null,
 ) => {
+  if (marketIdentity.isPunjabVillage && villageReadiness) {
+    return Math.round(villageReadiness.projectedCac);
+  }
+
   if (isNonAgraMarket) {
-    return getRegionalBudgetProfile(marketIdentity.cityTier, marketIdentity.isExistingMarket).launchCacPerWorker;
+    return getRegionalBudgetProfile(marketIdentity, villageReadiness).launchCacPerWorker;
   }
 
   const mappedCac = Number(investorSummary?.unitEconomics?.marketingCacPerJob || 0);
@@ -329,10 +508,18 @@ const deriveProjectedCac = (
 
 const derivePaybackDays = (
   isNonAgraMarket: boolean,
+  marketIdentity: MarketIdentity,
   projectedCac: number,
   investorSummary: AdminInvestorAnalyticsSummary | null,
   averageTicket: number,
+  yieldPerJob: number,
+  villageReadiness: PunjabVillageReadinessSummary | null,
 ) => {
+  if (marketIdentity.isPunjabVillage && villageReadiness) {
+    const dailyCommissionPerWorker = Math.max(8, Math.round(yieldPerJob * 0.2));
+    return clamp(Math.round(projectedCac / dailyCommissionPerWorker), 12, 28);
+  }
+
   if (isNonAgraMarket) {
     return 18;
   }
@@ -435,6 +622,95 @@ const resolveUnderservedSector = ({
   return surgeZones.find((zone) => zone !== zoneLabel) || surgeZones[0] || zoneLabel || null;
 };
 
+const resolveThreatZoneWorkerCount = ({
+  marketSnapshot,
+  hotspot,
+  zoneLabel,
+}: {
+  marketSnapshot?: AdminMarketSnapshot | null;
+  hotspot: AdminCompetitorHotspot | null;
+  zoneLabel: string;
+}) => {
+  if (!marketSnapshot) return 0;
+
+  const matchingRegion = marketSnapshot.regions.find((region) => (
+    (hotspot && labelsOverlap(region.label, hotspot.label))
+    || labelsOverlap(region.label, zoneLabel)
+  ));
+
+  return matchingRegion?.workerCount || marketSnapshot.stats?.workerCount || 0;
+};
+
+const buildMarketDefense = ({
+  stateSlug,
+  citySlug,
+  districtSlug,
+  zoneLabel,
+  marketSnapshot,
+  activeWorkerRate,
+  marketShareCapture,
+  jobsPerWorkerPerMonth,
+  averageWorkerEarningPerJob,
+  launchCacPerWorker,
+}: {
+  stateSlug: string;
+  citySlug: string;
+  districtSlug?: string | null;
+  zoneLabel: string;
+  marketSnapshot?: AdminMarketSnapshot | null;
+  activeWorkerRate: number;
+  marketShareCapture: number;
+  jobsPerWorkerPerMonth: number;
+  averageWorkerEarningPerJob: number;
+  launchCacPerWorker: number;
+}) => {
+  const districtLabel = marketSnapshot?.market.regionLabel
+    || getMarketDistrictBySlug(districtSlug || null, citySlug)?.label
+    || zoneLabel;
+  const targetHotspot = resolveCompetitorHotspot({
+    stateSlug,
+    citySlug,
+    districtLabel,
+    zoneLabel,
+  });
+  const pressureFactor = getPressureFactor(targetHotspot?.pressure);
+  const threatZoneWorkers = resolveThreatZoneWorkerCount({
+    marketSnapshot,
+    hotspot: targetHotspot,
+    zoneLabel,
+  });
+  const activeWorkersInThreatZone = Math.max(
+    1,
+    Math.ceil((threatZoneWorkers || 1) * clamp(activeWorkerRate / 100, 0.18, 1)),
+  );
+  const defendedWorkers = Math.max(
+    1,
+    Math.ceil(activeWorkersInThreatZone * pressureFactor),
+  );
+  const estimatedJobsAtRisk = Math.max(
+    1,
+    Math.ceil(defendedWorkers * Math.max(1, jobsPerWorkerPerMonth)),
+  );
+  const churnPreventionCost = Math.round(
+    estimatedJobsAtRisk * Math.max(averageWorkerEarningPerJob, 1) * LOYALTY_MULTIPLIER,
+  );
+  const replacementCac = Math.round(defendedWorkers * Math.max(launchCacPerWorker, 1));
+  const projectedSavings = Math.max(replacementCac - churnPreventionCost, 0);
+
+  return {
+    targetHotspot,
+    loyaltyMultiplier: LOYALTY_MULTIPLIER,
+    pressureFactor,
+    activeWorkersInThreatZone,
+    defendedWorkers,
+    estimatedJobsAtRisk,
+    churnPreventionCost,
+    replacementCac,
+    projectedSavings,
+    protectedMarketShare: Math.max(1, Math.round(marketShareCapture)),
+  };
+};
+
 const deriveCriticalIssueCodes = ({
   stats,
   activeWorkerRate,
@@ -490,6 +766,7 @@ export const buildSystemInsightsSummary = ({
   llmMode,
   healthSnapshot,
   investorSummary,
+  marketSnapshot,
 }: BuildSystemInsightsSummaryInput): SystemInsightsSummary => {
   const marketIdentity = resolveMarketIdentity({
     routeZoneId,
@@ -499,14 +776,23 @@ export const buildSystemInsightsSummary = ({
     districtSlug,
   });
   const isNonAgraMarket = marketIdentity.city.trim().toLowerCase() !== AGRA_CITY_NAME;
-  const budgetProfile = getRegionalBudgetProfile(marketIdentity.cityTier, marketIdentity.isExistingMarket);
-  const revenueProfile = getRevenueProjectionProfile(marketIdentity.cityTier);
+  const villageReadiness = buildPunjabVillageReadinessSummary(marketIdentity.districtSlug);
+  const budgetProfile = getRegionalBudgetProfile(marketIdentity, villageReadiness);
+  const revenueProfile = getRevenueProjectionProfile(marketIdentity, villageReadiness);
   const scalabilityProfile = getScalabilityProfile(marketIdentity.cityTier);
   const availableWorkers = Math.max(1, Math.round(stats.totalWorkers * (Math.max(activeWorkerRate, 1) / 100)));
   const density = roundTo(clamp(stats.activeBookings / availableWorkers, 0.35, 2.8));
   const yieldPerJob = deriveYieldPerJob(investorSummary, averageTicket);
-  const cacProjected = deriveProjectedCac(isNonAgraMarket, marketIdentity, investorSummary, yieldPerJob);
-  const paybackDays = derivePaybackDays(isNonAgraMarket, cacProjected, investorSummary, averageTicket);
+  const cacProjected = deriveProjectedCac(isNonAgraMarket, marketIdentity, investorSummary, yieldPerJob, villageReadiness);
+  const paybackDays = derivePaybackDays(
+    isNonAgraMarket,
+    marketIdentity,
+    cacProjected,
+    investorSummary,
+    averageTicket,
+    yieldPerJob,
+    villageReadiness,
+  );
   const regionalEntryBudget = (budgetProfile.marketCapacity * budgetProfile.launchCacPerWorker) + budgetProfile.setupOverhead;
   const projectedFirstYearRevenue = budgetProfile.marketCapacity
     * revenueProfile.jobsPerWorkerPerMonth
@@ -525,6 +811,13 @@ export const buildSystemInsightsSummary = ({
     activeBookings: stats.activeBookings,
   });
   const projectedMonthlyNetProfit = Math.max(0, Math.round(yieldPerJob * projectedMonthlyJobsRunRate));
+  const averageWorkerEarningPerJob = Math.round(
+    Number(
+      investorSummary?.workerEarnings && investorSummary?.completedJobs
+        ? Number(investorSummary.workerEarnings) / Math.max(Number(investorSummary.completedJobs), 1)
+        : Math.max((averageTicket || 0) - yieldPerJob, 0),
+    ),
+  );
   const roi12m = roundTo(
     (((projectedMonthlyNetProfit * 12) - regionalEntryBudget) / Math.max(1, regionalEntryBudget)) * 100,
     1,
@@ -554,6 +847,18 @@ export const buildSystemInsightsSummary = ({
     surgeZones,
     zoneLabel: marketIdentity.zone,
   });
+  const marketDefense = buildMarketDefense({
+    stateSlug: marketIdentity.stateSlug,
+    citySlug: marketIdentity.citySlug,
+    districtSlug,
+    zoneLabel: marketIdentity.zone,
+    marketSnapshot,
+    activeWorkerRate,
+    marketShareCapture: revenueProfile.marketShareCapture,
+    jobsPerWorkerPerMonth: revenueProfile.jobsPerWorkerPerMonth,
+    averageWorkerEarningPerJob,
+    launchCacPerWorker: budgetProfile.launchCacPerWorker,
+  });
 
   return {
     marketMetrics: {
@@ -569,9 +874,12 @@ export const buildSystemInsightsSummary = ({
       underservedSector,
       cityTier: marketIdentity.cityTier,
       isExistingMarket: marketIdentity.isExistingMarket,
+      entryPosture: marketIdentity.entryPosture,
+      hierarchyPath: marketIdentity.hierarchyPath,
     },
     unitEconomics: {
       yieldPerJob,
+      averageWorkerEarningPerJob,
       cacProjected,
       paybackDays,
       launchCacPerWorker: budgetProfile.launchCacPerWorker,
@@ -591,6 +899,8 @@ export const buildSystemInsightsSummary = ({
       scalabilityDeltaProfit,
       scalabilityDeltaProfitAnnualized,
     },
+    marketReadiness: villageReadiness,
+    marketDefense,
     systemHealth: {
       criticalBugs: criticalBugCount,
       primaryCriticalBugCode: criticalIssueCodes[0] || null,
@@ -625,6 +935,8 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
   const revenuePotentialLabel = formatCompactInrAscii(projectedFirstYearRevenue);
   const scalabilityDeltaLabel = formatCompactInrAscii(scalabilityDeltaProfit);
   const underservedSector = summary.marketMetrics.underservedSector || surgeZone;
+  const villageReadiness = summary.marketReadiness;
+  const isMicroMarket = Boolean(villageReadiness);
 
   return [
     {
@@ -632,8 +944,12 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Local Ops",
       tone: "sky",
       actionLabel: "Explain Ops",
-      copilotQuery: `Explain the local ops recommendation for ${zoneLabel}. What should the operator do in the next 24 hours?`,
-      insight: summary.marketMetrics.density >= 1
+      copilotQuery: isMicroMarket
+        ? `Explain the local ops recommendation for ${zoneLabel}. Compare labor availability and connectivity against the Punjab state average, then outline the next 14 days for a freelancer-first village launch.`
+        : `Explain the local ops recommendation for ${zoneLabel}. What should the operator do in the next 24 hours?`,
+      insight: isMicroMarket && villageReadiness
+        ? `Seed ${zoneLabel} first. Labor index ${villageReadiness.laborAvailabilityIndex}/100 and connectivity ${villageReadiness.connectivityStability}/100 support a disciplined Punjab village launch.`
+        : summary.marketMetrics.density >= 1
         ? `Protect ${surgeZone} first and shift standby coverage into the highest-density lane.`
         : `Keep ${zoneLabel} on disciplined coverage while demand warms; avoid over-staffing before density crosses 1.0.`,
     },
@@ -642,8 +958,12 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Financial Stability",
       tone: criticalBugs > 0 ? "amber" : "emerald",
       actionLabel: "Explain Yield",
-      copilotQuery: `Explain the unit economics for ${zoneLabel}. How do yield, CAC, and payback affect sustainability right now?`,
-      insight: criticalBugs > 0
+      copilotQuery: isMicroMarket && villageReadiness
+        ? `Explain the unit economics for ${zoneLabel}. Use projected CAC of INR ${cacProjected}, payback of ${paybackDays} days, and compare this village against the Punjab average for labor density and domestic power reliability.`
+        : `Explain the unit economics for ${zoneLabel}. How do yield, CAC, and payback affect sustainability right now?`,
+      insight: isMicroMarket && villageReadiness
+        ? `Projected CAC is INR ${cacProjected} with payback near ${paybackDays} days. ${zoneLabel} is ${formatSignedDelta(villageReadiness.deltas.laborAvailabilityIndex)} labor points vs Punjab baseline.`
+        : criticalBugs > 0
         ? `Protect yield at INR ${yieldPerJob} while ${criticalBugs} critical risks stay active; keep CAC near INR ${cacProjected} and hold payback inside ${paybackDays} days.`
         : `Yield is holding near INR ${yieldPerJob}; keep projected CAC near INR ${cacProjected} and payback inside ${paybackDays} days.`,
     },
@@ -652,10 +972,14 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Expansion Posture",
       tone: "navy",
       actionLabel: "Open Playbook",
-      copilotQuery: isNonAgraMarket
+      copilotQuery: isMicroMarket && villageReadiness
+        ? `Prepare the entry playbook for village ${zoneLabel}. Explain the Micro-Market Entry posture, projected CAC of INR ${cacProjected}, payback window of ${paybackDays} days, labor availability ${villageReadiness.laborAvailabilityIndex}/100, connectivity stability ${villageReadiness.connectivityStability}/100, and how this compares with the Punjab state average.`
+        : isNonAgraMarket
         ? `Prepare the expansion playbook for ${city}. Explain the Shadow Launch posture, projected CAC of INR 150, payback window of 18 days, freelancer-first supply coverage, trust rails, and the first 14-day operating plan.`
         : `Explain the expansion playbook for moving from ${city} into ${expansionCity}. What must stay true before the launch window opens?`,
-      insight: isNonAgraMarket
+      insight: isMicroMarket && villageReadiness
+        ? `Micro-Market Entry | Projected CAC: INR ${cacProjected} | Payback Window: ${paybackDays} Days | Readiness ${villageReadiness.villageReadinessScore}/100`
+        : isNonAgraMarket
         ? `Shadow Launch (Freelancer-First) | Projected CAC: INR ${cacProjected} | Payback Window: ${paybackDays} Days`
         : `Agra pilot first: protect the core, keep payback inside ${paybackDays} days, then export the playbook to ${expansionCity}.`,
     },
@@ -664,18 +988,50 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Expansion Budget",
       tone: "navy",
       actionLabel: "Explain Burn",
-      copilotQuery: `Explain the burn-to-scale ratio and regional entry budget for ${summary.marketMetrics.state}, focused on ${city}. Use the ${summary.unitEconomics.launchMode.toLowerCase()} posture, ${marketCapacity.toLocaleString("en-IN")} target workers, INR ${launchCacPerWorker} launch CAC per worker, INR ${regionalEntryBudget.toLocaleString("en-IN")} total entry budget, and show how fast this market can scale without breaking payback discipline.`,
-      insight: `${summary.marketMetrics.state}: ${regionalBudgetLabel} launch budget | ${marketCapacity.toLocaleString("en-IN")} workers | Burn-to-scale ${burnToScaleRatio.toFixed(2)}x`,
+      copilotQuery: isMicroMarket && villageReadiness
+        ? `Explain the launch budget for ${zoneLabel} in Punjab. Use the ${summary.unitEconomics.launchMode.toLowerCase()} posture, ${marketCapacity.toLocaleString("en-IN")} target workers, INR ${launchCacPerWorker} launch CAC per worker, and INR ${regionalEntryBudget.toLocaleString("en-IN")} total entry budget.`
+        : `Explain the burn-to-scale ratio and regional entry budget for ${summary.marketMetrics.state}, focused on ${city}. Use the ${summary.unitEconomics.launchMode.toLowerCase()} posture, ${marketCapacity.toLocaleString("en-IN")} target workers, INR ${launchCacPerWorker} launch CAC per worker, INR ${regionalEntryBudget.toLocaleString("en-IN")} total entry budget, and show how fast this market can scale without breaking payback discipline.`,
+      insight: isMicroMarket && villageReadiness
+        ? `${zoneLabel}: ${regionalBudgetLabel} launch budget | ${marketCapacity.toLocaleString("en-IN")} workers | ${villageReadiness.comparisonNarrative}`
+        : `${summary.marketMetrics.state}: ${regionalBudgetLabel} launch budget | ${marketCapacity.toLocaleString("en-IN")} workers | Burn-to-scale ${burnToScaleRatio.toFixed(2)}x`,
     },
     {
       id: "revenue_potential",
       title: "Revenue Potential",
       tone: "emerald",
       actionLabel: "Open Revenue",
-      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture, a ${roi12m.toFixed(0)}% projected 12-month ROI, and a ${paybackDays}-day payback period. Explain the burn-to-scale ratio, launch mode, and the unit-economic multiplier using Delta Profit = (New Workers x Efficiency Gain) x Current Margin. Use ${scalabilityNewWorkers} new workers, an efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%, and quantify the uplift as INR ${scalabilityDeltaProfit.toLocaleString("en-IN")} monthly and INR ${scalabilityDeltaProfitAnnualized.toLocaleString("en-IN")} annualized. Also identify ${underservedSector} as the strongest underserved sector and explain how the teal moat identifies captured neighborhoods in ${city}.`,
+      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture, a ${roi12m.toFixed(0)}% projected 12-month ROI, and a ${paybackDays}-day payback period. Explain the burn-to-scale ratio, launch mode, and the unit-economic multiplier using Delta Profit = (New Workers x Efficiency Gain) x Current Margin. Use ${scalabilityNewWorkers} new workers, an efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%, and quantify the uplift as INR ${scalabilityDeltaProfit.toLocaleString("en-IN")} monthly and INR ${scalabilityDeltaProfitAnnualized.toLocaleString("en-IN")} annualized. Also identify ${underservedSector} as the strongest underserved sector, explain how the teal moat identifies captured neighborhoods in ${city}, and recommend whether a temporary defensive payout should protect market share in any contested red zones.`,
       insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% capture | ${roi12m.toFixed(0)}% ROI | Underserved ${underservedSector} | Delta +${scalabilityDeltaLabel}/mo`,
     },
   ];
+};
+
+export const buildDefensivePostureChip = ({
+  summary,
+  showCompetitorOverlay,
+  defensivePostureActive,
+}: {
+  summary: SystemInsightsSummary;
+  showCompetitorOverlay: boolean;
+  defensivePostureActive: boolean;
+}): StrategyChip | null => {
+  const hotspot = summary.marketDefense.targetHotspot;
+  if (!showCompetitorOverlay || !hotspot || hotspot.pressure !== "high") {
+    return null;
+  }
+
+  const loyaltyPercent = Math.round(summary.marketDefense.loyaltyMultiplier * 100);
+  const preventionCostLabel = formatCompactInrAscii(summary.marketDefense.churnPreventionCost);
+  const projectedSavingsLabel = formatCompactInrAscii(summary.marketDefense.projectedSavings);
+
+  return {
+    id: "defensive_posture",
+    title: "Defensive Posture",
+    tone: defensivePostureActive ? "emerald" : "amber",
+    actionLabel: defensivePostureActive ? "Defense Active" : "Activate Defense",
+    copilotQuery: `Warning: High competitor activity in ${hotspot.label}. Activating Defensive Payout logic to protect ${summary.marketDefense.protectedMarketShare}% market capture. Deploy a ${loyaltyPercent}% loyalty multiplier for ${summary.marketDefense.defendedWorkers} defended workers. Estimated churn prevention cost: INR ${summary.marketDefense.churnPreventionCost.toLocaleString("en-IN")}. Replacement CAC avoided: INR ${summary.marketDefense.replacementCac.toLocaleString("en-IN")}. Projected savings: INR ${summary.marketDefense.projectedSavings.toLocaleString("en-IN")}. Explain why retaining workers here is cheaper than re-acquiring them.`,
+    insight: `High rival pressure in ${hotspot.label} | +${loyaltyPercent}% loyalty multiplier | Cost ${preventionCostLabel} | Savings ${projectedSavingsLabel}`,
+  };
 };
 
 export const normalizeStrategyChips = (
@@ -699,6 +1055,22 @@ export const normalizeStrategyChips = (
     const remoteInsight = typeof remote?.insight === "string" && remote.insight.trim().length > 0
       ? sanitizeInsightText(remote.insight.trim())
       : seed.insight;
+
+    if (
+      summary.marketReadiness
+      && (
+        seed.id === "local_ops"
+        || seed.id === "financial_stability"
+        || seed.id === "expansion_posture"
+        || seed.id === "expansion_budget"
+        || seed.id === "revenue_potential"
+      )
+    ) {
+      return {
+        ...seed,
+        insight: seed.insight,
+      };
+    }
 
     if (seed.id === "expansion_posture" && !summary.marketMetrics.isExistingMarket) {
       return {

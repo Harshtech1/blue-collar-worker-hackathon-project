@@ -35,6 +35,13 @@ import {
 } from "../adminMapEvents";
 import type { AdminMapStyle } from "../adminShellContext";
 import type { AdminMarketSnapshot } from "../utils/adminMarketSnapshot";
+import type {
+  AdminCompetitorHotspot,
+  AdminMapOverlays,
+} from "../utils/marketDefense";
+import {
+  getCompetitorHotspotsForMarket,
+} from "../utils/marketDefense";
 import type { AdminTab } from "./AdminSidebar";
 
 interface MissionControlWorker {
@@ -54,6 +61,7 @@ interface MissionControlWorker {
   regionName?: string;
   workerCount?: number;
   activeJobs?: number;
+  isDefended?: boolean;
 }
 
 interface MissionControlBooking {
@@ -76,6 +84,10 @@ interface MissionControlMapProps {
   highlightWorkerId?: string | null;
   mapStyleMode?: AdminMapStyle;
   onMapStyleChange?: (mapStyle: AdminMapStyle) => void;
+  mapOverlays?: AdminMapOverlays;
+  onMapOverlaysChange?: (nextOverlays: Partial<AdminMapOverlays>) => void;
+  activeCompetitorHotspot?: AdminCompetitorHotspot | null;
+  defensivePostureActive?: boolean;
   pitchMode?: boolean;
   variant?: "full" | "lite";
   className?: string;
@@ -101,25 +113,12 @@ interface ViewportTelemetry {
   zoom: number;
 }
 
-interface CompetitorHotspot {
-  id: string;
-  stateSlug: string;
-  citySlug: string;
-  label: string;
-  center: [number, number];
-  pressure: "watch" | "high";
-  note: string;
-}
-
 type MapViewMode = AdminMapStyle;
 
 const resolvePrimaryMapStyle = (mapStyleMode?: AdminMapStyle, pitchMode = false): MapViewMode => {
   if (pitchMode) return "road";
-  if (mapStyleMode === "terrain") return "terrain";
-  if (mapStyleMode === "high-contrast") return "high-contrast";
-  return "road";
+  return mapStyleMode === "satellite" ? "satellite" : "road";
 };
-
 
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 const toDegrees = (radians: number) => (radians * 180) / Math.PI;
@@ -146,72 +145,6 @@ const MARKET_TIER_BADGES: Record<string, string> = {
   "new-york": "GLOBAL",
   "sao-paulo": "GLOBAL",
 };
-
-const COMPETITOR_HOTSPOTS: CompetitorHotspot[] = [
-  {
-    id: "chandigarh-sector-17",
-    stateSlug: "punjab",
-    citySlug: "chandigarh",
-    label: "Sector 17",
-    center: [30.7417, 76.7687],
-    pressure: "high",
-    note: "Dense aggregator overlap around premium dispatch lanes.",
-  },
-  {
-    id: "chandigarh-industrial-area",
-    stateSlug: "punjab",
-    citySlug: "chandigarh",
-    label: "Industrial Area",
-    center: [30.6996, 76.8032],
-    pressure: "watch",
-    note: "Price-led competition around mixed trade demand.",
-  },
-  {
-    id: "new-delhi-connaught-place",
-    stateSlug: "delhi",
-    citySlug: "new-delhi",
-    label: "Connaught Place",
-    center: [28.6315, 77.2167],
-    pressure: "high",
-    note: "Heavy incumbent density in central premium demand corridors.",
-  },
-  {
-    id: "new-delhi-karol-bagh",
-    stateSlug: "delhi",
-    citySlug: "new-delhi",
-    label: "Karol Bagh",
-    center: [28.6517, 77.1909],
-    pressure: "watch",
-    note: "Discount-heavy service rivalry with moderate repeat demand.",
-  },
-  {
-    id: "south-delhi-saket",
-    stateSlug: "delhi",
-    citySlug: "south-delhi",
-    label: "Saket",
-    center: [28.5245, 77.2066],
-    pressure: "high",
-    note: "Competitor cluster near affluent maintenance demand.",
-  },
-  {
-    id: "north-delhi-model-town",
-    stateSlug: "delhi",
-    citySlug: "north-delhi",
-    label: "Model Town",
-    center: [28.7061, 77.1904],
-    pressure: "watch",
-    note: "Contested residential demand with high worker poaching risk.",
-  },
-  {
-    id: "noida-sector-18",
-    stateSlug: "uttar-pradesh",
-    citySlug: "noida",
-    label: "Sector 18",
-    center: [28.5708, 77.3246],
-    pressure: "high",
-    note: "High-value retail and appliance corridor with active rivals.",
-  },
-];
 
 const hashString = (value: string) => (
   Array.from(value).reduce((acc, char) => ((acc * 31) + char.charCodeAt(0)) >>> 0, 7)
@@ -358,6 +291,10 @@ export function MissionControlMap({
   highlightWorkerId,
   mapStyleMode,
   onMapStyleChange,
+  mapOverlays,
+  onMapOverlaysChange,
+  activeCompetitorHotspot,
+  defensivePostureActive = false,
   pitchMode = false,
   variant = "full",
   className,
@@ -445,29 +382,17 @@ export function MissionControlMap({
   const [mapViewMode, setMapViewMode] = useState<MapViewMode>(
     resolvePrimaryMapStyle(mapStyleMode, pitchMode),
   );
-  const [showSectorOverlays, setShowSectorOverlays] = useState<boolean>(false);
-  const [showMoatOverlay, setShowMoatOverlay] = useState<boolean>(false);
-  const [showCompetitorOverlay, setShowCompetitorOverlay] = useState<boolean>(false);
   const [showMapSettings, setShowMapSettings] = useState(false);
+  const showSectorOverlays = mapOverlays?.showSectorOverlays ?? false;
+  const showMoatOverlay = mapOverlays?.showMoatOverlay ?? false;
+  const showCompetitorOverlay = mapOverlays?.showCompetitorOverlay ?? false;
   const activeDistrict = useMemo(
     () => getMarketDistrictBySlug(selectedDistrictId, selectedMarket?.slug || activeCitySlug),
     [activeCitySlug, selectedDistrictId, selectedMarket?.slug],
   );
 
   useEffect(() => {
-    if (pitchMode) {
-      setMapViewMode("road");
-      setShowSectorOverlays(false);
-      setShowMoatOverlay(false);
-      setShowCompetitorOverlay(false);
-      return;
-    }
-
-    const nextMapStyle = resolvePrimaryMapStyle(mapStyleMode);
-    setMapViewMode(nextMapStyle);
-    setShowMoatOverlay(false);
-    setShowSectorOverlays(false);
-    setShowCompetitorOverlay(false);
+    setMapViewMode(resolvePrimaryMapStyle(mapStyleMode, pitchMode));
   }, [mapStyleMode, pitchMode]);
 
   useEffect(() => {
@@ -476,16 +401,18 @@ export function MissionControlMap({
       if (!detail || detail.command !== "focus_revenue_moat") return;
 
       setMapViewMode("road");
-      setShowSectorOverlays(true);
-      setShowMoatOverlay(true);
-      setShowCompetitorOverlay(true);
+      onMapOverlaysChange?.({
+        showSectorOverlays: true,
+        showMoatOverlay: true,
+        showCompetitorOverlay: true,
+      });
       setShowMapSettings(false);
       onMapStyleChange?.("road");
     };
 
     window.addEventListener(ADMIN_MAP_COMMAND_EVENT, handleMapCommand as EventListener);
     return () => window.removeEventListener(ADMIN_MAP_COMMAND_EVENT, handleMapCommand as EventListener);
-  }, [onMapStyleChange]);
+  }, [onMapOverlaysChange, onMapStyleChange]);
 
   const simulationGeoConfig = useMemo(() => {
     return buildMarketGeoConfig({
@@ -547,6 +474,7 @@ export function MissionControlMap({
           trustScore: worker.qualityScore,
           position: [worker.lat, worker.lng] as [number, number],
           isHighlighted,
+          isDefended: false,
           regionName: worker.regionName,
           workerCount: worker.workerCount,
           activeJobs: worker.activeJobs,
@@ -589,6 +517,12 @@ export function MissionControlMap({
         normalizedHighlightWorkerId
         && (normalizedWorkerId === normalizedHighlightWorkerId || normalizedWorkerName === normalizedHighlightWorkerId),
       );
+      const workerRegionLabel = worker.regionName || zone.label;
+      const isDefended = Boolean(
+        defensivePostureActive
+        && activeCompetitorHotspot
+        && labelsOverlap(workerRegionLabel, activeCompetitorHotspot.label),
+      );
 
       return {
         id: workerId,
@@ -601,12 +535,13 @@ export function MissionControlMap({
         trustScore,
         position,
         isHighlighted,
-        regionName: worker.regionName || zone.label,
+        isDefended,
+        regionName: workerRegionLabel,
         workerCount: worker.workerCount || zone.baseWorkers || 0,
         activeJobs: worker.activeJobs || 0,
       };
     });
-  }, [bookings, highlightWorkerId, highlightedZone, marketSnapshot, selectedDistrictId, workers, zoneAnchors]);
+  }, [activeCompetitorHotspot, bookings, defensivePostureActive, highlightWorkerId, highlightedZone, marketSnapshot, selectedDistrictId, workers, zoneAnchors]);
 
   const zonePressure = useMemo(() => {
     const base = new Map<string, { total: number; emergency: number }>();
@@ -714,10 +649,7 @@ export function MissionControlMap({
     const currentCitySlug = selectedMarket?.slug || activeCitySlug;
     const currentStateSlug = selectedMarket?.stateSlug || null;
 
-    return COMPETITOR_HOTSPOTS.filter((hotspot) => (
-      hotspot.citySlug === currentCitySlug
-      && (!currentStateSlug || hotspot.stateSlug === currentStateSlug)
-    ));
+    return getCompetitorHotspotsForMarket(currentStateSlug, currentCitySlug);
   }, [activeCitySlug, selectedMarket?.slug, selectedMarket?.stateSlug]);
 
   const competitorIcons = useMemo(() => (
@@ -814,7 +746,7 @@ export function MissionControlMap({
               ? "PILOT"
               : "LIVE");
     const breadcrumbLabel = marketSnapshot
-      ? `Markets > ${marketSnapshot.market.regionGroup} > ${marketSnapshot.market.cityLabel} > ${marketSnapshot.market.regionLabel || "City Overview"}`
+      ? `Markets > ${marketSnapshot.market.state} > ${marketSnapshot.market.cityLabel} > ${marketSnapshot.market.regionLabel || `${marketSnapshot.market.level2Label} Overview`}`
       : selectedMarket
         ? buildMarketBreadcrumb(selectedMarket.stateSlug, selectedMarket.slug, selectedDistrictId)
         : `Markets > India > ${activeCityLabel}`;
@@ -834,9 +766,7 @@ export function MissionControlMap({
         .rahi-map-shell .leaflet-tile-pane {
           filter: ${mapViewMode === "road"
             ? "contrast(1.01) brightness(1.03) saturate(0.82)"
-            : mapViewMode === "satellite"
-              ? "contrast(1.02) brightness(0.99) saturate(0.98)"
-              : "contrast(1.12) brightness(0.72) saturate(0.78)"};
+            : "contrast(1.02) brightness(0.99) saturate(0.98)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -997,7 +927,7 @@ export function MissionControlMap({
                 attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
-          ) : (
+          ) : mapViewMode === "satellite" ? (
             <>
               <TileLayer
                 url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -1008,7 +938,7 @@ export function MissionControlMap({
                 attribution="Labels &copy; Esri"
               />
             </>
-          )}
+          ) : null}
 
           <Pane name="market-moat" style={{ zIndex: 419 }}>
             {showMoatOverlay && mapViewMode === "road" && marketMoatZones.map((zone) => (
@@ -1047,8 +977,8 @@ export function MissionControlMap({
                   color: hotspot.pressure === "high" ? "#dc2626" : "#ef4444",
                   fillColor: "#f87171",
                   fillOpacity: hotspot.pressure === "high" ? 0.09 : 0.06,
-                  opacity: hotspot.pressure === "high" ? 0.34 : 0.24,
-                  weight: 1,
+                  opacity: hotspot.id === activeCompetitorHotspot?.id ? 0.44 : hotspot.pressure === "high" ? 0.34 : 0.24,
+                  weight: hotspot.id === activeCompetitorHotspot?.id ? 1.4 : 1,
                 }}
               >
                 <Tooltip sticky className="rahi-mission-tooltip" direction="top">
@@ -1059,6 +989,11 @@ export function MissionControlMap({
                       {hotspot.pressure === "high" ? "High rivalry" : "Watch zone"}
                     </p>
                     <p className="text-slate-600">{hotspot.note}</p>
+                    {defensivePostureActive && hotspot.id === activeCompetitorHotspot?.id ? (
+                      <p className="font-semibold uppercase tracking-[0.18em] text-emerald-600">
+                        Loyalty Multiplier +15% active
+                      </p>
+                    ) : null}
                   </div>
                 </Tooltip>
               </Circle>
@@ -1165,12 +1100,12 @@ export function MissionControlMap({
               <Circle
                 key={`${worker.id}-ring`}
                 center={worker.position}
-                radius={worker.isHighlighted ? 780 : worker.isAvailable ? 620 : 430}
+                radius={worker.isDefended ? 960 : worker.isHighlighted ? 780 : worker.isAvailable ? 620 : 430}
                 pathOptions={{
-                  color: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
+                  color: worker.isDefended ? "#059669" : worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
                   fillOpacity: 0,
-                  opacity: worker.isHighlighted ? 0.48 : 0.28,
-                  weight: worker.isHighlighted ? 1.6 : 1.1,
+                  opacity: worker.isDefended ? 0.5 : worker.isHighlighted ? 0.48 : 0.28,
+                  weight: worker.isDefended ? 1.9 : worker.isHighlighted ? 1.6 : 1.1,
                 }}
               />
             ))}
@@ -1178,12 +1113,12 @@ export function MissionControlMap({
               <CircleMarker
                 key={worker.id}
                 center={worker.position}
-                radius={worker.isHighlighted ? 9 : worker.isAvailable ? 7 : 6}
+                radius={worker.isDefended ? 9.5 : worker.isHighlighted ? 9 : worker.isAvailable ? 7 : 6}
                 pathOptions={{
-                  color: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
-                  fillColor: worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
+                  color: worker.isDefended ? "#047857" : worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
+                  fillColor: worker.isDefended ? "#10b981" : worker.isHighlighted ? "#2563eb" : worker.isAvailable ? "#10b981" : "#0f172a",
                   fillOpacity: 0.88,
-                  weight: worker.isHighlighted ? 2.2 : 1.5,
+                  weight: worker.isDefended ? 2.4 : worker.isHighlighted ? 2.2 : 1.5,
                 }}
               >
                 <Tooltip sticky className="rahi-mission-tooltip" direction="top" offset={[0, -10]}>
@@ -1195,6 +1130,11 @@ export function MissionControlMap({
                     </div>
                     <p className="text-sm font-bold text-slate-900">{worker.name}</p>
                     <p className="text-slate-600">{worker.profession}</p>
+                    {worker.isDefended ? (
+                      <p className="font-semibold uppercase tracking-[0.18em] text-emerald-600">
+                        Loyalty Multiplier +15% active
+                      </p>
+                    ) : null}
                     {worker.isHighlighted ? (
                       <p className="font-semibold uppercase tracking-[0.18em] text-blue-600">
                         Focus selected
@@ -1268,9 +1208,11 @@ export function MissionControlMap({
                   type="button"
                   onClick={() => {
                     setMapViewMode("road");
-                    setShowSectorOverlays(true);
-                    setShowMoatOverlay(activeTab === "intelligence");
-                    setShowCompetitorOverlay(false);
+                    onMapOverlaysChange?.({
+                      showSectorOverlays: false,
+                      showMoatOverlay: false,
+                      showCompetitorOverlay: false,
+                    });
                     setShowMapSettings(false);
                     onMapStyleChange?.("road");
                   }}
@@ -1287,11 +1229,13 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    const nextState = !showSectorOverlays;
+                    const nextSectorState = !showSectorOverlays;
                     setMapViewMode("road");
-                    setShowSectorOverlays(nextState);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(false);
+                    onMapOverlaysChange?.({
+                      showSectorOverlays: nextSectorState,
+                      showMoatOverlay,
+                      showCompetitorOverlay,
+                    });
                     setShowMapSettings(false);
                     onMapStyleChange?.("road");
                   }}
@@ -1310,9 +1254,11 @@ export function MissionControlMap({
                   onClick={() => {
                     const nextMoatState = !showMoatOverlay;
                     setMapViewMode("road");
-                    setShowSectorOverlays(true);
-                    setShowMoatOverlay(nextMoatState);
-                    setShowCompetitorOverlay(false);
+                    onMapOverlaysChange?.({
+                      showSectorOverlays: true,
+                      showMoatOverlay: nextMoatState,
+                      showCompetitorOverlay,
+                    });
                     setShowMapSettings(false);
                     onMapStyleChange?.("road");
                   }}
@@ -1331,9 +1277,11 @@ export function MissionControlMap({
                   onClick={() => {
                     const nextCompetitorState = !showCompetitorOverlay;
                     setMapViewMode("road");
-                    setShowSectorOverlays(nextCompetitorState ? true : showSectorOverlays);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(nextCompetitorState);
+                    onMapOverlaysChange?.({
+                      showSectorOverlays: true,
+                      showMoatOverlay: nextCompetitorState ? true : showMoatOverlay,
+                      showCompetitorOverlay: nextCompetitorState,
+                    });
                     setShowMapSettings(false);
                     onMapStyleChange?.("road");
                   }}
@@ -1351,9 +1299,11 @@ export function MissionControlMap({
                   type="button"
                   onClick={() => {
                     setMapViewMode("satellite");
-                    setShowSectorOverlays(false);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(false);
+                    onMapOverlaysChange?.({
+                      showSectorOverlays: false,
+                      showMoatOverlay: false,
+                      showCompetitorOverlay: false,
+                    });
                     setShowMapSettings(false);
                     onMapStyleChange?.("satellite");
                   }}
@@ -1385,7 +1335,7 @@ export function MissionControlMap({
           <div className="absolute bottom-4 left-4 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-700 shadow-[0_14px_32px_-20px_rgba(15,23,42,0.18)]">
             {showMoatOverlay
               ? `Market moat: ${marketMoatZones.length} captured neighborhoods`
-              : `Region registry: ${marketSnapshot?.regions.length || zoneAnchors.length} zones`}
+              : `${marketSnapshot?.market.level3Label || "Region"} registry: ${marketSnapshot?.regions.length || zoneAnchors.length} ${marketSnapshot?.market.level3Label?.toLowerCase() || "zones"}`}
           </div>
         ) : null}
       </div>
@@ -1461,5 +1411,3 @@ function MissionViewport({
 
   return null;
 }
-
-

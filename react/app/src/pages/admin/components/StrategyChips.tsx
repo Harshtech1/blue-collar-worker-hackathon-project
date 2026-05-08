@@ -9,6 +9,7 @@ import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsight
 interface StrategyChipsProps {
   summary: SystemInsightsSummary;
   className?: string;
+  extraChips?: StrategyChip[];
   onChipClick?: (chip: StrategyChip) => void;
 }
 
@@ -18,10 +19,23 @@ const CHIP_ACCENTS: Record<string, string> = {
   expansion_posture: "bg-[#0F172A]",
   expansion_budget: "bg-amber-500",
   revenue_potential: "bg-teal-500",
+  defensive_posture: "bg-rose-500",
 };
 
-export function StrategyChips({ summary, className, onChipClick }: StrategyChipsProps) {
+const CHIP_PRIORITY: Record<string, number> = {
+  revenue_potential: 0,
+  financial_stability: 1,
+  local_ops: 2,
+  expansion_posture: 3,
+  expansion_budget: 4,
+  defensive_posture: 5,
+};
+
+export function StrategyChips({ summary, className, extraChips = [], onChipClick }: StrategyChipsProps) {
   const { chips, loading, provider, fallback } = useSystemInsights(summary);
+  const visibleChips = [...chips, ...extraChips].sort((left, right) => (
+    (CHIP_PRIORITY[left.id] ?? 99) - (CHIP_PRIORITY[right.id] ?? 99)
+  ));
   const statusLabel = loading
     ? "Refreshing guidance"
     : fallback
@@ -61,7 +75,7 @@ export function StrategyChips({ summary, className, onChipClick }: StrategyChips
 
       <div className="mt-5 grid gap-3 lg:grid-cols-3">
         <AnimatePresence mode="popLayout">
-          {chips.map((chip, index) => (
+          {visibleChips.map((chip, index) => (
             <motion.button
               key={`${summary.marketMetrics.city}-${chip.id}-${chip.insight}`}
               type="button"

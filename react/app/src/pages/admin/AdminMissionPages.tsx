@@ -43,7 +43,13 @@ import { type AdminMapStyle, useAdminShellContext } from "./adminShellContext";
 import { ADMIN_ISSUE_SEVERITY_WEIGHT, ADMIN_OBSERVABILITY_ISSUES, type ObservabilityIssue } from "./adminSignals";
 import { buildMarketGeoConfig, getMarketDistrictsForCity, listMarketCities, listMarketStates, listStateReadiness } from "./marketRegistry";
 import { downloadInvestorBriefPdf } from "./utils/investorBriefPdf";
-import { buildSystemInsightsSummary } from "./utils/systemInsights";
+import {
+  buildDefensivePostureChip,
+  buildSystemInsightsSummary,
+  type StrategyChip,
+} from "./utils/systemInsights";
+import { emitAdminCopilotSeed } from "./adminCopilotEvents";
+import { emitAdminMapCommand } from "./adminMapEvents";
 import { buildDynamicSimulationGeoConfig, buildSimulationGeoConfig, GLOBAL_SIMULATION_CITIES, sectorSeeds } from "@/utils/simulationData";
 
 type CommandOption = {
@@ -172,7 +178,9 @@ const formatViewportLabelSafe = ({ label, lat, lng }: ZoneViewport) => {
 const getMapStyleLabel = (mapStyle: AdminMapStyle) => (
   mapStyle === "road"
     ? "Standard Road"
-    : "Satellite"
+    : mapStyle === "satellite"
+      ? "Operational Satellite"
+      : "Night Ops"
 );
 
 type ProjectedAssetYieldSnapshot = {
@@ -243,6 +251,28 @@ const countVerifiedWorkers = (workersList: any[]) => workersList.filter((worker)
   || worker?.verificationStatus?.aadhaar === "verified"
 )).length;
 
+const handleStrategyChipHandoff = (
+  chip: StrategyChip,
+  onActivateDefensivePosture: () => void,
+) => {
+  if (chip.id === "revenue_potential") {
+    emitAdminMapCommand({
+      command: "focus_revenue_moat",
+      source: "admin-mission-pages",
+    });
+  }
+
+  if (chip.id === "defensive_posture") {
+    onActivateDefensivePosture();
+  }
+
+  emitAdminCopilotSeed({
+    prompt: chip.copilotQuery,
+    sourceLabel: chip.title,
+    mode: "send",
+  });
+};
+
 export function AdminOverviewPage() {
   const {
     stats,
@@ -265,7 +295,10 @@ export function AdminOverviewPage() {
     sevenDayBookings,
     investorSummary,
     mapStyle,
+    mapOverlays,
+    defensivePostureActive,
     marketSnapshot,
+    onActivateDefensivePosture,
     onSelectMapStyle,
     onNavigateTab,
     onSelectMarketCity,
@@ -310,6 +343,7 @@ export function AdminOverviewPage() {
     llmMode,
     healthSnapshot,
     investorSummary,
+    marketSnapshot,
   }), [
     activeWorkerRate,
     averageTicket,
@@ -318,6 +352,7 @@ export function AdminOverviewPage() {
     healthSnapshot,
     investorSummary,
     llmMode,
+    marketSnapshot,
     routeZoneId,
     selectedCitySlug,
     selectedDistrictId,
@@ -325,6 +360,14 @@ export function AdminOverviewPage() {
     stats,
     zoneLabel,
   ]);
+  const overviewDefensiveChip = useMemo(() => buildDefensivePostureChip({
+    summary: overviewSummary,
+    showCompetitorOverlay: mapOverlays.showCompetitorOverlay,
+    defensivePostureActive,
+  }), [defensivePostureActive, mapOverlays.showCompetitorOverlay, overviewSummary]);
+  const handleOverviewStrategyChipClick = (chip: StrategyChip) => {
+    handleStrategyChipHandoff(chip, onActivateDefensivePosture);
+  };
   const executiveBriefSummary = useMemo(() => buildSystemInsightsSummary({
     routeZoneId,
     zoneLabel: activeAreaLabel,
@@ -339,6 +382,7 @@ export function AdminOverviewPage() {
     llmMode,
     healthSnapshot,
     investorSummary,
+    marketSnapshot,
   }), [
     activeAreaLabel,
     activeWorkerRate,
@@ -348,6 +392,7 @@ export function AdminOverviewPage() {
     healthSnapshot,
     investorSummary,
     llmMode,
+    marketSnapshot,
     routeZoneId,
     selectedCitySlug,
     selectedDistrictId,
@@ -392,8 +437,8 @@ export function AdminOverviewPage() {
     try {
       await downloadInvestorBriefPdf({
         fileName: `Karigar-360-Investor-Scorecard-${new Date().toISOString().slice(0, 10)}.pdf`,
-        marketPathLabel: `Markets > ${selectedMarket.state.label} > ${selectedMarket.city.label}${selectedDistrictId ? ` > ${zoneLabel}` : ""}`,
-              viewportLabel: formatViewportLabelSafe(getZoneViewport(routeZoneId, zoneLabel)),
+        marketPathLabel: `Markets > ${selectedMarket.state.label} > ${selectedMarket.city.label}${selectedDistrictId ? ` > ${activeAreaLabel}` : ""}`,
+        viewportLabel: formatViewportLabelSafe(getZoneViewport(routeZoneId, zoneLabel)),
         summary: overviewSummary,
         yieldSnapshot,
         assetYield: overviewAssetYield,
@@ -412,7 +457,11 @@ export function AdminOverviewPage() {
 
   return (
     <ScrollPage>
-      <StrategyPulse summary={overviewSummary} />
+      <StrategyPulse
+        summary={overviewSummary}
+        extraChips={overviewDefensiveChip ? [overviewDefensiveChip] : []}
+        onChipClick={handleOverviewStrategyChipClick}
+      />
 
       {pitchMode ? (
         <ProjectedAssetYieldHero
@@ -561,13 +610,16 @@ export function AdminOverviewPage() {
                 selectedDistrictId={selectedDistrictId}
                 marketSnapshot={marketSnapshot}
                 workers={workersList}
-                bookings={bookingsList}
-                variant="lite"
-                mapStyleMode={mapStyle}
-                onMapStyleChange={onSelectMapStyle}
-                pitchMode={pitchMode}
-                className="h-full min-h-[450px]"
-              />
+              bookings={bookingsList}
+              variant="lite"
+              mapStyleMode={mapStyle}
+              onMapStyleChange={onSelectMapStyle}
+              mapOverlays={mapOverlays}
+              defensivePostureActive={defensivePostureActive}
+              activeCompetitorHotspot={overviewSummary.marketDefense.targetHotspot}
+              pitchMode={pitchMode}
+              className="h-full min-h-[450px]"
+            />
             </div>
 
             <div className="space-y-4">
@@ -789,12 +841,16 @@ export function AdminWarRoomPage() {
     investorSummary,
     globalUptime,
     pitchMode,
+    mapOverlays,
+    defensivePostureActive,
     onSelectWarRoomZone,
     onSelectMarketState,
     onSelectMarketCity,
     onSelectMarketDistrict,
     mapStyle,
     marketSnapshot,
+    onActivateDefensivePosture,
+    onSetMapOverlays,
     onSelectMapStyle,
     selectedStateSlug,
     selectedStateLabel,
@@ -820,7 +876,7 @@ export function AdminWarRoomPage() {
     const stateOptions = allStateOptions.map((state) => ({
       id: state.slug,
       label: state.label,
-      meta: `${listMarketCities(state.slug).length} configured cities / state command scope`,
+      meta: `${listMarketCities(state.slug).length} configured ${state.level2Label.toLowerCase()}s / state command scope`,
       type: "state" as const,
     }));
     const markets = allCityOptions.map((city) => ({
@@ -834,7 +890,9 @@ export function AdminWarRoomPage() {
       label: district.label,
       meta: district.kind === "seeded"
         ? `${selectedCityLabel} / seeded district`
-        : `${selectedCityLabel} / curated district`,
+        : district.kind === "registry"
+          ? `${selectedCityLabel} / registered village`
+          : `${selectedCityLabel} / curated district`,
       type: "district" as const,
     }));
     const workers = workersList
@@ -856,6 +914,8 @@ export function AdminWarRoomPage() {
   );
   const selectedMarketStats = marketSnapshot?.stats || null;
   const marketAreaLabel = marketSnapshot?.market.regionLabel || marketSnapshot?.market.cityLabel || zoneLabel;
+  const villageMetrics = marketSnapshot?.market.villageMetrics || null;
+  const isVillageMarket = Boolean(villageMetrics);
 
   const handleWorkerSelect = (workerId: string) => {
     const next = new URLSearchParams(searchParams);
@@ -879,6 +939,10 @@ export function AdminWarRoomPage() {
       return "Pilot Optimization Context";
     }
 
+    if (isVillageMarket) {
+      return "Micro-Market Entry Context";
+    }
+
     switch (activeMarketGeo.cityTier) {
       case "pilot":
         return "Pilot Optimization Context";
@@ -891,7 +955,7 @@ export function AdminWarRoomPage() {
       default:
         return "International Expansion Context";
     }
-  }, [activeMarketGeo.cityTier, selectedMarket.city.launchStatus]);
+  }, [activeMarketGeo.cityTier, isVillageMarket, selectedMarket.city.launchStatus]);
   const effectiveLlmSummary = useMemo(() => {
     if (llmSummary && llmSummary !== "Cloud Engine: Monitoring") {
       return llmSummary;
@@ -901,8 +965,22 @@ export function AdminWarRoomPage() {
       return `Pilot Optimization Context. ${activeMarketGeo.marketContext} Prioritize routing efficiency, worker density, and repeat-demand retention in ${selectedCityLabel}.`;
     }
 
+    if (isVillageMarket && villageMetrics) {
+      return `Micro-Market Entry Context. ${marketAreaLabel} inside ${selectedCityLabel}, ${selectedStateLabel} is running a freelancer-first village launch. Labor availability is ${villageMetrics.laborAvailabilityIndex}/100, digital reliability is ${villageMetrics.domesticPowerHours.toFixed(1)} power-hours per day, and projected CAC is INR ${Math.round(villageMetrics.projectedCac).toLocaleString("en-IN")}.`;
+    }
+
     return `${marketContextLabel}. ${selectedCityLabel} is running through a shadow-launch command model inside ${selectedStateLabel}. Focus workforce seeding, controlled marketing CAC, and district-level demand validation before live order history appears.`;
-  }, [activeMarketGeo, isPilotMarket, llmSummary, marketContextLabel, selectedCityLabel, selectedStateLabel]);
+  }, [
+    activeMarketGeo,
+    isPilotMarket,
+    isVillageMarket,
+    llmSummary,
+    marketAreaLabel,
+    marketContextLabel,
+    selectedCityLabel,
+    selectedStateLabel,
+    villageMetrics,
+  ]);
 
   const totalRevenue = Number(investorSummary?.revenue ?? stats.totalRevenue ?? 0);
   const yieldSnapshot = getYieldSnapshot({
@@ -925,6 +1003,7 @@ export function AdminWarRoomPage() {
     llmMode,
     healthSnapshot,
     investorSummary,
+    marketSnapshot,
   }), [
     activeWorkerRate,
     averageTicket,
@@ -933,6 +1012,7 @@ export function AdminWarRoomPage() {
     healthSnapshot,
     investorSummary,
     llmMode,
+    marketSnapshot,
     routeZoneId,
     selectedCitySlug,
     selectedDistrictId,
@@ -940,6 +1020,15 @@ export function AdminWarRoomPage() {
     stats,
     zoneLabel,
   ]);
+  const warRoomDefensiveChip = useMemo(() => buildDefensivePostureChip({
+    summary: warRoomSummary,
+    showCompetitorOverlay: mapOverlays.showCompetitorOverlay,
+    defensivePostureActive,
+  }), [defensivePostureActive, mapOverlays.showCompetitorOverlay, warRoomSummary]);
+  const warRoomVillageReadiness = warRoomSummary.marketReadiness;
+  const handleWarRoomStrategyChipClick = (chip: StrategyChip) => {
+    handleStrategyChipHandoff(chip, onActivateDefensivePosture);
+  };
 
   return (
     <div className="mission-scrollbar h-full overflow-y-auto pr-1">
@@ -956,7 +1045,11 @@ export function AdminWarRoomPage() {
           />
 
           <div className="mt-4">
-            <StrategyPulse summary={warRoomSummary} />
+            <StrategyPulse
+              summary={warRoomSummary}
+              extraChips={warRoomDefensiveChip ? [warRoomDefensiveChip] : []}
+              onChipClick={handleWarRoomStrategyChipClick}
+            />
           </div>
         </div>
 
@@ -1003,6 +1096,10 @@ export function AdminWarRoomPage() {
               highlightWorkerId={highlightedWorkerId}
               mapStyleMode={mapStyle}
               onMapStyleChange={onSelectMapStyle}
+              mapOverlays={mapOverlays}
+              onMapOverlaysChange={onSetMapOverlays}
+              defensivePostureActive={defensivePostureActive}
+              activeCompetitorHotspot={warRoomSummary.marketDefense.targetHotspot}
               pitchMode={pitchMode}
               className="h-full"
             />
@@ -1047,35 +1144,60 @@ export function AdminWarRoomPage() {
             </SuitePanel>
 
             <SuitePanel
-              eyebrow="State-Wide Readiness"
-              title={`${selectedStateLabel} market cluster`}
-              description="State context stays visible so city operations can be explained as part of a larger expansion tree."
+              eyebrow={warRoomVillageReadiness ? "Village Readiness" : "State-Wide Readiness"}
+              title={warRoomVillageReadiness ? `${marketAreaLabel} hyper-local score` : `${selectedStateLabel} market cluster`}
+              description={warRoomVillageReadiness
+                ? "Punjab villages expose labor density, digital reliability, and launch readiness as operator-first metrics."
+                : "State context stays visible so city operations can be explained as part of a larger expansion tree."}
               icon={Building2}
               surface="flat"
             >
-              <div className="grid gap-3 sm:grid-cols-2">
-                <MetricTile label="Configured cities" value={stateReadiness.totalCities.toLocaleString("en-IN")} tone="navy" />
-                <MetricTile label="Pilot cities" value={stateReadiness.pilotCities.toLocaleString("en-IN")} tone="emerald" />
-                <MetricTile label="Expansion cities" value={stateReadiness.expansionCities.toLocaleString("en-IN")} tone="sky" />
-                <MetricTile label="Focus city" value={stateReadiness.recommendedFocus} tone="amber" />
-              </div>
+              {warRoomVillageReadiness ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <MetricTile label="Labor Density Index" value={`${warRoomVillageReadiness.laborAvailabilityIndex}/100`} tone="navy" />
+                    <MetricTile label="Digital Reliability" value={`${warRoomVillageReadiness.domesticPowerHours.toFixed(1)} hrs/day`} tone="emerald" />
+                    <MetricTile label="Village Readiness" value={`${warRoomVillageReadiness.villageReadinessScore}/100`} tone="sky" />
+                    <MetricTile label="Projected CAC" value={formatInr(warRoomVillageReadiness.projectedCac)} tone="amber" />
+                  </div>
+                  <p className="mt-4 rounded-[12px] border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
+                    {warRoomVillageReadiness.comparisonNarrative}
+                  </p>
+                </>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MetricTile label="Configured cities" value={stateReadiness.totalCities.toLocaleString("en-IN")} tone="navy" />
+                  <MetricTile label="Pilot cities" value={stateReadiness.pilotCities.toLocaleString("en-IN")} tone="emerald" />
+                  <MetricTile label="Expansion cities" value={stateReadiness.expansionCities.toLocaleString("en-IN")} tone="sky" />
+                  <MetricTile label="Focus city" value={stateReadiness.recommendedFocus} tone="amber" />
+                </div>
+              )}
             </SuitePanel>
 
             <SuitePanel
-              eyebrow="Revenue Dominance"
-              title={`${selectedCityLabel} economic moat`}
-              description="Year-one upside, capture, and ROI stay visible beside the map so the investor story lands without leaving the command surface."
+              eyebrow={warRoomVillageReadiness ? "Micro-Market Economics" : "Revenue Dominance"}
+              title={warRoomVillageReadiness ? `${marketAreaLabel} launch economics` : `${selectedCityLabel} economic moat`}
+              description={warRoomVillageReadiness
+                ? "Village-level launch math keeps CAC, payback, and revenue upside visible before live order history exists."
+                : "Year-one upside, capture, and ROI stay visible beside the map so the investor story lands without leaving the command surface."}
               icon={DollarSign}
               surface="flat"
             >
               <div className="grid gap-3 sm:grid-cols-2">
                 <MetricTile label="Year-1 revenue" value={formatCompactInr(warRoomSummary.unitEconomics.projectedFirstYearRevenue)} tone="emerald" />
-                <MetricTile label="Market share" value={`${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}%`} tone="navy" />
+                <MetricTile label={warRoomVillageReadiness ? "Payback window" : "Market share"} value={warRoomVillageReadiness ? `${warRoomSummary.unitEconomics.paybackDays} days` : `${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}%`} tone="navy" />
                 <MetricTile label="Projected ROI" value={`${warRoomSummary.unitEconomics.roi12m.toFixed(0)}%`} tone="sky" />
-                <MetricTile label="Margin / 100 workers" value={`+${warRoomSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}%`} tone="amber" />
+                <MetricTile label={warRoomVillageReadiness ? "Launch posture" : "Margin / 100 workers"} value={warRoomVillageReadiness ? warRoomSummary.marketMetrics.entryPosture : `+${warRoomSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}%`} tone="amber" />
               </div>
-              <p className="mt-4 rounded-[12px] border border-teal-100 bg-teal-50/70 px-4 py-4 text-sm leading-6 text-teal-900">
-                The teal moat on the map mirrors this forecast by highlighting captured neighborhoods where density, trust coverage, and worker concentration are already creating defensibility.
+              <p className={cn(
+                "mt-4 rounded-[12px] px-4 py-4 text-sm leading-6",
+                warRoomVillageReadiness
+                  ? "border border-sky-100 bg-sky-50/70 text-sky-900"
+                  : "border border-teal-100 bg-teal-50/70 text-teal-900",
+              )}>
+                {warRoomVillageReadiness
+                  ? `Micro-market entry is benchmarked against the Punjab average, so ${marketAreaLabel} can be defended with evidence instead of city-wide assumptions.`
+                  : "The teal moat on the map mirrors this forecast by highlighting captured neighborhoods where density, trust coverage, and worker concentration are already creating defensibility."}
               </p>
             </SuitePanel>
 
@@ -1216,8 +1338,20 @@ export function AdminWarRoomPage() {
               </div>
               <div className="mt-4 space-y-3">
                 <FeedItem tag="Narrative" tone="navy" message={`${zoneLabel} is ready for the map -> revenue -> moat story without exposing the low-level audit stream.`} />
-                <FeedItem tag="Economics" tone="amber" message={`${selectedCityLabel} is modeled at ${warRoomSummary.unitEconomics.roi12m.toFixed(0)}% 12-month ROI with ${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}% capture and INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")} platform yield per job.`} />
-                <FeedItem tag="Expansion" tone="emerald" message={`Use the teal moat to show where ${selectedCityLabel} is already defensible, then switch cities from the market selector to pressure-test the next launch lane.`} />
+                <FeedItem
+                  tag="Economics"
+                  tone="amber"
+                  message={warRoomVillageReadiness
+                    ? `${marketAreaLabel} is modeled at ${warRoomSummary.unitEconomics.roi12m.toFixed(0)}% 12-month ROI with projected CAC of INR ${Math.round(warRoomSummary.unitEconomics.cacProjected).toLocaleString("en-IN")} and ${warRoomVillageReadiness.domesticPowerHours.toFixed(1)} hours of daily household power stability.`
+                    : `${selectedCityLabel} is modeled at ${warRoomSummary.unitEconomics.roi12m.toFixed(0)}% 12-month ROI with ${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}% capture and INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")} platform yield per job.`}
+                />
+                <FeedItem
+                  tag="Expansion"
+                  tone="emerald"
+                  message={warRoomVillageReadiness
+                    ? `Use the district and village selectors to show why ${marketAreaLabel} outperforms the Punjab average on labor readiness before moving to the next micro-market.`
+                    : `Use the teal moat to show where ${selectedCityLabel} is already defensible, then switch cities from the market selector to pressure-test the next launch lane.`}
+                />
               </div>
             </div>
           ) : (
@@ -1487,6 +1621,7 @@ export function AdminFinancePage() {
     llmMode,
     healthSnapshot,
     investorSummary,
+    marketSnapshot,
   }), [
     activeWorkerRate,
     averageTicket,
@@ -1495,6 +1630,7 @@ export function AdminFinancePage() {
     healthSnapshot,
     investorSummary,
     llmMode,
+    marketSnapshot,
     routeZoneId,
     selectedCitySlug,
     selectedDistrictId,
@@ -1529,10 +1665,12 @@ export function AdminFinancePage() {
     llmMode,
     healthSnapshot,
     investorSummary,
+    marketSnapshot,
   }), [
     activeWorkerRate,
     averageTicket,
     financeAreaLabel,
+    marketSnapshot,
     sevenDayBookings,
     globalUptime,
     healthSnapshot,
@@ -3035,7 +3173,7 @@ function CommandBar({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          placeholder="Search Agra, New Delhi, Chandigarh, Chennai, Kolkata, a region, or a worker"
+          placeholder="Search states, districts, villages, regions, or a worker ID"
           className="w-full rounded-[12px] border border-slate-200 bg-slate-50 py-3 pl-11 pr-24 text-sm text-slate-900 outline-none transition focus:border-slate-400"
         />
         <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
@@ -3080,3 +3218,4 @@ function CommandBar({
     </div>
   );
 }
+

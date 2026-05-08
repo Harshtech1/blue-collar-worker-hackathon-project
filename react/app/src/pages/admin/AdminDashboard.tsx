@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  Check,
   BrainCircuit,
   ChevronRight,
+  ChevronsUpDown,
   Clock3,
   ExternalLink,
   Globe2,
@@ -17,6 +19,15 @@ import {
   UsersRound,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { API } from "@/lib/constants";
 import { toast } from "sonner";
@@ -45,6 +56,7 @@ import {
   getDefaultCityForState,
   getDefaultDistrictForCity,
   getDefaultMarketLocation,
+  getMarketHierarchyMeta,
   getMarketDistrictBySlug,
   listMarketCities,
   listMarketStates,
@@ -72,6 +84,10 @@ import type {
   AdminShellContextValue,
   AdminSystemHealthSnapshot,
 } from "./adminShellContext";
+import {
+  resolveCompetitorHotspot,
+  type AdminMapOverlays,
+} from "./utils/marketDefense";
 
 const DEMO_ADMIN_TOKEN = "demo-admin-token";
 const ADMIN_PITCH_MODE_KEY = "adminPitchMode";
@@ -212,11 +228,21 @@ export default function AdminDashboard() {
   const [mapStyle, setMapStyle] = useState<AdminMapStyle>(((): AdminMapStyle => {
     const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
     if (persisted === "terrain" || persisted === "satellite") return "satellite";
+    if (persisted === "road") return "road";
     return "road";
   })());
+  const [mapOverlays, setMapOverlays] = useState<AdminMapOverlays>({
+    showSectorOverlays: true,
+    showMoatOverlay: true,
+    showCompetitorOverlay: false,
+  });
+  const [defensivePostureActive, setDefensivePostureActive] = useState(false);
   const [marketSnapshot, setMarketSnapshot] = useState<AdminMarketSnapshot | null>(null);
   const [marketSnapshotLoading, setMarketSnapshotLoading] = useState(false);
+  const [citySelectorOpen, setCitySelectorOpen] = useState(false);
   const [marketSearchValue, setMarketSearchValue] = useState("");
+  const [regionSelectorOpen, setRegionSelectorOpen] = useState(false);
+  const [regionFilterValue, setRegionFilterValue] = useState("");
   const systemReadyToastShown = useRef(false);
 
   useEffect(() => {
@@ -276,15 +302,48 @@ export default function AdminDashboard() {
   const selectedCityLabel = selectedMarket.city.label;
   const districtOverlayMode = selectedDistrictId ? "district" as const : "city" as const;
   const selectedDistrictLabel = selectedMarket.district?.label || getMarketDistrictBySlug(selectedDistrictId, selectedCitySlug)?.label || null;
-  const marketStateOptions = useMemo(
-    () => listMarketStates().filter((state) => ["punjab", "uttar-pradesh", "delhi"].includes(state.slug)),
-    [],
+  const marketHierarchy = useMemo(
+    () => getMarketHierarchyMeta(selectedStateSlug, selectedCitySlug),
+    [selectedCitySlug, selectedStateSlug],
   );
+  const level2Label = marketHierarchy.level2Label;
+  const level3Label = marketHierarchy.level3Label;
+  const marketCityOptions = useMemo(() => getAdminMarketCityOptions(), []);
+  const marketStateOptions = useMemo(() => {
+    const activeStateSlugs = new Set(
+      marketCityOptions
+        .map((city) => findMarketCity(city.cityId)?.stateSlug)
+        .filter((stateSlug): stateSlug is string => Boolean(stateSlug)),
+    );
+
+    return listMarketStates().filter((state) => activeStateSlugs.has(state.slug));
+  }, [marketCityOptions]);
   const stateCityOptions = useMemo(
-    () => listMarketCities(selectedStateSlug),
+    () => listMarketCities(selectedStateSlug).map((city) => {
+      const adminOption = findAdminMarketCity(city.slug);
+      return {
+        cityId: city.slug,
+        label: city.label,
+        state: city.stateLabel,
+        stateCode: city.stateCode,
+        regionGroup: adminOption?.regionGroup || city.stateLabel,
+        readiness: adminOption?.readiness || 78,
+      };
+    }),
     [selectedStateSlug],
   );
-  const marketCityOptions = useMemo(() => getAdminMarketCityOptions(), []);
+  const filteredStateCityOptions = useMemo(() => {
+    const normalizedQuery = marketSearchValue.trim().toLowerCase();
+    if (!normalizedQuery) return stateCityOptions;
+
+    return stateCityOptions.filter((city) => (
+      city.label.toLowerCase().includes(normalizedQuery)
+      || city.regionGroup.toLowerCase().includes(normalizedQuery)
+      || city.state.toLowerCase().includes(normalizedQuery)
+      || city.stateCode.toLowerCase().includes(normalizedQuery)
+      || String(city.readiness).includes(normalizedQuery)
+    ));
+  }, [marketSearchValue, stateCityOptions]);
   const selectedCityOption = useMemo(
     () => marketCityOptions.find((city) => city.cityId === selectedCitySlug) || null,
     [marketCityOptions, selectedCitySlug],
@@ -300,6 +359,21 @@ export default function AdminDashboard() {
     () => marketSnapshot?.regions || getAdminRegionOptionsForCity(selectedCitySlug),
     [marketSnapshot, selectedCitySlug],
   );
+  const filteredRegionOptions = useMemo(() => {
+    const normalizedQuery = regionFilterValue.trim().toLowerCase();
+    const matches = normalizedQuery
+      ? regionOptions.filter((region) => {
+          const villageCode = String(region.villageCode || "").toLowerCase();
+          return region.label.toLowerCase().includes(normalizedQuery) || villageCode.includes(normalizedQuery);
+        })
+      : regionOptions;
+
+    if (selectedStateSlug === "punjab" && !normalizedQuery) {
+      return matches.slice(0, 120);
+    }
+
+    return matches;
+  }, [regionFilterValue, regionOptions, selectedStateSlug]);
   const activeMarket = useMemo<AdminActiveMarket>(() => ({
     cityId: marketSnapshot?.market.cityId || selectedCitySlug,
     cityLabel: marketSnapshot?.market.cityLabel || selectedCityLabel,
@@ -316,6 +390,28 @@ export default function AdminDashboard() {
     selectedDistrictId,
     selectedDistrictLabel,
   ]);
+  const activeCompetitorHotspot = useMemo(() => resolveCompetitorHotspot({
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtLabel: selectedDistrictLabel || marketSnapshot?.market.regionLabel || null,
+    zoneLabel,
+  }), [
+    marketSnapshot?.market.regionLabel,
+    selectedCitySlug,
+    selectedDistrictLabel,
+    selectedStateSlug,
+    zoneLabel,
+  ]);
+
+  useEffect(() => {
+    if (!mapOverlays.showCompetitorOverlay) {
+      setDefensivePostureActive(false);
+    }
+  }, [mapOverlays.showCompetitorOverlay]);
+
+  useEffect(() => {
+    setDefensivePostureActive(false);
+  }, [activeCompetitorHotspot?.id, selectedCitySlug, selectedDistrictId, selectedStateSlug]);
 
   useEffect(() => {
     let cancelled = false;
@@ -360,7 +456,13 @@ export default function AdminDashboard() {
         }
 
         if (!cancelled) {
-          setMarketSnapshot(payload?.data || fallbackSnapshot);
+          const liveSnapshot = payload?.data;
+          const cityMatchesSelection = liveSnapshot?.market?.cityId === selectedCitySlug;
+          const regionMatchesSelection = !selectedDistrictId
+            || !liveSnapshot?.market?.regionId
+            || liveSnapshot.market.regionId === selectedDistrictId;
+
+          setMarketSnapshot(cityMatchesSelection && regionMatchesSelection ? liveSnapshot : fallbackSnapshot);
         }
       } catch (snapshotError) {
         console.warn("[AdminDashboard] Market snapshot fallback engaged:", snapshotError);
@@ -384,6 +486,12 @@ export default function AdminDashboard() {
   useEffect(() => {
     setMarketSearchValue(selectedCityLabel);
   }, [selectedCityLabel]);
+
+  useEffect(() => {
+    setRegionFilterValue("");
+    setRegionSelectorOpen(false);
+    setCitySelectorOpen(false);
+  }, [selectedCitySlug, selectedDistrictId, selectedStateSlug]);
 
   const loadDemoDashboardData = useCallback(() => {
     const completed = demoBookings.filter((booking) => booking.status === "completed");
@@ -909,6 +1017,41 @@ export default function AdminDashboard() {
   }, [handleActiveMarketSelect, marketCityOptions, selectedCityLabel]);
   const handleMapStyleSelect = useCallback((nextMapStyle: AdminMapStyle) => {
     setMapStyle(nextMapStyle);
+    if (nextMapStyle !== "road") {
+      setMapOverlays((current) => ({
+        ...current,
+        showCompetitorOverlay: false,
+      }));
+    }
+  }, []);
+  const handleMapOverlayChange = useCallback((nextOverlays: Partial<AdminMapOverlays>) => {
+    setMapOverlays((current) => {
+      const updatedOverlays = {
+        ...current,
+        ...nextOverlays,
+      };
+
+      if (!updatedOverlays.showCompetitorOverlay) {
+        setDefensivePostureActive(false);
+      }
+
+      return updatedOverlays;
+    });
+  }, []);
+  const handleActivateDefensivePosture = useCallback(() => {
+    if (!activeCompetitorHotspot || activeCompetitorHotspot.pressure !== "high") return;
+
+    setMapStyle("road");
+    setMapOverlays((current) => ({
+      ...current,
+      showSectorOverlays: true,
+      showMoatOverlay: true,
+      showCompetitorOverlay: true,
+    }));
+    setDefensivePostureActive(true);
+  }, [activeCompetitorHotspot]);
+  const handleClearDefensivePosture = useCallback(() => {
+    setDefensivePostureActive(false);
   }, []);
 
   const handleWarRoomZoneSelect = useCallback((zoneId: string) => {
@@ -986,10 +1129,14 @@ export default function AdminDashboard() {
     selectedMarket: {
       state: selectedMarket.state,
       city: selectedMarket.city,
+      district: selectedMarket.district,
     },
     cityOptions: marketCityOptions,
     regionOptions,
     mapStyle: pitchMode ? "road" : mapStyle,
+    mapOverlays,
+    defensivePostureActive,
+    activeCompetitorHotspot,
     marketSnapshot: marketSnapshot || fallbackMarketSnapshot,
     marketSnapshotLoading,
     districtOverlayMode,
@@ -1025,9 +1172,13 @@ export default function AdminDashboard() {
     onSelectActiveMarket: handleActiveMarketSelect,
     onSelectActiveRegion: handleActiveRegionSelect,
     onSelectMapStyle: handleMapStyleSelect,
+    onSetMapOverlays: handleMapOverlayChange,
+    onActivateDefensivePosture: handleActivateDefensivePosture,
+    onClearDefensivePosture: handleClearDefensivePosture,
     onOpenVerificationDocument: handleViewVerificationDocument,
     onTogglePitchMode: handlePitchModeToggle,
   }), [
+    activeCompetitorHotspot,
     activeMarket,
     activities,
     activeWorkerRate,
@@ -1038,10 +1189,14 @@ export default function AdminDashboard() {
     chartData,
     currentMission,
     currentObservabilityPanel,
+    defensivePostureActive,
     error,
     globalUptime,
+    handleActivateDefensivePosture,
     handleActiveMarketSelect,
     handleActiveRegionSelect,
+    handleClearDefensivePosture,
+    handleMapOverlayChange,
     handleMapStyleSelect,
     districtOverlayMode,
     handleMissionNavigation,
@@ -1060,6 +1215,7 @@ export default function AdminDashboard() {
     investorSummary,
     fallbackMarketSnapshot,
     mapStyle,
+    mapOverlays,
     marketCityOptions,
     marketLocation,
     marketSnapshot,
@@ -1297,7 +1453,7 @@ export default function AdminDashboard() {
                   <select
                     value={selectedStateSlug}
                     onChange={(event) => handleMarketStateSelect(event.target.value)}
-                    className="min-w-[12rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    className="min-w-[11rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
                     {marketStateOptions.map((state) => (
                       <option key={state.slug} value={state.slug}>
@@ -1306,45 +1462,154 @@ export default function AdminDashboard() {
                     ))}
                   </select>
                 </label>
-                <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
-                  <Search className="h-3.5 w-3.5 text-[#0F172A]" />
-                  <span>City</span>
-                  <select
-                    value={selectedCitySlug}
-                    onChange={(event) => handleMarketCitySelect(event.target.value, selectedStateSlug)}
-                    className="min-w-[12rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
-                  >
-                    {stateCityOptions.map((city) => (
-                      <option key={city.slug} value={city.slug}>
-                        {city.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <Popover open={citySelectorOpen} onOpenChange={setCitySelectorOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]"
+                    >
+                      <Search className="h-3.5 w-3.5 text-[#0F172A]" />
+                      <span>{level2Label}</span>
+                      <span className="max-w-[12rem] truncate text-[11px] font-semibold normal-case tracking-normal text-slate-900">
+                        {selectedCityLabel}
+                      </span>
+                      <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[360px] rounded-2xl border border-slate-200 p-0 shadow-[0_22px_44px_-28px_rgba(15,23,42,0.26)]">
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        value={marketSearchValue}
+                        onValueChange={setMarketSearchValue}
+                        placeholder={`Search ${level2Label.toLowerCase()} in ${selectedStateLabel}`}
+                        className="h-11"
+                      />
+                      <CommandList>
+                        <CommandEmpty>No matching {level2Label.toLowerCase()} found in {selectedStateLabel}.</CommandEmpty>
+                        <CommandGroup heading={`${selectedStateLabel} · ${stateCityOptions.length.toLocaleString("en-IN")} markets`}>
+                          {filteredStateCityOptions.map((city) => (
+                            <CommandItem
+                              key={city.cityId}
+                              value={`${city.label} ${city.regionGroup} ${city.stateCode}`}
+                              onSelect={() => {
+                                handleMarketCitySelect(city.cityId, selectedStateSlug);
+                                setCitySelectorOpen(false);
+                              }}
+                            >
+                              <Check className={cn("mr-2 h-4 w-4", selectedCitySlug === city.cityId ? "opacity-100" : "opacity-0")} />
+                              <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <span className="block truncate">{city.label}</span>
+                                  <span className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                    {city.regionGroup}
+                                  </span>
+                                </div>
+                                <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                                  {city.readiness}% ready
+                                </span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
                 <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
                   <MapPin className="h-3.5 w-3.5 text-[#0F172A]" />
-                  <span>Region</span>
-                  <select
-                    value={selectedDistrictId || ""}
-                    onChange={(event) => handleActiveRegionSelect(event.target.value || null)}
-                    disabled={!selectedCitySlug}
-                    className="min-w-[13rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
-                  >
-                    <option value="">City overview</option>
-                    {regionOptions.map((region) => (
-                      <option key={region.id} value={region.id}>
-                        {region.label} · {region.workerCount} workers
-                      </option>
-                    ))}
-                  </select>
+                  <span>{level3Label}</span>
+                  {selectedStateSlug === "punjab" ? (
+                    <Popover open={regionSelectorOpen} onOpenChange={setRegionSelectorOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          disabled={!selectedCitySlug}
+                          className="inline-flex min-w-[15rem] items-center justify-between gap-3 bg-transparent text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                        >
+                          <span className="truncate text-left">
+                            {selectedDistrictLabel || `Select ${level3Label}`}
+                          </span>
+                          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-[360px] rounded-2xl border border-slate-200 p-0 shadow-[0_22px_44px_-28px_rgba(15,23,42,0.26)]">
+                        <Command shouldFilter={false}>
+                          <CommandInput
+                            value={regionFilterValue}
+                            onValueChange={setRegionFilterValue}
+                            placeholder={`Search ${level3Label.toLowerCase()} or VillageCode`}
+                            className="h-11"
+                          />
+                          <CommandList>
+                            <CommandEmpty>No matching {level3Label.toLowerCase()} found in {selectedCityLabel}.</CommandEmpty>
+                            <CommandGroup heading={`${selectedCityLabel} · ${regionOptions.length.toLocaleString("en-IN")} villages`}>
+                              <CommandItem
+                                value="district-overview"
+                                onSelect={() => {
+                                  handleActiveRegionSelect(null);
+                                  setRegionSelectorOpen(false);
+                                }}
+                              >
+                                <Check className={cn("mr-2 h-4 w-4", !selectedDistrictId ? "opacity-100" : "opacity-0")} />
+                                <span>{selectedCityLabel} overview</span>
+                              </CommandItem>
+                              {filteredRegionOptions.map((region) => (
+                                <CommandItem
+                                  key={region.id}
+                                  value={`${region.label} ${region.villageCode || ""}`}
+                                  onSelect={() => {
+                                    handleActiveRegionSelect(region.id);
+                                    setRegionSelectorOpen(false);
+                                  }}
+                                >
+                                  <Check className={cn("mr-2 h-4 w-4", selectedDistrictId === region.id ? "opacity-100" : "opacity-0")} />
+                                  <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                                    <span className="truncate">{region.label}</span>
+                                    <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                                      {region.villageCode ? `Code ${region.villageCode}` : `${region.workerCount} workers`}
+                                    </span>
+                                  </div>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                        {regionOptions.length > filteredRegionOptions.length && !regionFilterValue.trim() ? (
+                          <div className="border-t border-slate-200 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Showing first {filteredRegionOptions.length.toLocaleString("en-IN")} of {regionOptions.length.toLocaleString("en-IN")} villages. Type to narrow further.
+                          </div>
+                        ) : null}
+                      </PopoverContent>
+                    </Popover>
+                  ) : (
+                    <select
+                      value={selectedDistrictId || ""}
+                      onChange={(event) => handleActiveRegionSelect(event.target.value || null)}
+                      disabled={!selectedCitySlug}
+                      className="min-w-[13rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    >
+                      <option value="">{selectedCityLabel} overview</option>
+                      {regionOptions.map((region) => (
+                        <option key={region.id} value={region.id}>
+                          {region.label} · {region.workerCount} workers
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </label>
                 {selectedCityOption ? (
                   <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
                     {selectedCityOption.label} | {selectedCityOption.readiness}% ready
                   </span>
                 ) : null}
+                {marketStateOptions.length > 0 ? (
+                  <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                    <Globe2 className="h-3.5 w-3.5 text-[#0F172A]" />
+                    {selectedStateLabel}
+                  </span>
+                ) : null}
                 <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Markets {">"} {selectedStateLabel} {">"} {selectedCityLabel}
+                  Markets {">"} {selectedStateLabel} {">"} {selectedCityLabel}{activeMarket.regionLabel ? ` > ${activeMarket.regionLabel}` : ""}
                 </span>
                 {activeMarket.regionLabel ? (
                   <span className="inline-flex min-h-10 items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
@@ -1475,4 +1740,7 @@ function HudTickerItem({
     </div>
   );
 }
+
+
+
 
