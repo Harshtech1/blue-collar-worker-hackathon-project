@@ -32,18 +32,24 @@ export interface InvestorBriefPdfInput {
 }
 
 const formatInr = (value: number) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
-const formatCompactInr = (value: number) => {
+
+const formatCompactInrAscii = (value: number) => {
   const normalizedValue = Math.round(Number(value || 0));
+  if (normalizedValue >= 10000000) {
+    const croreValue = normalizedValue / 10000000;
+    return `INR ${Number.isInteger(croreValue) ? croreValue.toFixed(0) : croreValue.toFixed(1)}Cr`;
+  }
+
   if (normalizedValue >= 100000) {
     const lakhValue = normalizedValue / 100000;
-    return `₹${Number.isInteger(lakhValue) ? lakhValue.toFixed(0) : lakhValue.toFixed(1)}L`;
+    return `INR ${Number.isInteger(lakhValue) ? lakhValue.toFixed(0) : lakhValue.toFixed(1)}L`;
   }
 
   if (normalizedValue >= 1000) {
-    return `₹${Math.round(normalizedValue / 1000)}K`;
+    return `INR ${Math.round(normalizedValue / 1000)}K`;
   }
 
-  return `₹${normalizedValue}`;
+  return `INR ${normalizedValue}`;
 };
 
 const drawCard = (
@@ -149,16 +155,35 @@ export const downloadInvestorBriefPdf = async ({
   pdf.text("Projected ROI 12M", pageWidth - 52, 14.5);
   pdf.setFontSize(16);
   pdf.setTextColor(15, 23, 42);
-  pdf.text(`${assetYield.roi12m.toFixed(0)}%`, pageWidth - 52, 22.5);
+  pdf.text(`${summary.unitEconomics.roi12m.toFixed(0)}%`, pageWidth - 52, 22.5);
 
   let cursorY = 44;
 
   drawMetricTile(pdf, margin, cursorY, metricWidth, "Density", summary.marketMetrics.density.toFixed(2), [15, 23, 42]);
   drawMetricTile(pdf, margin + metricWidth + 3, cursorY, metricWidth, "Yield / Job", formatInr(yieldSnapshot.netProfitPerJob), [5, 150, 105]);
-  drawMetricTile(pdf, margin + (metricWidth + 3) * 2, cursorY, metricWidth, "Year-1 Revenue", formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue), [2, 132, 199]);
+  drawMetricTile(pdf, margin + (metricWidth + 3) * 2, cursorY, metricWidth, "Year-1 Revenue", formatCompactInrAscii(summary.unitEconomics.projectedFirstYearRevenue), [2, 132, 199]);
   drawMetricTile(pdf, margin + (metricWidth + 3) * 3, cursorY, metricWidth, "Share Capture", `${Math.round(summary.unitEconomics.marketShareCapture)}%`, [15, 23, 42]);
 
   cursorY += 28;
+
+  drawCard(pdf, margin, cursorY, contentWidth, 24, { fill: [248, 250, 252] });
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(11);
+  pdf.setTextColor(15, 23, 42);
+  pdf.text("Executive Summary", margin + 4, cursorY + 7.5);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.8);
+  pdf.setTextColor(71, 85, 105);
+  writeWrappedText(
+    pdf,
+    `National hierarchy: ${marketPathLabel}. Expansion budget is ${formatInr(summary.unitEconomics.regionalEntryBudget)} under the ${summary.unitEconomics.launchMode} posture. Revenue projection is ${formatInr(summary.unitEconomics.projectedFirstYearRevenue)} in Year-1 with ${summary.unitEconomics.marketShareCapture}% share capture, ${summary.unitEconomics.roi12m.toFixed(0)}% projected ROI, and a ${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% unit-economic multiplier per 100 workers.`,
+    margin + 4,
+    cursorY + 11.5,
+    contentWidth - 8,
+    4.1,
+  );
+
+  cursorY += 30;
 
   drawCard(pdf, margin, cursorY, 88, 60, { fill: [255, 255, 255] });
   pdf.setFont("helvetica", "bold");
@@ -216,19 +241,19 @@ export const downloadInvestorBriefPdf = async ({
 
   const timelineCards = [
     {
-      title: summary.marketMetrics.city,
-      stage: summary.marketMetrics.isExistingMarket ? "Pilot Base" : "Active Market",
-      detail: `Density ${summary.marketMetrics.density.toFixed(2)} | Yield ${formatInr(yieldSnapshot.netProfitPerJob)}`,
+      title: summary.marketMetrics.zoneLabel,
+      stage: "Current command lane",
+      detail: `Hierarchy ${summary.marketMetrics.city}, ${summary.marketMetrics.state} | Yield ${formatInr(yieldSnapshot.netProfitPerJob)}`,
     },
     {
-      title: summary.marketMetrics.city,
-      stage: summary.unitEconomics.launchMode,
-      detail: `Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | CAC INR ${summary.unitEconomics.launchCacPerWorker} | Payback ${summary.unitEconomics.paybackDays} days`,
+      title: "Chandigarh",
+      stage: "Shadow Launch",
+      detail: "Budget INR 90K | Payback 18 days | Revenue INR 72L",
     },
     {
-      title: summary.marketMetrics.recommendedExpansionCity,
-      stage: "Next launch lane",
-      detail: `State ${summary.marketMetrics.state} | Revenue ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}%`,
+      title: "New Delhi",
+      stage: "Tier-1 scale lane",
+      detail: "Budget INR 3L | Payback 18 days | Revenue INR 3.6Cr",
     },
   ];
 
@@ -269,7 +294,7 @@ export const downloadInvestorBriefPdf = async ({
   );
   writeWrappedText(
     pdf,
-    `Scalability Forecast: every ${Math.round(summary.unitEconomics.scalabilityNewWorkers)} additional workers expand net margin by ${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization. Delta Profit = (New Workers x Efficiency Gain) x Current Margin, which currently adds ${formatCompactInr(summary.unitEconomics.scalabilityDeltaProfit)} monthly and ${formatCompactInr(summary.unitEconomics.scalabilityDeltaProfitAnnualized)} annualized.`,
+    `Scalability Forecast: every ${Math.round(summary.unitEconomics.scalabilityNewWorkers)} additional workers expand net margin by ${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization. Delta Profit = (New Workers x Efficiency Gain) x Current Margin, which currently adds ${formatCompactInrAscii(summary.unitEconomics.scalabilityDeltaProfit)} monthly and ${formatCompactInrAscii(summary.unitEconomics.scalabilityDeltaProfitAnnualized)} annualized.`,
     margin + 4,
     cursorY + 22.5,
     contentWidth - 8,
@@ -283,7 +308,7 @@ export const downloadInvestorBriefPdf = async ({
     cursorY + 45,
   );
   pdf.text(
-    `${marketPathLabel} | Regional Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | Revenue ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}% | ROI ${assetYield.roi12m.toFixed(0)}% | +${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% / 100 workers`,
+    `${marketPathLabel} | Regional Budget ${formatCompactInrAscii(summary.unitEconomics.regionalEntryBudget)} | Revenue ${formatCompactInrAscii(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}% | ROI ${summary.unitEconomics.roi12m.toFixed(0)}% | +${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% / 100 workers`,
     margin + 40,
     cursorY + 45,
   );

@@ -49,6 +49,7 @@ export interface SystemInsightsSummary {
     recommendedExpansionCity: string;
     density: number;
     surgeZones: string[];
+    underservedSector: string | null;
     cityTier: "pilot" | "tier_1" | "tier_2" | "tier_3" | "international";
     isExistingMarket: boolean;
   };
@@ -128,6 +129,17 @@ type ScalabilityProfile = {
 const AGRA_CITY_ID = "agra";
 const AGRA_CITY_NAME = "agra";
 const SCALABILITY_NEW_WORKER_BLOCK = 100;
+const UNDERSERVED_SECTOR_HINTS: Record<string, string> = {
+  agra: "Sikandra",
+  amritsar: "Ranjit Avenue",
+  chandigarh: "Manimajra",
+  lucknow: "Gomti Nagar",
+  ludhiana: "Sarabha Nagar",
+  "new-delhi": "Dwarka Sector 21",
+  noida: "Sector 62",
+  "north-delhi": "Burari",
+  "south-delhi": "Vasant Kunj",
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const roundTo = (value: number, digits = 2) => Number(value.toFixed(digits));
@@ -406,6 +418,23 @@ const buildSurgeZones = ({
   return [`${cityLabel} Core`, zoneLabel].filter((value, index, array) => array.indexOf(value) === index);
 };
 
+const resolveUnderservedSector = ({
+  citySlug,
+  surgeZones,
+  zoneLabel,
+}: {
+  citySlug: string;
+  surgeZones: string[];
+  zoneLabel: string;
+}) => {
+  const hintedSector = UNDERSERVED_SECTOR_HINTS[citySlug];
+  if (hintedSector) {
+    return hintedSector;
+  }
+
+  return surgeZones.find((zone) => zone !== zoneLabel) || surgeZones[0] || zoneLabel || null;
+};
+
 const deriveCriticalIssueCodes = ({
   stats,
   activeWorkerRate,
@@ -483,6 +512,13 @@ export const buildSystemInsightsSummary = ({
     * revenueProfile.jobsPerWorkerPerMonth
     * revenueProfile.commissionPerJob
     * 12;
+  const surgeZones = buildSurgeZones({
+    citySlug: marketIdentity.citySlug,
+    cityLabel: marketIdentity.city,
+    zoneLabel: marketIdentity.zone,
+    routeZoneId,
+    districtSlug,
+  });
   const projectedMonthlyJobsRunRate = deriveProjectedMonthlyJobsRunRate({
     sevenDayBookings,
     completedBookings: Number(investorSummary?.completedJobs ?? stats.completedBookings ?? 0),
@@ -513,6 +549,11 @@ export const buildSystemInsightsSummary = ({
   const criticalBugCount = criticalIssueCodes.filter((code) => (
     ADMIN_ISSUE_SEVERITY_WEIGHT[code] >= ADMIN_ISSUE_SEVERITY_WEIGHT.ASSIGNMENT_TIMEOUT
   )).length;
+  const underservedSector = resolveUnderservedSector({
+    citySlug: marketIdentity.citySlug,
+    surgeZones,
+    zoneLabel: marketIdentity.zone,
+  });
 
   return {
     marketMetrics: {
@@ -524,13 +565,8 @@ export const buildSystemInsightsSummary = ({
       marketLabel: `${marketIdentity.city}, ${marketIdentity.state}`,
       recommendedExpansionCity: buildExpansionCity(marketIdentity.city, marketIdentity.isExistingMarket),
       density,
-      surgeZones: buildSurgeZones({
-        citySlug: marketIdentity.citySlug,
-        cityLabel: marketIdentity.city,
-        zoneLabel: marketIdentity.zone,
-        routeZoneId,
-        districtSlug,
-      }),
+      surgeZones,
+      underservedSector,
       cityTier: marketIdentity.cityTier,
       isExistingMarket: marketIdentity.isExistingMarket,
     },
@@ -588,6 +624,7 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
   const regionalBudgetLabel = formatCompactInrAscii(regionalEntryBudget);
   const revenuePotentialLabel = formatCompactInrAscii(projectedFirstYearRevenue);
   const scalabilityDeltaLabel = formatCompactInrAscii(scalabilityDeltaProfit);
+  const underservedSector = summary.marketMetrics.underservedSector || surgeZone;
 
   return [
     {
@@ -635,8 +672,8 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Revenue Potential",
       tone: "emerald",
       actionLabel: "Open Revenue",
-      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture, a ${roi12m.toFixed(0)}% projected 12-month ROI, and a ${paybackDays}-day payback period. Explain the burn-to-scale ratio, launch mode, and the unit-economic multiplier using Delta Profit = (New Workers x Efficiency Gain) x Current Margin. Use ${scalabilityNewWorkers} new workers, an efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%, and quantify the uplift as INR ${scalabilityDeltaProfit.toLocaleString("en-IN")} monthly and INR ${scalabilityDeltaProfitAnnualized.toLocaleString("en-IN")} annualized. Also explain how the teal moat identifies captured neighborhoods in ${city}.`,
-      insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% capture | ${roi12m.toFixed(0)}% ROI | Delta +${scalabilityDeltaLabel}/mo`,
+      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture, a ${roi12m.toFixed(0)}% projected 12-month ROI, and a ${paybackDays}-day payback period. Explain the burn-to-scale ratio, launch mode, and the unit-economic multiplier using Delta Profit = (New Workers x Efficiency Gain) x Current Margin. Use ${scalabilityNewWorkers} new workers, an efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%, and quantify the uplift as INR ${scalabilityDeltaProfit.toLocaleString("en-IN")} monthly and INR ${scalabilityDeltaProfitAnnualized.toLocaleString("en-IN")} annualized. Also identify ${underservedSector} as the strongest underserved sector and explain how the teal moat identifies captured neighborhoods in ${city}.`,
+      insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% capture | ${roi12m.toFixed(0)}% ROI | Underserved ${underservedSector} | Delta +${scalabilityDeltaLabel}/mo`,
     },
   ];
 };

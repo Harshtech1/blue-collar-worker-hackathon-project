@@ -337,7 +337,10 @@ const buildNavigationAnnouncement = (
       healthSnapshot: context.healthSnapshot,
       investorSummary: context.investorSummary,
     });
-    return `War Room is live for ${targetZone.zoneLabel}. Market density is ${targetSystemSummary.marketMetrics.density.toFixed(2)} and the strongest launch lane is ${targetSystemSummary.marketMetrics.recommendedExpansionCity}.`;
+    const underservedSector = targetSystemSummary.marketMetrics.underservedSector
+      || targetSystemSummary.marketMetrics.surgeZones[0]
+      || targetZone.zoneLabel;
+    return `War Room is live for ${targetZone.zoneLabel}. Market density is ${targetSystemSummary.marketMetrics.density.toFixed(2)}, the strongest launch lane is ${targetSystemSummary.marketMetrics.recommendedExpansionCity}, and the cleanest underserved sector is ${underservedSector}.`;
   }
 
   if (route.startsWith(buildObservabilityPath("system-health"))) {
@@ -434,8 +437,11 @@ const buildLocalCopilotResponse = (
     const scalabilityNewWorkers = Math.round(systemSummary.unitEconomics.scalabilityNewWorkers || 100);
     const scalabilityDeltaProfit = Math.round(systemSummary.unitEconomics.scalabilityDeltaProfit || 0);
     const scalabilityDeltaProfitAnnualized = Math.round(systemSummary.unitEconomics.scalabilityDeltaProfitAnnualized || 0);
+    const underservedSector = systemSummary.marketMetrics.underservedSector
+      || systemSummary.marketMetrics.surgeZones[0]
+      || summary.currentCity;
     return {
-      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture and a ${systemSummary.unitEconomics.paybackDays}-day payback period. The scalability multiplier is Delta Profit = (New Workers x Efficiency Gain) x Current Margin. For the next ${scalabilityNewWorkers} workers, that adds about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit and ${formatCompactCurrency(scalabilityDeltaProfitAnnualized)} annualized while burn-to-scale stays at ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x.`,
+      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture, ${systemSummary.unitEconomics.roi12m.toFixed(0)}% projected 12-month ROI, and a ${systemSummary.unitEconomics.paybackDays}-day payback period. The strongest underserved sector is ${underservedSector}, where demand is rising without dense competitor pressure. The scalability multiplier is Delta Profit = (New Workers x Efficiency Gain) x Current Margin. For the next ${scalabilityNewWorkers} workers, that adds about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit and ${formatCompactCurrency(scalabilityDeltaProfitAnnualized)} annualized while burn-to-scale stays at ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x.`,
       navigationTarget: null,
       navigationReason: null,
       auditHighlights: highlights,

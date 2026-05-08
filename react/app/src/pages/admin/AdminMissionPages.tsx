@@ -172,7 +172,7 @@ const formatViewportLabelSafe = ({ label, lat, lng }: ZoneViewport) => {
 const getMapStyleLabel = (mapStyle: AdminMapStyle) => (
   mapStyle === "road"
     ? "Standard Road"
-    : "Operational Satellite"
+    : "Satellite"
 );
 
 type ProjectedAssetYieldSnapshot = {
@@ -420,9 +420,11 @@ export function AdminOverviewPage() {
           postureLabel={overviewSummary.marketMetrics.isExistingMarket ? "Pilot Proof of Concept" : "Expansion Readiness"}
           assetYield={overviewAssetYield}
           paybackDays={overviewSummary.unitEconomics.paybackDays}
+          roi12m={overviewSummary.unitEconomics.roi12m}
           yieldPerJob={yieldSnapshot.netProfitPerJob}
           projectedRevenue={overviewSummary.unitEconomics.projectedFirstYearRevenue}
           marketShareCapture={overviewSummary.unitEconomics.marketShareCapture}
+          marginExpansionPer100Workers={overviewSummary.unitEconomics.marginExpansionPer100Workers}
           scalabilityDeltaProfit={overviewSummary.unitEconomics.scalabilityDeltaProfit}
           scalabilityNewWorkers={overviewSummary.unitEconomics.scalabilityNewWorkers}
         />
@@ -918,6 +920,7 @@ export function AdminWarRoomPage() {
     stats,
     activeWorkerRate,
     averageTicket,
+    sevenDayBookings,
     globalUptime,
     llmMode,
     healthSnapshot,
@@ -925,6 +928,7 @@ export function AdminWarRoomPage() {
   }), [
     activeWorkerRate,
     averageTicket,
+    sevenDayBookings,
     globalUptime,
     healthSnapshot,
     investorSummary,
@@ -1058,6 +1062,24 @@ export function AdminWarRoomPage() {
             </SuitePanel>
 
             <SuitePanel
+              eyebrow="Revenue Dominance"
+              title={`${selectedCityLabel} economic moat`}
+              description="Year-one upside, capture, and ROI stay visible beside the map so the investor story lands without leaving the command surface."
+              icon={DollarSign}
+              surface="flat"
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <MetricTile label="Year-1 revenue" value={formatCompactInr(warRoomSummary.unitEconomics.projectedFirstYearRevenue)} tone="emerald" />
+                <MetricTile label="Market share" value={`${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}%`} tone="navy" />
+                <MetricTile label="Projected ROI" value={`${warRoomSummary.unitEconomics.roi12m.toFixed(0)}%`} tone="sky" />
+                <MetricTile label="Margin / 100 workers" value={`+${warRoomSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}%`} tone="amber" />
+              </div>
+              <p className="mt-4 rounded-[12px] border border-teal-100 bg-teal-50/70 px-4 py-4 text-sm leading-6 text-teal-900">
+                The teal moat on the map mirrors this forecast by highlighting captured neighborhoods where density, trust coverage, and worker concentration are already creating defensibility.
+              </p>
+            </SuitePanel>
+
+            <SuitePanel
               eyebrow={marketContextLabel}
               title="Market brief"
               description="Professional guidance should feel like a market memo, not a terminal dump."
@@ -1187,15 +1209,15 @@ export function AdminWarRoomPage() {
                 Executive expansion read
               </h3>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <MetricTile label="7D revenue" value={`INR ${sevenDayRevenue.toLocaleString("en-IN")}`} tone="navy" />
-                <MetricTile label="Platform yield" value={`INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")}`} tone={yieldSnapshot.netProfitPerJob >= 0 ? "emerald" : "amber"} />
-                <MetricTile label="Active fleet" value={`${activeWorkerRate}%`} tone="emerald" />
-                <MetricTile label="Cloud status" value={llmMode === "ready" ? "Ready" : "Fallback"} tone={llmMode === "ready" ? "sky" : "amber"} />
+                <MetricTile label="Year-1 revenue" value={formatCompactInr(warRoomSummary.unitEconomics.projectedFirstYearRevenue)} tone="emerald" />
+                <MetricTile label="Market capture" value={`${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}%`} tone="navy" />
+                <MetricTile label="Projected ROI" value={`${warRoomSummary.unitEconomics.roi12m.toFixed(0)}%`} tone="sky" />
+                <MetricTile label="Margin / 100 workers" value={`+${warRoomSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}%`} tone="amber" />
               </div>
               <div className="mt-4 space-y-3">
-                <FeedItem tag="Narrative" tone="navy" message={`${zoneLabel} is ready for the map -> yield -> expansion story without exposing the low-level audit stream.`} />
-                <FeedItem tag="Economics" tone="amber" message={`Current platform yield is INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")} per job with pending payouts at INR ${pendingPayouts.toLocaleString("en-IN")}.`} />
-                <FeedItem tag="Expansion" tone="emerald" message="Use the market selector to pressure-test the next launch city once the current market baseline is stable." />
+                <FeedItem tag="Narrative" tone="navy" message={`${zoneLabel} is ready for the map -> revenue -> moat story without exposing the low-level audit stream.`} />
+                <FeedItem tag="Economics" tone="amber" message={`${selectedCityLabel} is modeled at ${warRoomSummary.unitEconomics.roi12m.toFixed(0)}% 12-month ROI with ${Math.round(warRoomSummary.unitEconomics.marketShareCapture)}% capture and INR ${yieldSnapshot.netProfitPerJob.toLocaleString("en-IN")} platform yield per job.`} />
+                <FeedItem tag="Expansion" tone="emerald" message={`Use the teal moat to show where ${selectedCityLabel} is already defensible, then switch cities from the market selector to pressure-test the next launch lane.`} />
               </div>
             </div>
           ) : (
@@ -1460,6 +1482,7 @@ export function AdminFinancePage() {
     stats,
     activeWorkerRate,
     averageTicket,
+    sevenDayBookings,
     globalUptime,
     llmMode,
     healthSnapshot,
@@ -1467,6 +1490,7 @@ export function AdminFinancePage() {
   }), [
     activeWorkerRate,
     averageTicket,
+    sevenDayBookings,
     globalUptime,
     healthSnapshot,
     investorSummary,
@@ -1500,6 +1524,7 @@ export function AdminFinancePage() {
     stats,
     activeWorkerRate,
     averageTicket,
+    sevenDayBookings,
     globalUptime,
     llmMode,
     healthSnapshot,
@@ -1508,6 +1533,7 @@ export function AdminFinancePage() {
     activeWorkerRate,
     averageTicket,
     financeAreaLabel,
+    sevenDayBookings,
     globalUptime,
     healthSnapshot,
     investorSummary,
@@ -1575,9 +1601,11 @@ export function AdminFinancePage() {
           postureLabel={financeSummary.marketMetrics.isExistingMarket ? "Pilot Asset Yield" : "Shadow Launch Asset Yield"}
           assetYield={financeAssetYield}
           paybackDays={financeSummary.unitEconomics.paybackDays}
+          roi12m={financeSummary.unitEconomics.roi12m}
           yieldPerJob={netProfitPerJob}
           projectedRevenue={financeSummary.unitEconomics.projectedFirstYearRevenue}
           marketShareCapture={financeSummary.unitEconomics.marketShareCapture}
+          marginExpansionPer100Workers={financeSummary.unitEconomics.marginExpansionPer100Workers}
           scalabilityDeltaProfit={financeSummary.unitEconomics.scalabilityDeltaProfit}
           scalabilityNewWorkers={financeSummary.unitEconomics.scalabilityNewWorkers}
         />
@@ -1701,9 +1729,9 @@ export function AdminFinancePage() {
           icon={Globe2}
         >
           <div className="space-y-3">
-            <FeedItem tag="Margin" tone="emerald" message="Commission is locked at 8 percent, which keeps revenue logic clean and explainable." />
-            <FeedItem tag="Acquisition" tone="amber" message="Modeled marketing cost is separated from incentives so CAC pressure is visible, not buried." />
-            <FeedItem tag="Cash" tone="sky" message="Pending payouts remain visible on the same route, which keeps liquidity risk tied to growth." />
+            <FeedItem tag="Revenue" tone="emerald" message={`${selectedCityLabel} is modeled for ${formatCompactInr(financeSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${Math.round(financeSummary.unitEconomics.marketShareCapture)}% share capture.`} />
+            <FeedItem tag="Multiplier" tone="sky" message={`Every 100 additional workers expand margin by ${financeSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}%, which keeps scale economics improving instead of flattening.`} />
+            <FeedItem tag="Cash" tone="amber" message={`Regional entry budget is ${formatCompactInr(financeSummary.unitEconomics.regionalEntryBudget)} and modeled 12-month ROI lands at ${financeSummary.unitEconomics.roi12m.toFixed(0)}% while pending payouts stay visible at INR ${pendingPayouts.toLocaleString("en-IN")}.`} />
           </div>
         </SuitePanel>
       </section>
@@ -2423,12 +2451,12 @@ function ExecutiveInvestorBrief({
     {
       city: "Chandigarh",
       stage: "Shadow Launch",
-      note: `Freelancer-first expansion with projected CAC ${formatInr(summary.unitEconomics.cacProjected)}, ${summary.unitEconomics.paybackDays}-day payback, and projected 12-month asset yield of ${assetYield.roi12m.toFixed(0)}%.`,
+      note: `Freelancer-first expansion with projected CAC ${formatInr(summary.unitEconomics.cacProjected)}, ${summary.unitEconomics.paybackDays}-day payback, ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} Year-1 revenue, and ${summary.unitEconomics.roi12m.toFixed(0)}% projected 12-month ROI.`,
     },
     {
       city: "New Delhi",
       stage: "Tier-1 Reserve",
-      note: "Enter only after Chandigarh trust coverage and margin discipline remain above target thresholds.",
+      note: `Enter after Tier-2 trust coverage holds. Tier-1 reserve case carries ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} revenue potential with ${summary.unitEconomics.marketShareCapture}% modeled market capture.`,
     },
   ];
 
@@ -2454,7 +2482,7 @@ function ExecutiveInvestorBrief({
 
             <div className="rounded-[22px] border border-[#0F172A] bg-[#0F172A] px-5 py-4 text-right text-white">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Projected 12M yield</p>
-              <p className="mt-2 text-3xl font-black">{assetYield.roi12m.toFixed(0)}%</p>
+              <p className="mt-2 text-3xl font-black">{summary.unitEconomics.roi12m.toFixed(0)}%</p>
               <p className="mt-1 text-xs font-semibold text-slate-200">
                 {formatInr(assetYield.monthlyNetProfit)} monthly net profit run-rate
               </p>
@@ -2511,7 +2539,7 @@ function ExecutiveInvestorBrief({
                 <BriefMetric label="Market share capture" value={`${Math.round(summary.unitEconomics.marketShareCapture)}%`} tone="navy" />
               </div>
               <p className="mt-4 text-sm leading-7 text-slate-700">
-                ROI_12m = ((Monthly Net Profit x 12) - Regional Entry Budget) / Regional Entry Budget. Current modeled output lands at <span className="font-black text-[#0F172A]">{assetYield.roi12m.toFixed(0)}%</span>.
+                ROI_12m = ((Monthly Net Profit x 12) - Regional Entry Budget) / Regional Entry Budget. Current modeled output lands at <span className="font-black text-[#0F172A]">{summary.unitEconomics.roi12m.toFixed(0)}%</span>.
               </p>
               <p className="mt-2 text-sm leading-7 text-slate-700">
                 Delta Profit = ({Math.round(summary.unitEconomics.scalabilityNewWorkers)} new workers x {(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}% efficiency gain) x current margin. That creates about <span className="font-black text-[#0F172A]">{formatCompactInr(summary.unitEconomics.scalabilityDeltaProfit)}</span> in extra monthly profit and <span className="font-black text-[#0F172A]">{formatCompactInr(summary.unitEconomics.scalabilityDeltaProfitAnnualized)}</span> annualized.
@@ -2620,9 +2648,11 @@ function ProjectedAssetYieldHero({
   postureLabel,
   assetYield,
   paybackDays,
+  roi12m,
   yieldPerJob,
   projectedRevenue,
   marketShareCapture,
+  marginExpansionPer100Workers,
   scalabilityDeltaProfit,
   scalabilityNewWorkers,
 }: {
@@ -2630,9 +2660,11 @@ function ProjectedAssetYieldHero({
   postureLabel: string;
   assetYield: ProjectedAssetYieldSnapshot;
   paybackDays: number;
+  roi12m: number;
   yieldPerJob: number;
   projectedRevenue: number;
   marketShareCapture: number;
+  marginExpansionPer100Workers: number;
   scalabilityDeltaProfit: number;
   scalabilityNewWorkers: number;
 }) {
@@ -2644,10 +2676,10 @@ function ProjectedAssetYieldHero({
             Projected 12-Month Asset Yield
           </p>
           <h2 className="mt-2 text-[1.55rem] font-black tracking-tight text-[#0F172A]">
-            {assetYield.roi12m.toFixed(0)}% projected ROI with disciplined CAC recovery.
+            {roi12m.toFixed(0)}% projected ROI with disciplined CAC recovery.
           </h2>
           <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-            Pitch Mode converts current job flow into an investor-safe annualized view. The model uses live platform yield, current flow, and regional entry budget to keep the narrative grounded in unit economics instead of vanity growth.
+            Pitch Mode converts current job flow into an investor-safe annualized view. The model keeps Year-1 revenue, market capture, and the unit-economic multiplier visible beside CAC recovery so the narrative stays grounded in durable economics instead of vanity growth.
           </p>
         </div>
 
@@ -2675,7 +2707,7 @@ function ProjectedAssetYieldHero({
         ROI_12m = ((Monthly Net Profit x 12) - Regional Entry Budget) / Regional Entry Budget
       </p>
       <p className="mt-2 text-sm leading-7 text-slate-600">
-        Delta Profit = ({scalabilityNewWorkers} new workers x 4.2% efficiency gain) x current margin. Current modeled uplift lands near <span className="font-black text-[#0F172A]">{formatCompactInr(scalabilityDeltaProfit)}</span> in monthly profit.
+        Delta Profit = ({scalabilityNewWorkers} new workers x {marginExpansionPer100Workers.toFixed(1)}% efficiency gain) x current margin. Current modeled uplift lands near <span className="font-black text-[#0F172A]">{formatCompactInr(scalabilityDeltaProfit)}</span> in monthly profit.
       </p>
     </section>
   );

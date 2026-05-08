@@ -1571,6 +1571,18 @@ const buildSystemInsightsFallback = (input) => {
           ? `Shadow Launch (Freelancer-First) | Projected CAC: ₹${cacProjected} | Payback: ${paybackDays} Days`
           : `Agra pilot first: protect the core and export the playbook only after payback stays inside ${paybackDays} days.`,
       },
+      {
+        id: "expansion_budget",
+        title: "Expansion Budget",
+        insight: city.trim().toLowerCase() !== "agra"
+          ? `${launchMode} budget: ${budgetLabel} across ${marketCapacity} worker slots with burn-to-scale at ${burnToScaleRatio.toFixed(2)}x CAC.`
+          : `Keep expansion reserve near ${budgetLabel} and release it only after Agra payback remains inside ${paybackDays} days.`,
+      },
+      {
+        id: "revenue_potential",
+        title: "Revenue Potential",
+        insight: `${city}: ${revenueLabel} Year-1 revenue | ${marketShareCapture}% market capture | +${marginExpansionPer100Workers.toFixed(1)}% margin / ${scalabilityNewWorkers} workers | Delta Profit +${deltaProfitLabel}/mo | ${launchMode}`,
+      },
     ],
   };
 };

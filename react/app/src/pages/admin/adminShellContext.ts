@@ -86,7 +86,7 @@ export interface AdminActivityEntry {
   role?: string;
 }
 
-export type AdminMapStyle = "road" | "satellite" | "night-ops";
+export type AdminMapStyle = "road" | "terrain" | "high-contrast" | "satellite" | "night-ops";
 
 export interface AdminActiveMarket {
   cityId: string;
