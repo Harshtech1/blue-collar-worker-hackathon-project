@@ -64,6 +64,8 @@ export interface SystemInsightsSummary {
     launchMode: string;
     projectedFirstYearRevenue: number;
     marketShareCapture: number;
+    marginExpansionPer100Workers: number;
+    operationalEfficiencyGain: number;
   };
   systemHealth: {
     criticalBugs: number;
@@ -109,6 +111,11 @@ type RevenueProjectionProfile = {
   jobsPerWorkerPerMonth: number;
   commissionPerJob: number;
   marketShareCapture: number;
+};
+
+type ScalabilityProfile = {
+  marginExpansionPer100Workers: number;
+  operationalEfficiencyGain: number;
 };
 
 const AGRA_CITY_ID = "agra";
@@ -277,6 +284,11 @@ const getRevenueProjectionProfile = (cityTier: MarketIdentity["cityTier"]): Reve
   };
 };
 
+const getScalabilityProfile = (_cityTier: MarketIdentity["cityTier"]): ScalabilityProfile => ({
+  marginExpansionPer100Workers: 4.2,
+  operationalEfficiencyGain: 0.042,
+});
+
 const deriveProjectedCac = (
   isNonAgraMarket: boolean,
   marketIdentity: MarketIdentity,
@@ -431,6 +443,7 @@ export const buildSystemInsightsSummary = ({
   const isNonAgraMarket = marketIdentity.city.trim().toLowerCase() !== AGRA_CITY_NAME;
   const budgetProfile = getRegionalBudgetProfile(marketIdentity.cityTier, marketIdentity.isExistingMarket);
   const revenueProfile = getRevenueProjectionProfile(marketIdentity.cityTier);
+  const scalabilityProfile = getScalabilityProfile(marketIdentity.cityTier);
   const availableWorkers = Math.max(1, Math.round(stats.totalWorkers * (Math.max(activeWorkerRate, 1) / 100)));
   const density = roundTo(clamp(stats.activeBookings / availableWorkers, 0.35, 2.8));
   const yieldPerJob = deriveYieldPerJob(investorSummary, averageTicket);
@@ -489,6 +502,8 @@ export const buildSystemInsightsSummary = ({
       launchMode: budgetProfile.launchMode,
       projectedFirstYearRevenue,
       marketShareCapture: revenueProfile.marketShareCapture,
+      marginExpansionPer100Workers: scalabilityProfile.marginExpansionPer100Workers,
+      operationalEfficiencyGain: scalabilityProfile.operationalEfficiencyGain,
     },
     systemHealth: {
       criticalBugs: criticalBugCount,
@@ -515,6 +530,7 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
   const burnToScaleRatio = Number(summary.unitEconomics.burnToScaleRatio || 0);
   const projectedFirstYearRevenue = Math.round(summary.unitEconomics.projectedFirstYearRevenue || 0);
   const marketShareCapture = Math.round(summary.unitEconomics.marketShareCapture || 12);
+  const marginExpansionPer100Workers = Number(summary.unitEconomics.marginExpansionPer100Workers || 4.2);
   const regionalBudgetLabel = formatCompactInrAscii(regionalEntryBudget);
   const revenuePotentialLabel = formatCompactInrAscii(projectedFirstYearRevenue);
 
@@ -564,8 +580,8 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Revenue Potential",
       tone: "emerald",
       actionLabel: "Open Revenue",
-      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture. Explain the burn-to-scale ratio, launch mode, and how this city becomes self-sustaining without breaking unit economics.`,
-      insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% market capture | ${summary.unitEconomics.launchMode}`,
+      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture. Explain the burn-to-scale ratio, launch mode, and how this city becomes self-sustaining without breaking unit economics. Also note that every 100 additional workers increase net margin by ${marginExpansionPer100Workers.toFixed(1)}% due to route optimization.`,
+      insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% market capture | +${marginExpansionPer100Workers.toFixed(1)}% margin / 100 workers`,
     },
   ];
 };

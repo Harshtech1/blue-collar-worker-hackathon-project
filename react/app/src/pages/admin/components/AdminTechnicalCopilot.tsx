@@ -71,6 +71,22 @@ const createMessageId = () => (
 );
 
 const formatCurrency = (value: number) => `INR ${Math.round(Number(value || 0)).toLocaleString("en-IN")}`;
+const formatCompactCurrency = (value: number) => {
+  const normalizedValue = Math.round(Number(value || 0));
+  if (normalizedValue >= 10000000) {
+    return `INR ${(normalizedValue / 10000000).toFixed(1)}Cr`;
+  }
+
+  if (normalizedValue >= 100000) {
+    return `INR ${(normalizedValue / 100000).toFixed(1)}L`;
+  }
+
+  if (normalizedValue >= 1000) {
+    return `INR ${Math.round(normalizedValue / 1000)}K`;
+  }
+
+  return formatCurrency(normalizedValue);
+};
 
 const isAdminSafeRoute = (route: string | null | undefined) => (
   typeof route === "string" && route.startsWith(ADMIN_ROUTE_PREFIX)
@@ -345,6 +361,20 @@ const buildLocalCopilotResponse = (
   const highlights = collectLocalHighlights(message, context);
   const hasUploadsReady = context.healthSnapshot?.media?.secureUploadsReady === true;
   const summary = buildCopilotSummary(context, currentRoute);
+  const systemSummary = buildSystemInsightsSummary({
+    routeZoneId: context.routeZoneId,
+    zoneLabel: context.zoneLabel,
+    stateSlug: context.selectedStateSlug,
+    citySlug: context.selectedCitySlug,
+    districtSlug: context.selectedDistrictId,
+    stats: context.stats,
+    activeWorkerRate: context.activeWorkerRate,
+    averageTicket: context.averageTicket,
+    globalUptime: context.globalUptime,
+    llmMode: context.llmMode,
+    healthSnapshot: context.healthSnapshot,
+    investorSummary: context.investorSummary,
+  });
   const paymentIssue = ADMIN_OBSERVABILITY_ISSUES.find((issue) => issue.code === "PAYMENT_FAILURE");
   const criticalBugCount = summary.systemHealth.criticalBugCount;
 
@@ -396,6 +426,16 @@ const buildLocalCopilotResponse = (
       navigationTarget: buildObservabilityPath("bug-monitor"),
       navigationReason: "Opening the highest-impact observability rail for payment recovery.",
       auditHighlights: highlights.length > 0 ? highlights : [`[PAYMENTS] ${paymentIssue.message}`],
+      confidence: "high",
+    };
+  }
+
+  if (/revenue potential|year[- ]?1 revenue|market share|burn-to-scale|scalability|margin multiplier|scale forecast/.test(query)) {
+    return {
+      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture. Burn-to-scale is currently ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x, and every 100 additional workers improve net margin by ${systemSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization.`,
+      navigationTarget: null,
+      navigationReason: null,
+      auditHighlights: highlights,
       confidence: "high",
     };
   }

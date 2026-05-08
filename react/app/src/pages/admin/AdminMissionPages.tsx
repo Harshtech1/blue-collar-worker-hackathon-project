@@ -39,7 +39,7 @@ import {
   OBSERVABILITY_PANEL_LABELS,
   type AdminObservabilityPanel,
 } from "./adminRoutes";
-import { useAdminShellContext } from "./adminShellContext";
+import { type AdminMapStyle, useAdminShellContext } from "./adminShellContext";
 import { ADMIN_ISSUE_SEVERITY_WEIGHT, ADMIN_OBSERVABILITY_ISSUES, type ObservabilityIssue } from "./adminSignals";
 import { buildMarketGeoConfig, getMarketDistrictsForCity, listMarketCities, listMarketStates, listStateReadiness } from "./marketRegistry";
 import { downloadInvestorBriefPdf } from "./utils/investorBriefPdf";
@@ -151,6 +151,14 @@ const formatViewportLabelSafe = ({ label, lat, lng }: ZoneViewport) => {
   return `VIEWPORT: ${label.toUpperCase()} // ${Math.abs(lat).toFixed(4)} deg ${latSuffix}, ${Math.abs(lng).toFixed(4)} deg ${lngSuffix}`;
 };
 
+const getMapStyleLabel = (mapStyle: AdminMapStyle) => (
+  mapStyle === "road"
+    ? "Standard Road"
+    : mapStyle === "satellite"
+      ? "Operational Satellite"
+      : "Night Ops"
+);
+
 type ProjectedAssetYieldSnapshot = {
   monthlyJobsRunRate: number;
   monthlyNetProfit: number;
@@ -241,6 +249,7 @@ export function AdminOverviewPage() {
     sevenDayBookings,
     investorSummary,
     mapStyle,
+    marketSnapshot,
     onSelectMapStyle,
     onNavigateTab,
     onSelectMarketCity,
@@ -260,6 +269,8 @@ export function AdminOverviewPage() {
     Number(entry.bookings || 0) > highest ? Number(entry.bookings || 0) : highest
   ), 0);
   const verifiedWorkers = useMemo(() => countVerifiedWorkers(workersList), [workersList]);
+  const selectedMarketStats = marketSnapshot?.stats || null;
+  const activeAreaLabel = marketSnapshot?.market.regionLabel || marketSnapshot?.market.cityLabel || zoneLabel;
   const verifiedWorkerRate = useMemo(() => (
     Math.round((verifiedWorkers / Math.max(1, stats.totalWorkers || workersList.length || 1)) * 100)
   ), [verifiedWorkers, stats.totalWorkers, workersList.length]);
@@ -297,10 +308,11 @@ export function AdminOverviewPage() {
     zoneLabel,
   ]);
   const executiveBriefSummary = useMemo(() => buildSystemInsightsSummary({
-    routeZoneId: DEFAULT_WAR_ROOM_MARKET.citySlug,
-    zoneLabel: "Agra Cantt",
-    stateSlug: DEFAULT_WAR_ROOM_MARKET.stateSlug,
-    citySlug: DEFAULT_WAR_ROOM_MARKET.citySlug,
+    routeZoneId,
+    zoneLabel: activeAreaLabel,
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtSlug: selectedDistrictId,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -309,17 +321,22 @@ export function AdminOverviewPage() {
     healthSnapshot,
     investorSummary,
   }), [
+    activeAreaLabel,
     activeWorkerRate,
     averageTicket,
     globalUptime,
     healthSnapshot,
     investorSummary,
     llmMode,
+    routeZoneId,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedStateSlug,
     stats,
   ]);
   const executiveViewport = useMemo(
-    () => getZoneViewport(DEFAULT_WAR_ROOM_MARKET.citySlug, "Agra Cantt"),
-    [],
+    () => getZoneViewport(routeZoneId, activeAreaLabel),
+    [activeAreaLabel, routeZoneId],
   );
   const overviewAssetYield = useMemo(() => getProjectedAssetYieldSnapshot({
     netProfitPerJob: yieldSnapshot.netProfitPerJob,
@@ -516,11 +533,13 @@ export function AdminOverviewPage() {
                 routeZoneId={routeZoneId}
                 selectedMarket={selectedMarket.city}
                 selectedDistrictId={selectedDistrictId}
+                marketSnapshot={marketSnapshot}
                 workers={workersList}
                 bookings={bookingsList}
                 variant="lite"
                 mapStyleMode={mapStyle}
                 onMapStyleChange={onSelectMapStyle}
+                pitchMode={pitchMode}
                 className="h-full min-h-[450px]"
               />
             </div>
@@ -535,10 +554,10 @@ export function AdminOverviewPage() {
                 </p>
               </div>
 
-              <MetricTile label="Active area" value={zoneLabel} tone="navy" />
-              <MetricTile label="Live jobs" value={stats.activeBookings.toLocaleString("en-IN")} tone="sky" />
-              <MetricTile label="Worker fleet" value={stats.totalWorkers.toLocaleString("en-IN")} tone="emerald" />
-              <MetricTile label="Revenue lane" value={`INR ${stats.totalRevenue.toLocaleString("en-IN")}`} tone="amber" />
+              <MetricTile label="Active area" value={activeAreaLabel} tone="navy" />
+              <MetricTile label="Live jobs" value={Number(selectedMarketStats?.activeJobs ?? stats.activeBookings).toLocaleString("en-IN")} tone="sky" />
+              <MetricTile label="Worker fleet" value={Number(selectedMarketStats?.workerCount ?? stats.totalWorkers).toLocaleString("en-IN")} tone="emerald" />
+              <MetricTile label="Revenue lane" value={`INR ${Number(selectedMarketStats?.revenue ?? stats.totalRevenue).toLocaleString("en-IN")}`} tone="amber" />
 
               <div className="rounded-[22px] border border-slate-200 bg-white p-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -713,6 +732,7 @@ export function AdminOverviewPage() {
             yieldSnapshot={yieldSnapshot}
             assetYield={executiveAssetYield}
             viewportLabel={formatViewportLabelSafe(executiveViewport)}
+            marketLabel={zoneLabel}
             verifiedWorkers={verifiedWorkers}
             verifiedWorkerRate={verifiedWorkerRate}
             totalWorkers={stats.totalWorkers}
@@ -748,6 +768,7 @@ export function AdminWarRoomPage() {
     onSelectMarketCity,
     onSelectMarketDistrict,
     mapStyle,
+    marketSnapshot,
     onSelectMapStyle,
     selectedStateSlug,
     selectedStateLabel,
@@ -807,6 +828,8 @@ export function AdminWarRoomPage() {
     () => workersList.find((worker) => String(worker._id || worker.id || "").toLowerCase() === String(highlightedWorkerId || "").toLowerCase()) || null,
     [highlightedWorkerId, workersList],
   );
+  const selectedMarketStats = marketSnapshot?.stats || null;
+  const marketAreaLabel = marketSnapshot?.market.regionLabel || marketSnapshot?.market.cityLabel || zoneLabel;
 
   const handleWorkerSelect = (workerId: string) => {
     const next = new URLSearchParams(searchParams);
@@ -925,14 +948,10 @@ export function AdminWarRoomPage() {
 
             <div className="flex flex-wrap gap-2">
               <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-700">
-                {mapStyle === "satellite"
-                  ? "Operational Satellite"
-                  : mapStyle === "night-ops"
-                    ? "Night Ops"
-                    : "Standard Road"}
+                {getMapStyleLabel(mapStyle)}
               </div>
               <div className="rounded-full border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-700">
-                {selectedStateLabel} / {selectedCityLabel}
+                {selectedStateLabel} / {selectedCityLabel} / {marketAreaLabel}
               </div>
               <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
                 Fleet readiness {activeWorkerRate}%
@@ -949,12 +968,14 @@ export function AdminWarRoomPage() {
               routeZoneId={routeZoneId}
               selectedMarket={selectedMarket.city}
               selectedDistrictId={selectedDistrictId}
+              marketSnapshot={marketSnapshot}
               workers={workersList}
               bookings={bookingsList}
               onZoneSelect={onSelectWarRoomZone}
               highlightWorkerId={highlightedWorkerId}
               mapStyleMode={mapStyle}
               onMapStyleChange={onSelectMapStyle}
+              pitchMode={pitchMode}
               className="h-full"
             />
           </div>
@@ -991,8 +1012,8 @@ export function AdminWarRoomPage() {
             >
               <div className="grid gap-3 sm:grid-cols-2">
                 <MetricTile label="Users" value={stats.totalUsers.toLocaleString("en-IN")} tone="navy" />
-                <MetricTile label="Bookings" value={stats.totalBookings.toLocaleString("en-IN")} tone="sky" />
-                <MetricTile label="Workers" value={stats.totalWorkers.toLocaleString("en-IN")} tone="emerald" />
+                <MetricTile label="Bookings" value={Number(selectedMarketStats?.completedJobs ?? stats.totalBookings).toLocaleString("en-IN")} tone="sky" />
+                <MetricTile label="Workers" value={Number(selectedMarketStats?.workerCount ?? stats.totalWorkers).toLocaleString("en-IN")} tone="emerald" />
                 <MetricTile label="Avg ticket" value={`INR ${averageTicket.toLocaleString("en-IN")}`} tone="amber" />
               </div>
             </SuitePanel>
@@ -1370,6 +1391,9 @@ export function AdminFinancePage() {
     selectedStateSlug,
     selectedCitySlug,
     selectedDistrictId,
+    selectedStateLabel,
+    selectedCityLabel,
+    marketSnapshot,
     zoneLabel,
     activeWorkerRate,
     averageTicket,
@@ -1380,6 +1404,7 @@ export function AdminFinancePage() {
   } = useAdminShellContext();
   const investorBriefRef = useRef<HTMLDivElement | null>(null);
   const [isExportingInvestorBrief, setIsExportingInvestorBrief] = useState(false);
+  const financeAreaLabel = marketSnapshot?.market.regionLabel || marketSnapshot?.market.cityLabel || zoneLabel;
 
   const completed = bookingsList.filter((booking) => booking.status === "completed" && booking.total_price);
   const matchedOrInProgress = bookingsList.filter((booking) => booking.status === "in_progress" || booking.status === "matched");
@@ -1443,10 +1468,11 @@ export function AdminFinancePage() {
     stats.activeBookings,
   ]);
   const financeBriefSummary = useMemo(() => buildSystemInsightsSummary({
-    routeZoneId: DEFAULT_WAR_ROOM_MARKET.citySlug,
-    zoneLabel: "Agra Cantt",
-    stateSlug: DEFAULT_WAR_ROOM_MARKET.stateSlug,
-    citySlug: DEFAULT_WAR_ROOM_MARKET.citySlug,
+    routeZoneId,
+    zoneLabel: financeAreaLabel,
+    stateSlug: selectedStateSlug,
+    citySlug: selectedCitySlug,
+    districtSlug: selectedDistrictId,
     stats,
     activeWorkerRate,
     averageTicket,
@@ -1457,15 +1483,20 @@ export function AdminFinancePage() {
   }), [
     activeWorkerRate,
     averageTicket,
+    financeAreaLabel,
     globalUptime,
     healthSnapshot,
     investorSummary,
     llmMode,
+    routeZoneId,
+    selectedCitySlug,
+    selectedDistrictId,
+    selectedStateSlug,
     stats,
   ]);
   const financeExecutiveViewport = useMemo(
-    () => getZoneViewport(DEFAULT_WAR_ROOM_MARKET.citySlug, "Agra Cantt"),
-    [],
+    () => getZoneViewport(routeZoneId, financeAreaLabel),
+    [financeAreaLabel, routeZoneId],
   );
   const handleDownloadInvestorBrief = async () => {
     if (isExportingInvestorBrief) return;
@@ -1475,8 +1506,8 @@ export function AdminFinancePage() {
     try {
       await downloadInvestorBriefPdf({
         fileName: `Karigar-360-Investor-Scorecard-${new Date().toISOString().slice(0, 10)}.pdf`,
-        marketPathLabel: `Markets > ${selectedMarket.state.label} > ${selectedMarket.city.label}${selectedDistrictId ? ` > ${zoneLabel}` : ""}`,
-              viewportLabel: formatViewportLabelSafe(getZoneViewport(routeZoneId, zoneLabel)),
+        marketPathLabel: `Markets > ${selectedStateLabel} > ${selectedCityLabel}${selectedDistrictId ? ` > ${financeAreaLabel}` : ""}`,
+        viewportLabel: formatViewportLabelSafe(getZoneViewport(routeZoneId, financeAreaLabel)),
         summary: financeSummary,
         yieldSnapshot,
         assetYield: financeAssetYield,
@@ -1694,6 +1725,7 @@ export function AdminFinancePage() {
             yieldSnapshot={yieldSnapshot}
             assetYield={financeAssetYield}
             viewportLabel={formatViewportLabelSafe(financeExecutiveViewport)}
+            marketLabel={financeAreaLabel}
             verifiedWorkers={verifiedWorkers}
             verifiedWorkerRate={verifiedWorkerRate}
             totalWorkers={stats.totalWorkers}
@@ -2340,6 +2372,7 @@ function ExecutiveInvestorBrief({
   yieldSnapshot,
   assetYield,
   viewportLabel,
+  marketLabel,
   verifiedWorkers,
   verifiedWorkerRate,
   totalWorkers,
@@ -2348,14 +2381,15 @@ function ExecutiveInvestorBrief({
   yieldSnapshot: ReturnType<typeof getYieldSnapshot>;
   assetYield: ProjectedAssetYieldSnapshot;
   viewportLabel: string;
+  marketLabel: string;
   verifiedWorkers: number;
   verifiedWorkerRate: number;
   totalWorkers: number;
 }) {
   const expansionTimeline = [
     {
-      city: "Agra Cantt",
-      stage: "Pilot Base",
+      city: marketLabel,
+      stage: summary.marketMetrics.isExistingMarket ? "Active Market" : "Shadow Launch",
       note: `Density ${summary.marketMetrics.density.toFixed(2)} with yield ${formatInr(yieldSnapshot.netProfitPerJob)} per completed job.`,
     },
     {
@@ -2386,7 +2420,7 @@ function ExecutiveInvestorBrief({
                 12-month asset yield, expansion blueprint, and trust verification
               </h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
-                Boardroom-grade view of the Agra pilot, the Chandigarh shadow-launch math, and the verification rails protecting expansion quality.
+                Boardroom-grade view of the {marketLabel} operating baseline, the expansion payback math, and the verification rails protecting rollout quality.
               </p>
             </div>
 
@@ -2455,7 +2489,7 @@ function ExecutiveInvestorBrief({
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <p className="text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">
-                    Agra Cantt density map
+                    Selected market density map
                   </p>
                   <h2 className="mt-2 text-xl font-black tracking-tight text-[#0F172A]">
                     Executive density thumbnail
@@ -2923,7 +2957,7 @@ function CommandBar({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          placeholder="Search Punjab, Chandigarh, Agra Cantt, New Delhi, or a worker"
+          placeholder="Search Agra, New Delhi, Chandigarh, Chennai, Kolkata, a region, or a worker"
           className="w-full rounded-[12px] border border-slate-200 bg-slate-50 py-3 pl-11 pr-24 text-sm text-slate-900 outline-none transition focus:border-slate-400"
         />
         <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">

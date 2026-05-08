@@ -564,11 +564,22 @@ export function resolveMarketLocation(
       }
     : locationOrState;
 
+  const hasExplicitDistrict = Object.prototype.hasOwnProperty.call(location, "districtSlug");
   const context = resolveMarketContext(location.stateSlug, location.citySlug, location.districtSlug || null);
+  const normalizedDistrictSlug = hasExplicitDistrict
+    ? (
+      location.districtSlug
+        ? getMarketDistrictBySlug(location.districtSlug, context.city.slug)?.slug
+          || getDefaultDistrictForCity(context.city.slug)?.slug
+          || null
+        : null
+    )
+    : context.district?.slug || getDefaultDistrictForCity(context.city.slug)?.slug || null;
+
   return {
     stateSlug: context.state.slug,
     citySlug: context.city.slug,
-    districtSlug: context.district?.slug || getDefaultDistrictForCity(context.city.slug)?.slug || location.districtSlug || null,
+    districtSlug: normalizedDistrictSlug,
   };
 }
 

@@ -106,8 +106,8 @@ const ADMIN_ALLOWED_ROUTE_PATTERNS = [
   /^\/admin-portal-2026\/settings$/,
   /^\/admin-portal-2026\/heatmap$/,
   /^\/admin-portal-2026\/observability\/(system-health|bug-monitor|api-telemetry|audit-logs)$/,
-  /^\/admin-portal-2026\/war-room\/[a-z0-9-]+$/,
-  /^\/admin-portal-2026\/intelligence\/[a-z0-9-]+$/,
+  /^\/admin-portal-2026\/war-room\/[a-z0-9-]+\/[a-z0-9-]+(?:\/[a-z0-9-]+)?$/,
+  /^\/admin-portal-2026\/intelligence\/[a-z0-9-]+\/[a-z0-9-]+(?:\/[a-z0-9-]+)?$/,
 ];
 
 const ADMIN_ROUTE_TOOL_CATALOG = [
@@ -163,58 +163,58 @@ const ADMIN_ROUTE_TOOL_CATALOG = [
 
 const ADMIN_WAR_ROOM_ROUTE_CATALOG = [
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/agra-cantt`,
-    label: "Agra Cantt War Room",
-    reason: "Opening the Agra Cantt war room for active command coverage.",
-    keywords: ["agra cantt", "agra"],
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/uttar-pradesh/agra`,
+    label: "Agra War Room",
+    reason: "Opening the Agra war room so the map centers on the pilot market.",
+    keywords: ["agra cantt", "agra", "uttar pradesh"],
   },
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/taj-ganj`,
-    label: "Taj Ganj War Room",
-    reason: "Opening the Taj Ganj war room for the active sector.",
-    keywords: ["taj ganj"],
-  },
-  {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/fatehabad-road`,
-    label: "Fatehabad Road War Room",
-    reason: "Opening the Fatehabad Road war room for the active sector.",
-    keywords: ["fatehabad"],
-  },
-  {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/chandigarh`,
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/punjab/chandigarh`,
     label: "Chandigarh War Room",
     reason: "Opening the Chandigarh war room so the map centers on that market.",
-    keywords: ["chandigarh"],
+    keywords: ["chandigarh", "punjab"],
   },
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/chennai`,
-    label: "Chennai War Room",
-    reason: "Opening the Chennai war room so the map centers on that market.",
-    keywords: ["chennai"],
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/punjab/amritsar`,
+    label: "Amritsar War Room",
+    reason: "Opening the Amritsar war room so the map centers on that market.",
+    keywords: ["amritsar", "punjab"],
   },
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/bengaluru`,
-    label: "Bengaluru War Room",
-    reason: "Opening the Bengaluru war room so the map centers on that market.",
-    keywords: ["bengaluru", "bangalore"],
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/punjab/ludhiana`,
+    label: "Ludhiana War Room",
+    reason: "Opening the Ludhiana war room so the map centers on that market.",
+    keywords: ["ludhiana", "punjab"],
   },
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/kolkata`,
-    label: "Kolkata War Room",
-    reason: "Opening the Kolkata war room so the map centers on that market.",
-    keywords: ["kolkata", "calcutta"],
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/uttar-pradesh/lucknow`,
+    label: "Lucknow War Room",
+    reason: "Opening the Lucknow war room so the map centers on that market.",
+    keywords: ["lucknow", "uttar pradesh"],
   },
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/mumbai`,
-    label: "Mumbai War Room",
-    reason: "Opening the Mumbai war room so the map centers on that market.",
-    keywords: ["mumbai"],
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/uttar-pradesh/noida`,
+    label: "Noida War Room",
+    reason: "Opening the Noida war room so the map centers on that market.",
+    keywords: ["noida", "uttar pradesh"],
   },
   {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/new-delhi`,
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/delhi/new-delhi`,
     label: "New Delhi War Room",
     reason: "Opening the New Delhi war room so the map centers on that market.",
     keywords: ["new delhi", "delhi"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/delhi/north-delhi`,
+    label: "North Delhi War Room",
+    reason: "Opening the North Delhi war room so the map centers on that market.",
+    keywords: ["north delhi", "delhi north"],
+  },
+  {
+    route: `${ADMIN_ROUTE_PREFIX}/war-room/delhi/south-delhi`,
+    label: "South Delhi War Room",
+    reason: "Opening the South Delhi war room so the map centers on that market.",
+    keywords: ["south delhi", "delhi south"],
   },
 ];
 
@@ -377,7 +377,7 @@ const AdminCopilotRequestSchema = z.object({
   systemContext: z.object({
     currentMission: z.string().optional().default("observability"),
     currentObservabilityPanel: z.string().optional().default("system-health"),
-    currentZoneId: z.string().optional().default("agra-cantt"),
+    currentZoneId: z.string().optional().default("agra"),
     zoneLabel: z.string().optional().default("Agra Cantt"),
     globalUptime: z.string().optional().default("99.20%"),
     latencyMs: z.number().nonnegative().optional().default(0),
@@ -418,8 +418,12 @@ const AdminCopilotResponseSchema = z.object({
 
 const SystemInsightsRequestSchema = z.object({
   marketMetrics: z.object({
+    state: z.string().optional().default("Uttar Pradesh"),
+    stateSlug: z.string().optional().default("uttar-pradesh"),
     city: z.string().optional().default("Agra"),
+    citySlug: z.string().optional().default("agra"),
     zoneLabel: z.string().optional().default("Agra Cantt"),
+    marketLabel: z.string().optional().default("Agra, Uttar Pradesh"),
     density: z.number().optional().default(0.82),
     surgeZones: z.array(z.string()).optional().default([]),
     cityTier: z.enum(["pilot", "tier_1", "tier_2", "tier_3", "international"]).optional().default("tier_2"),
@@ -1151,14 +1155,16 @@ const findMatchingAdminRoute = (normalizedMessage, routes) => (
   || null
 );
 
-const resolveAdminNavigation = (message, systemContext = {}) => {
+const resolveAdminNavigation = (message, systemContext = {}, currentRoute = "") => {
   const normalizedMessage = String(message || "").toLowerCase();
   if (!normalizedMessage) return null;
 
-  const currentZoneId = String(systemContext?.currentZoneId || "agra-cantt").trim().toLowerCase() || "agra-cantt";
+  const currentZoneId = String(systemContext?.currentZoneId || "agra").trim().toLowerCase() || "agra";
   const currentZoneLabel = normalizeOptionalText(systemContext?.zoneLabel) || "the active zone";
+  const safeCurrentRoute = sanitizeAdminRoute(currentRoute);
   const currentZoneRoute = {
-    route: `${ADMIN_ROUTE_PREFIX}/war-room/${encodeURIComponent(currentZoneId)}`,
+    route: safeCurrentRoute
+      || `${ADMIN_ROUTE_PREFIX}/war-room/uttar-pradesh/agra`,
     label: `${currentZoneLabel} War Room`,
     reason: `Opening the war room for ${currentZoneLabel}.`,
   };
@@ -1305,7 +1311,7 @@ const finalizeAdminCopilot = (raw, payload, heuristicNavigation) => {
 
 const buildAdminCopilotFallback = (payload) => {
   const query = String(payload.message || "").toLowerCase();
-  const navigation = resolveAdminNavigation(payload.message, payload.systemContext);
+  const navigation = resolveAdminNavigation(payload.message, payload.systemContext, payload.currentRoute);
   const highlights = collectRelevantAdminHighlights(payload);
   const latencyMs = Math.round(Number(payload.systemContext?.latencyMs || 0));
   const activeBugs = Math.round(Number(payload.systemContext?.activeBugs || 0));
@@ -1448,7 +1454,7 @@ const callGeminiAdminCopilot = async (payload, heuristicNavigation) => {
 
 export const analyzeAdminCopilotWithLLM = async (input) => {
   const payload = AdminCopilotRequestSchema.parse(input);
-  const heuristicNavigation = resolveAdminNavigation(payload.message, payload.systemContext);
+  const heuristicNavigation = resolveAdminNavigation(payload.message, payload.systemContext, payload.currentRoute);
   const providers = payload.providerPreference === "gemini"
     ? [callGeminiAdminCopilot, callGroqAdminCopilot]
     : payload.providerPreference === "groq"

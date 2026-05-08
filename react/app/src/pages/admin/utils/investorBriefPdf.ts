@@ -251,11 +251,11 @@ export const downloadInvestorBriefPdf = async ({
 
   cursorY += 60;
 
-  drawCard(pdf, margin, cursorY, contentWidth, 36, { fill: [255, 255, 255] });
+  drawCard(pdf, margin, cursorY, contentWidth, 50, { fill: [255, 255, 255] });
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(11);
   pdf.setTextColor(15, 23, 42);
-  pdf.text("Trust, Reliability, and Operating Guardrails", margin + 4, cursorY + 8);
+  pdf.text("Trust, Scalability, and Operating Guardrails", margin + 4, cursorY + 8);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(9);
   pdf.setTextColor(71, 85, 105);
@@ -267,17 +267,25 @@ export const downloadInvestorBriefPdf = async ({
     contentWidth - 8,
     4.4,
   );
+  writeWrappedText(
+    pdf,
+    `Scalability Forecast: every 100 additional workers expand net margin by ${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization, with an operational efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%.`,
+    margin + 4,
+    cursorY + 22.5,
+    contentWidth - 8,
+    4.4,
+  );
   pdf.setFontSize(8.5);
   pdf.setTextColor(100, 116, 139);
   pdf.text(
     `Generated ${generatedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`,
     margin + 4,
-    cursorY + 31,
+    cursorY + 45,
   );
   pdf.text(
-    `${marketPathLabel} | Regional Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | Revenue ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}% | ROI Target ${assetYield.roi12m.toFixed(0)}%`,
+    `${marketPathLabel} | Regional Budget ${formatCompactInr(summary.unitEconomics.regionalEntryBudget)} | Revenue ${formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue)} | Share ${summary.unitEconomics.marketShareCapture}% | ROI ${assetYield.roi12m.toFixed(0)}% | +${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% / 100 workers`,
     margin + 40,
-    cursorY + 31,
+    cursorY + 45,
   );
 
   pdf.save(fileName);

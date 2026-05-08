@@ -10,6 +10,7 @@ import {
   Mail,
   MapPin,
   Radar,
+  Search,
   Server,
   ShieldCheck,
   Sparkles,
@@ -211,13 +212,12 @@ export default function AdminDashboard() {
   const [mapStyle, setMapStyle] = useState<AdminMapStyle>(((): AdminMapStyle => {
     const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
     if (persisted === "road") return "road";
-    if (persisted === "terrain" || persisted === "satellite") return "satellite";
-    if (persisted === "high-contrast" || persisted === "night-ops") return "night-ops";
-
+    if (persisted === "satellite") return "satellite";
     return "road";
   })());
   const [marketSnapshot, setMarketSnapshot] = useState<AdminMarketSnapshot | null>(null);
   const [marketSnapshotLoading, setMarketSnapshotLoading] = useState(false);
+  const [marketSearchValue, setMarketSearchValue] = useState("");
   const systemReadyToastShown = useRef(false);
 
   useEffect(() => {
@@ -278,7 +278,7 @@ export default function AdminDashboard() {
   const districtOverlayMode = selectedDistrictId ? "district" as const : "city" as const;
   const selectedDistrictLabel = selectedMarket.district?.label || getMarketDistrictBySlug(selectedDistrictId, selectedCitySlug)?.label || null;
   const marketStateOptions = useMemo(() => listMarketStates(), []);
-  const filteredCityOptions = useMemo(
+  const stateCityOptions = useMemo(
     () => listMarketCities(selectedStateSlug),
     [selectedStateSlug],
   );
@@ -304,7 +304,7 @@ export default function AdminDashboard() {
     regionId: marketSnapshot?.market.regionId || selectedDistrictId,
     regionLabel: marketSnapshot?.market.regionLabel || selectedDistrictLabel,
     mode: marketSnapshot?.dataMode === "live" ? "live" : "demo-fallback",
-    mapStyle: pitchMode ? "road" : mapStyle,
+    mapStyle: pitchMode ? "night-ops" : mapStyle,
   }), [
     mapStyle,
     marketSnapshot,
@@ -378,6 +378,10 @@ export default function AdminDashboard() {
       cancelled = true;
     };
   }, [selectedCitySlug, selectedDistrictId]);
+
+  useEffect(() => {
+    setMarketSearchValue(selectedCityLabel);
+  }, [selectedCityLabel]);
 
   const loadDemoDashboardData = useCallback(() => {
     const completed = demoBookings.filter((booking) => booking.status === "completed");
@@ -852,10 +856,7 @@ export default function AdminDashboard() {
     };
 
     syncAdminMarketLocation(nextLocation);
-    if (currentMission !== "war-room") {
-      navigate(buildWarRoomPath(nextLocation));
-    }
-  }, [currentMission, navigate, selectedStateSlug, syncAdminMarketLocation]);
+  }, [selectedStateSlug, syncAdminMarketLocation]);
   const handleMarketDistrictSelect = useCallback((districtToken: string, citySlug?: string, stateSlug?: string) => {
     const nextDistrictSlug = districtToken.replace(/^district:/, "");
     const nextCitySlug = citySlug || selectedCitySlug;
@@ -879,9 +880,6 @@ export default function AdminDashboard() {
     };
 
     syncAdminMarketLocation(nextLocation);
-    if (currentMission !== "war-room") {
-      navigate(buildWarRoomPath(nextLocation));
-    }
   }
   const handleActiveRegionSelect = useCallback((regionId: string | null) => {
     syncAdminMarketLocation({
@@ -890,6 +888,23 @@ export default function AdminDashboard() {
       districtSlug: regionId || null,
     });
   }, [selectedCitySlug, selectedStateSlug, syncAdminMarketLocation]);
+  const handleMarketSearchCommit = useCallback((query: string) => {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) {
+      setMarketSearchValue(selectedCityLabel);
+      return;
+    }
+
+    const matchedCity = findAdminMarketCity(normalizedQuery)
+      || marketCityOptions.find((city) => city.label.toLowerCase() === normalizedQuery.toLowerCase());
+
+    if (!matchedCity) {
+      setMarketSearchValue(selectedCityLabel);
+      return;
+    }
+
+    handleActiveMarketSelect(matchedCity.cityId);
+  }, [handleActiveMarketSelect, marketCityOptions, selectedCityLabel]);
   const handleMapStyleSelect = useCallback((nextMapStyle: AdminMapStyle) => {
     setMapStyle(nextMapStyle);
   }, []);
@@ -972,7 +987,7 @@ export default function AdminDashboard() {
     },
     cityOptions: marketCityOptions,
     regionOptions,
-    mapStyle: pitchMode ? "road" : mapStyle,
+    mapStyle: pitchMode ? "night-ops" : mapStyle,
     marketSnapshot: marketSnapshot || fallbackMarketSnapshot,
     marketSnapshotLoading,
     districtOverlayMode,
@@ -1280,7 +1295,7 @@ export default function AdminDashboard() {
                   <select
                     value={selectedStateSlug}
                     onChange={(event) => handleMarketStateSelect(event.target.value)}
-                    className="min-w-[11rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    className="min-w-[12rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
                     {marketStateOptions.map((state) => (
                       <option key={state.slug} value={state.slug}>
@@ -1290,14 +1305,14 @@ export default function AdminDashboard() {
                   </select>
                 </label>
                 <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
-                  <MapPin className="h-3.5 w-3.5 text-[#0F172A]" />
+                  <Search className="h-3.5 w-3.5 text-[#0F172A]" />
                   <span>City</span>
                   <select
                     value={selectedCitySlug}
                     onChange={(event) => handleMarketCitySelect(event.target.value, selectedStateSlug)}
-                    className="min-w-[13rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
+                    className="min-w-[12rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
-                    {filteredCityOptions.map((city) => (
+                    {stateCityOptions.map((city) => (
                       <option key={city.slug} value={city.slug}>
                         {city.label}
                       </option>
@@ -1306,16 +1321,17 @@ export default function AdminDashboard() {
                 </label>
                 <label className="inline-flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 shadow-[0_14px_32px_-28px_rgba(15,23,42,0.24)]">
                   <MapPin className="h-3.5 w-3.5 text-[#0F172A]" />
-                  <span>District</span>
+                  <span>Region</span>
                   <select
                     value={selectedDistrictId || ""}
                     onChange={(event) => handleActiveRegionSelect(event.target.value || null)}
+                    disabled={!selectedCitySlug}
                     className="min-w-[13rem] bg-transparent pr-1 text-[11px] font-semibold normal-case tracking-normal text-slate-900 outline-none"
                   >
                     <option value="">City overview</option>
                     {regionOptions.map((region) => (
                       <option key={region.id} value={region.id}>
-                        {region.label}
+                        {region.label} · {region.workerCount} workers
                       </option>
                     ))}
                   </select>
@@ -1457,3 +1473,4 @@ function HudTickerItem({
     </div>
   );
 }
+

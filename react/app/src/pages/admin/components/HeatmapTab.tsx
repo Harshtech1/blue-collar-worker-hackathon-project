@@ -566,10 +566,10 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
               isMonsoon || isPriceWar ? "border-white/10 bg-white/5 text-slate-100" : "border-white/10 bg-white/5 text-slate-100",
             )}>
               {isMonsoon
-                ? "Monsoon mode is now read directly on the full-screen terrain. Watch the amber pressure lanes beneath this module and shift salaried core before repair density overwhelms response time."
+                ? "Monsoon mode is now read directly on the full-screen road map. Watch the amber pressure lanes beneath this module and shift salaried core before repair density overwhelms response time."
                 : isPriceWar
                   ? "Market Competition Stress should be read as a contested overlay on the shared map. Indigo is still the truth layer; amber pulses only signal where trust and retention need defensive action."
-                : "Baseline mode keeps the terrain calm so worker reticles, demand plumes, and route pressure can be read from one unified city surface."}
+                  : "Baseline mode keeps the road view calm so worker reticles, demand plumes, and route pressure can be read from one unified city surface."}
             </div>
           </div>
         </div>
