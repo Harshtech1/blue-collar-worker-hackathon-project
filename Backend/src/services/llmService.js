@@ -68,18 +68,24 @@ Return valid JSON with:
 - confidence: one of high, medium, low.`;
 
 const SYSTEM_INSIGHTS_SYSTEM_PROMPT = `### ROLE: RAHI SYSTEM INSIGHTS ENGINE
-You convert compact RAHI operating metrics into 3 concise strategy chips for leadership.
+You convert compact RAHI operating metrics into 5 concise strategy chips for leadership.
 
 ### OBJECTIVE
-Generate exactly 3 actionable chips in this order:
+Generate exactly 5 actionable chips in this order:
 1. Local Ops
 2. Financial Sustainability
 3. Market Expansion
+4. Expansion Budget
+5. Revenue Potential
 
 ### RULES
 - Each chip must be concise, executive-friendly, and operationally useful.
 - Ground every chip in the supplied metrics.
 - Keep each insight under 140 characters when possible.
+- If a village-level readiness object is present, treat it as a Punjab micro-market and benchmark it against the Punjab state average.
+- For Punjab villages, the Expansion Posture chip must explicitly include:
+  "Micro-Market Entry"
+  and compare the village against the Punjab state average.
 - If the market city is NOT Agra, the Expansion Posture chip must explicitly include:
   "Shadow Launch (Freelancer-First)"
   and the exact financial line:
@@ -428,6 +434,8 @@ const SystemInsightsRequestSchema = z.object({
     surgeZones: z.array(z.string()).optional().default([]),
     cityTier: z.enum(["pilot", "tier_1", "tier_2", "tier_3", "international"]).optional().default("tier_2"),
     isExistingMarket: z.boolean().optional().default(false),
+    entryPosture: z.string().optional().default("Shadow Launch (Freelancer-First)"),
+    hierarchyPath: z.string().optional().default("Uttar Pradesh > Agra"),
   }).optional().default({}),
   unitEconomics: z.object({
     yieldPerJob: z.number().optional().default(0),
@@ -446,6 +454,20 @@ const SystemInsightsRequestSchema = z.object({
     scalabilityDeltaProfit: z.number().optional().default(0),
     scalabilityDeltaProfitAnnualized: z.number().optional().default(0),
   }).optional().default({}),
+  marketReadiness: z.object({
+    villageCode: z.string().optional().default(""),
+    laborAvailabilityIndex: z.number().optional().default(0),
+    connectivityStability: z.number().optional().default(0),
+    infrastructureGapScore: z.number().optional().default(0),
+    villageReadinessScore: z.number().optional().default(0),
+    projectedCac: z.number().optional().default(150),
+    popDensity: z.number().optional().default(0),
+    domesticPowerHours: z.number().optional().default(0),
+    hhSize: z.number().optional().default(0),
+    agriPowerHours: z.number().optional().default(0),
+    benchmarkLabel: z.string().optional().default("Punjab state average"),
+    comparisonNarrative: z.string().optional().default("Village benchmarking pending."),
+  }).nullable().optional().default(null),
   systemHealth: z.object({
     criticalBugs: z.number().int().nonnegative().optional().default(0),
     uptime: z.number().nonnegative().optional().default(99.9),
@@ -1502,6 +1524,9 @@ const buildSystemInsightsPrompt = (payload) => [
   "4. Expansion Budget",
   "5. Revenue Potential",
   "Revenue Potential must mention Year-1 revenue, market share capture, payback, and the scalability multiplier.",
+  payload.marketReadiness
+    ? "This is a Punjab village micro-market. Benchmark the village against the Punjab state average and keep Expansion Posture explicitly on Micro-Market Entry."
+    : "If the market is outside Agra, keep Expansion Posture in Shadow Launch (Freelancer-First).",
   "",
   "System Summary:",
   JSON.stringify(payload, null, 2),
