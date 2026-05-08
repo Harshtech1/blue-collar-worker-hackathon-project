@@ -1245,83 +1245,80 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setMapViewMode("satellite");
+                    setMapViewMode("terrain");
                     setShowSectorOverlays(true);
-                    setShowCompetitorOverlay(false);
                     setShowMoatOverlay(false);
+                    setShowCompetitorOverlay(false);
                     setShowMapSettings(false);
-                    onMapStyleChange?.("satellite");
+                    onMapStyleChange?.("terrain");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "satellite"
+                    mapViewMode === "terrain"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Terrain</span>
+                  <span>{mapViewMode === "terrain" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapViewMode("high-contrast");
+                    setShowSectorOverlays(false);
+                    setShowMoatOverlay(false);
+                    setShowCompetitorOverlay(false);
+                    setShowMapSettings(false);
+                    onMapStyleChange?.("high-contrast");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "high-contrast"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>High Contrast</span>
+                  <span>{mapViewMode === "high-contrast" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSectorOverlays((current) => !current);
+                    setShowCompetitorOverlay(false);
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    showSectorOverlays
                       ? "bg-sky-50 text-sky-700"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Infrastructure Overlay</span>
-                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
+                  <span>Region Overlays</span>
+                  <span>{showSectorOverlays ? "On" : "Off"}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     const nextMoatState = !showMoatOverlay;
-                    setMapViewMode("road");
-                    setShowSectorOverlays(true);
                     setShowMoatOverlay(nextMoatState);
+                    if (nextMoatState && mapViewMode === "high-contrast") {
+                      setMapViewMode("road");
+                      setShowSectorOverlays(true);
+                      onMapStyleChange?.("road");
+                    }
                     setShowCompetitorOverlay(false);
-                    setShowMapSettings(false);
-                    onMapStyleChange?.("road");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
                     showMoatOverlay
-                      ? "bg-teal-50 text-teal-700"
+                      ? "bg-emerald-50 text-emerald-700"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Teal Moat</span>
+                  <span>Coverage Rings</span>
                   <span>{showMoatOverlay ? "On" : "Off"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextCompetitorState = !showCompetitorOverlay;
-                    setMapViewMode("road");
-                    setShowSectorOverlays(nextCompetitorState ? true : showSectorOverlays);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(nextCompetitorState);
-                    setShowMapSettings(false);
-                    onMapStyleChange?.("road");
-                  }}
-                  className={cn(
-                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showCompetitorOverlay
-                      ? "bg-rose-50 text-rose-700"
-                      : "text-slate-700 hover:bg-slate-50",
-                  )}
-                >
-                  <span>Competitor View</span>
-                  <span>{showCompetitorOverlay ? "On" : "Off"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMapViewMode("night-ops");
-                    setShowSectorOverlays(false);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(false);
-                    setShowMapSettings(false);
-                  }}
-                  className={cn(
-                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "night-ops"
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-700 hover:bg-slate-50",
-                  )}
-                >
-                  <span>High-Contrast Dark</span>
-                  <span>{mapViewMode === "night-ops" ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}
