@@ -112,6 +112,7 @@ type MapViewMode = AdminMapStyle;
 const resolvePrimaryMapStyle = (mapStyleMode?: AdminMapStyle, pitchMode = false): MapViewMode => {
   if (pitchMode) return "road";
   if (mapStyleMode === "satellite") return "satellite";
+  if (mapStyleMode === "night-ops") return "night-ops";
   return "road";
 };
 
@@ -433,7 +434,7 @@ export function MissionControlMap({
     resolvePrimaryMapStyle(mapStyleMode, pitchMode),
   );
   const [showSectorOverlays, setShowSectorOverlays] = useState<boolean>(
-    resolvePrimaryMapStyle(mapStyleMode, pitchMode) !== "satellite",
+    resolvePrimaryMapStyle(mapStyleMode, pitchMode) === "satellite",
   );
   const [showMoatOverlay, setShowMoatOverlay] = useState<boolean>(false);
   const [showCompetitorOverlay, setShowCompetitorOverlay] = useState<boolean>(false);
@@ -455,7 +456,7 @@ export function MissionControlMap({
     const nextMapStyle = resolvePrimaryMapStyle(mapStyleMode);
     setMapViewMode(nextMapStyle);
     setShowMoatOverlay(false);
-    setShowSectorOverlays(nextMapStyle !== "satellite");
+    setShowSectorOverlays(nextMapStyle === "satellite");
     setShowCompetitorOverlay(false);
   }, [mapStyleMode, pitchMode]);
 
@@ -1287,27 +1288,8 @@ export function MissionControlMap({
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Operational Satellite</span>
+                  <span>Satellite</span>
                   <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMapViewMode("night-ops");
-                    setShowSectorOverlays(true);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(false);
-                    onMapStyleChange?.("night-ops");
-                  }}
-                  className={cn(
-                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "night-ops"
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-700 hover:bg-slate-50",
-                  )}
-                >
-                  <span>Night Ops</span>
-                  <span>{mapViewMode === "night-ops" ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}
