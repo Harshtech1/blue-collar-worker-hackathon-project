@@ -147,7 +147,7 @@ export const SystemTab: React.FC<SystemTabProps> = ({
   healthSnapshot,
   channelLatencyMs = 42,
   activeWorkerRate = 94,
-  zoneLabel = "Agra Cantt",
+  zoneLabel = "Selected Market",
 }) => {
   const systemReady = healthSnapshot?.status === "ok";
   const databaseReady = healthSnapshot?.database === "connected";

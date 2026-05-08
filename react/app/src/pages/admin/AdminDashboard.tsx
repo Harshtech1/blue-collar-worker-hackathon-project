@@ -211,8 +211,7 @@ export default function AdminDashboard() {
   const [channelLatencyMs, setChannelLatencyMs] = useState(42);
   const [mapStyle, setMapStyle] = useState<AdminMapStyle>(((): AdminMapStyle => {
     const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
-    if (persisted === "road") return "road";
-    if (persisted === "satellite") return "satellite";
+    if (persisted === "terrain" || persisted === "satellite") return "satellite";
     return "road";
   })());
   const [marketSnapshot, setMarketSnapshot] = useState<AdminMarketSnapshot | null>(null);

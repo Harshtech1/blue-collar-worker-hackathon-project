@@ -433,6 +433,18 @@ const SystemInsightsRequestSchema = z.object({
     yieldPerJob: z.number().optional().default(0),
     cacProjected: z.number().optional().default(150),
     paybackDays: z.number().optional().default(18),
+    launchCacPerWorker: z.number().optional().default(150),
+    marketCapacity: z.number().optional().default(0),
+    regionalEntryBudget: z.number().optional().default(0),
+    burnToScaleRatio: z.number().optional().default(0),
+    launchMode: z.string().optional().default("Shadow Launch"),
+    projectedFirstYearRevenue: z.number().optional().default(0),
+    marketShareCapture: z.number().optional().default(12),
+    marginExpansionPer100Workers: z.number().optional().default(4.2),
+    operationalEfficiencyGain: z.number().optional().default(0.042),
+    scalabilityNewWorkers: z.number().optional().default(100),
+    scalabilityDeltaProfit: z.number().optional().default(0),
+    scalabilityDeltaProfitAnnualized: z.number().optional().default(0),
   }).optional().default({}),
   systemHealth: z.object({
     criticalBugs: z.number().int().nonnegative().optional().default(0),
@@ -443,13 +455,13 @@ const SystemInsightsRequestSchema = z.object({
 });
 
 const SystemInsightChipSchema = z.object({
-  id: z.enum(["local_ops", "financial_stability", "expansion_posture"]),
+  id: z.enum(["local_ops", "financial_stability", "expansion_posture", "expansion_budget", "revenue_potential"]),
   title: z.string().optional(),
   insight: z.string().min(1),
 });
 
 const SystemInsightsResponseSchema = z.object({
-  chips: z.array(SystemInsightChipSchema).min(1).max(3),
+  chips: z.array(SystemInsightChipSchema).min(1).max(5),
 });
 
 const adminCopilotJsonSchema = {
@@ -481,12 +493,12 @@ const systemInsightsJsonSchema = {
   properties: {
     chips: {
       type: "array",
-      minItems: 3,
-      maxItems: 3,
+      minItems: 5,
+      maxItems: 5,
       items: {
         type: "object",
         properties: {
-          id: { type: "string", enum: ["local_ops", "financial_stability", "expansion_posture"] },
+          id: { type: "string", enum: ["local_ops", "financial_stability", "expansion_posture", "expansion_budget", "revenue_potential"] },
           title: { type: "string" },
           insight: { type: "string" },
         },

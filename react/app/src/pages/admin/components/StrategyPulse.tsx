@@ -1,5 +1,6 @@
 import { ArrowRight, Loader2, Radar, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { emitAdminMapCommand } from "../adminMapEvents";
 import { emitAdminCopilotSeed } from "../adminCopilotEvents";
 import { useSystemInsights } from "../hooks/useSystemInsights";
 import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsights";
@@ -59,11 +60,20 @@ export function StrategyPulse({ summary, className }: StrategyPulseProps) {
           <button
             key={`${chip.id}-${chip.insight}`}
             type="button"
-            onClick={() => emitAdminCopilotSeed({
-              prompt: chip.copilotQuery,
-              sourceLabel: chip.title,
-              mode: "send",
-            })}
+            onClick={() => {
+              if (chip.id === "revenue_potential") {
+                emitAdminMapCommand({
+                  command: "focus_revenue_moat",
+                  source: "strategy-pulse",
+                });
+              }
+
+              emitAdminCopilotSeed({
+                prompt: chip.copilotQuery,
+                sourceLabel: chip.title,
+                mode: "send",
+              });
+            }}
             className={cn(
               "group min-w-[320px] flex-1 rounded-[22px] border px-4 py-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_18px_42px_-30px_rgba(15,23,42,0.3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300",
               CHIP_TONES[chip.id],

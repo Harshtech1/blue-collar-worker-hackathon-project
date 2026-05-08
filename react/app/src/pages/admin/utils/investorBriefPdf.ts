@@ -155,8 +155,8 @@ export const downloadInvestorBriefPdf = async ({
 
   drawMetricTile(pdf, margin, cursorY, metricWidth, "Density", summary.marketMetrics.density.toFixed(2), [15, 23, 42]);
   drawMetricTile(pdf, margin + metricWidth + 3, cursorY, metricWidth, "Yield / Job", formatInr(yieldSnapshot.netProfitPerJob), [5, 150, 105]);
-  drawMetricTile(pdf, margin + (metricWidth + 3) * 2, cursorY, metricWidth, "Payback", `${summary.unitEconomics.paybackDays} days`, [2, 132, 199]);
-  drawMetricTile(pdf, margin + (metricWidth + 3) * 3, cursorY, metricWidth, "Critical Bugs", `${summary.systemHealth.criticalBugs}`, [180, 83, 9]);
+  drawMetricTile(pdf, margin + (metricWidth + 3) * 2, cursorY, metricWidth, "Year-1 Revenue", formatCompactInr(summary.unitEconomics.projectedFirstYearRevenue), [2, 132, 199]);
+  drawMetricTile(pdf, margin + (metricWidth + 3) * 3, cursorY, metricWidth, "Share Capture", `${Math.round(summary.unitEconomics.marketShareCapture)}%`, [15, 23, 42]);
 
   cursorY += 28;
 
@@ -269,7 +269,7 @@ export const downloadInvestorBriefPdf = async ({
   );
   writeWrappedText(
     pdf,
-    `Scalability Forecast: every 100 additional workers expand net margin by ${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization, with an operational efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%.`,
+    `Scalability Forecast: every ${Math.round(summary.unitEconomics.scalabilityNewWorkers)} additional workers expand net margin by ${summary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization. Delta Profit = (New Workers x Efficiency Gain) x Current Margin, which currently adds ${formatCompactInr(summary.unitEconomics.scalabilityDeltaProfit)} monthly and ${formatCompactInr(summary.unitEconomics.scalabilityDeltaProfitAnnualized)} annualized.`,
     margin + 4,
     cursorY + 22.5,
     contentWidth - 8,

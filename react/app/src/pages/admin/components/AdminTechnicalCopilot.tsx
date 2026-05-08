@@ -431,8 +431,11 @@ const buildLocalCopilotResponse = (
   }
 
   if (/revenue potential|year[- ]?1 revenue|market share|burn-to-scale|scalability|margin multiplier|scale forecast/.test(query)) {
+    const scalabilityNewWorkers = Math.round(systemSummary.unitEconomics.scalabilityNewWorkers || 100);
+    const scalabilityDeltaProfit = Math.round(systemSummary.unitEconomics.scalabilityDeltaProfit || 0);
+    const scalabilityDeltaProfitAnnualized = Math.round(systemSummary.unitEconomics.scalabilityDeltaProfitAnnualized || 0);
     return {
-      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture. Burn-to-scale is currently ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x, and every 100 additional workers improve net margin by ${systemSummary.unitEconomics.marginExpansionPer100Workers.toFixed(1)}% through route optimization.`,
+      reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture and a ${systemSummary.unitEconomics.paybackDays}-day payback period. The scalability multiplier is Delta Profit = (New Workers x Efficiency Gain) x Current Margin. For the next ${scalabilityNewWorkers} workers, that adds about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit and ${formatCompactCurrency(scalabilityDeltaProfitAnnualized)} annualized while burn-to-scale stays at ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x.`,
       navigationTarget: null,
       navigationReason: null,
       auditHighlights: highlights,

@@ -519,7 +519,7 @@ export function HeatmapTab({ token, scenario: scenarioOverride, embeddedMap = tr
                 "mt-3 text-sm font-semibold leading-6",
                 isMonsoon || isPriceWar ? "text-slate-300" : "text-slate-300",
               )}>
-                Use the satellite command layer behind this module to steer the city directly. These controls now classify what you are seeing on the global map instead of embedding a second map inside the heat desk.
+                Use the road-first command layer behind this module to steer the city directly. These controls now classify what you are seeing on the global map instead of embedding a second map inside the heat desk.
               </p>
             </div>
 

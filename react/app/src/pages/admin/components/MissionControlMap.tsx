@@ -29,6 +29,10 @@ import {
   getMarketDistrictsForCity,
   type MarketCity,
 } from "../marketRegistry";
+import {
+  ADMIN_MAP_COMMAND_EVENT,
+  type AdminMapCommandDetail,
+} from "../adminMapEvents";
 import type { AdminMapStyle } from "../adminShellContext";
 import type { AdminMarketSnapshot } from "../utils/adminMarketSnapshot";
 import type { AdminTab } from "./AdminSidebar";
@@ -111,14 +115,15 @@ type MapViewMode = AdminMapStyle;
 
 const resolvePrimaryMapStyle = (mapStyleMode?: AdminMapStyle, pitchMode = false): MapViewMode => {
   if (pitchMode) return "road";
-  if (mapStyleMode === "satellite") return "satellite";
-  return "road";
+  return mapStyleMode === "satellite" ? "satellite" : "road";
 };
+
 
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
 const toDegrees = (radians: number) => (radians * 180) / Math.PI;
 const EARTH_RADIUS_KM = 6371;
 const MAP_LABEL_FONT = "\"Inter\", \"Plus Jakarta Sans\", system-ui, sans-serif";
+const BASE_MARKET_SHARE_CAPTURE = 12;
 const MARKET_TIER_BADGES: Record<string, string> = {
   agra: "TIER-2",
   amritsar: "TIER-2",
@@ -432,9 +437,7 @@ export function MissionControlMap({
   const [mapViewMode, setMapViewMode] = useState<MapViewMode>(
     resolvePrimaryMapStyle(mapStyleMode, pitchMode),
   );
-  const [showSectorOverlays, setShowSectorOverlays] = useState<boolean>(
-    resolvePrimaryMapStyle(mapStyleMode, pitchMode) === "satellite",
-  );
+  const [showSectorOverlays, setShowSectorOverlays] = useState<boolean>(false);
   const [showMoatOverlay, setShowMoatOverlay] = useState<boolean>(false);
   const [showCompetitorOverlay, setShowCompetitorOverlay] = useState<boolean>(false);
   const [showMapSettings, setShowMapSettings] = useState(false);
@@ -455,9 +458,26 @@ export function MissionControlMap({
     const nextMapStyle = resolvePrimaryMapStyle(mapStyleMode);
     setMapViewMode(nextMapStyle);
     setShowMoatOverlay(false);
-    setShowSectorOverlays(nextMapStyle === "satellite");
+    setShowSectorOverlays(false);
     setShowCompetitorOverlay(false);
   }, [mapStyleMode, pitchMode]);
+
+  useEffect(() => {
+    const handleMapCommand = (event: Event) => {
+      const detail = (event as CustomEvent<AdminMapCommandDetail>).detail;
+      if (!detail || detail.command !== "focus_revenue_moat") return;
+
+      setMapViewMode("road");
+      setShowSectorOverlays(true);
+      setShowMoatOverlay(true);
+      setShowCompetitorOverlay(false);
+      setShowMapSettings(false);
+      onMapStyleChange?.("road");
+    };
+
+    window.addEventListener(ADMIN_MAP_COMMAND_EVENT, handleMapCommand as EventListener);
+    return () => window.removeEventListener(ADMIN_MAP_COMMAND_EVENT, handleMapCommand as EventListener);
+  }, [onMapStyleChange]);
 
   const simulationGeoConfig = useMemo(() => {
     return buildMarketGeoConfig({
@@ -663,19 +683,21 @@ export function MissionControlMap({
 
   const marketMoatZones = useMemo(() => (
     labeledZones.map((zone) => {
-      const rawCoverage = ((zone.activeWorkers * 2.4) / Math.max(1, zone.total)) * 100;
+      const densityLift = Math.round(zone.pressureRatio * 6.5);
+      const readinessLift = Math.round(Math.max(0, ((zone.readinessScore || 72) - 70) * 0.18));
+      const workerLift = Math.round(Math.min(14, zone.activeWorkers * 0.9));
       const moatShare = Math.max(
-        24,
+        BASE_MARKET_SHARE_CAPTURE,
         Math.min(
-          92,
-          Math.round(rawCoverage + ((zone.readinessScore || 72) * 0.34)),
+          38,
+          BASE_MARKET_SHARE_CAPTURE + densityLift + readinessLift + workerLift,
         ),
       );
 
       return {
         ...zone,
         moatShare,
-        moatRadius: 2500 + Math.min(zone.activeWorkers * 320, 3400),
+        moatRadius: 2100 + Math.min(zone.activeWorkers * 290, 3000),
       };
     })
   ), [labeledZones]);
@@ -794,7 +816,9 @@ export function MissionControlMap({
         .rahi-map-shell .leaflet-tile-pane {
           filter: ${mapViewMode === "road"
             ? "contrast(1.01) brightness(1.03) saturate(0.82)"
-            : "contrast(1.02) brightness(0.99) saturate(0.98)"};
+            : mapViewMode === "satellite"
+              ? "contrast(1.02) brightness(0.99) saturate(0.98)"
+              : "contrast(1.12) brightness(0.72) saturate(0.78)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -955,7 +979,7 @@ export function MissionControlMap({
                 attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
-          ) : (
+          ) : mapViewMode === "satellite" ? (
             <>
               <TileLayer
                 url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -964,6 +988,17 @@ export function MissionControlMap({
               <TileLayer
                 url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
                 attribution="Labels &copy; Esri"
+              />
+            </>
+          ) : (
+            <>
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              />
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
           )}
@@ -986,7 +1021,7 @@ export function MissionControlMap({
                   <div className="space-y-2 text-[11px]">
                     <p className="font-semibold uppercase tracking-[0.18em] text-slate-500">Captured neighborhood</p>
                     <p className="text-sm font-bold text-slate-900">{zone.label}</p>
-                    <p className="text-teal-700">Moat share: {zone.moatShare}%</p>
+                    <p className="text-teal-700">Market share capture: {zone.moatShare}%</p>
                     <p className="text-slate-600">Active workers: {zone.activeWorkers.toLocaleString("en-IN")}</p>
                     <p className="text-slate-600">Pressure ratio: {zone.pressureRatio.toFixed(2)}x</p>
                   </div>
@@ -1234,13 +1269,13 @@ export function MissionControlMap({
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "road"
+                    mapViewMode === "road" && !showSectorOverlays && !showMoatOverlay && !showCompetitorOverlay
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
                   <span>Standard Road</span>
-                  {mapViewMode === "road" ? <span>On</span> : null}
+                  <span>{mapViewMode === "road" && !showSectorOverlays && !showMoatOverlay && !showCompetitorOverlay ? "On" : "Off"}</span>
                 </button>
                 <button
                   type="button"
@@ -1265,60 +1300,42 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setMapViewMode("high-contrast");
+                    setMapViewMode("satellite");
                     setShowSectorOverlays(false);
                     setShowMoatOverlay(false);
                     setShowCompetitorOverlay(false);
                     setShowMapSettings(false);
-                    onMapStyleChange?.("high-contrast");
+                    onMapStyleChange?.("satellite");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "high-contrast"
+                    mapViewMode === "satellite"
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>High Contrast</span>
-                  <span>{mapViewMode === "high-contrast" ? "On" : "Off"}</span>
+                  <span>Operational Satellite</span>
+                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setShowSectorOverlays((current) => !current);
+                    setMapViewMode("night-ops");
+                    setShowSectorOverlays(true);
+                    setShowMoatOverlay(false);
                     setShowCompetitorOverlay(false);
+                    setShowMapSettings(false);
+                    onMapStyleChange?.("night-ops");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showSectorOverlays
-                      ? "bg-sky-50 text-sky-700"
+                    mapViewMode === "night-ops"
+                      ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Region Overlays</span>
-                  <span>{showSectorOverlays ? "On" : "Off"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextMoatState = !showMoatOverlay;
-                    setShowMoatOverlay(nextMoatState);
-                    if (nextMoatState && mapViewMode === "high-contrast") {
-                      setMapViewMode("road");
-                      setShowSectorOverlays(true);
-                      onMapStyleChange?.("road");
-                    }
-                    setShowCompetitorOverlay(false);
-                  }}
-                  className={cn(
-                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showMoatOverlay
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "text-slate-700 hover:bg-slate-50",
-                  )}
-                >
-                  <span>Coverage Rings</span>
-                  <span>{showMoatOverlay ? "On" : "Off"}</span>
+                  <span>Night Ops</span>
+                  <span>{mapViewMode === "night-ops" ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}

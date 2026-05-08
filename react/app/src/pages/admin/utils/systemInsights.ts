@@ -61,11 +61,17 @@ export interface SystemInsightsSummary {
     setupOverhead: number;
     regionalEntryBudget: number;
     burnToScaleRatio: number;
+    roi12m: number;
     launchMode: string;
+    jobsPerWorkerPerMonth: number;
+    commissionPerProjectedJob: number;
     projectedFirstYearRevenue: number;
     marketShareCapture: number;
     marginExpansionPer100Workers: number;
     operationalEfficiencyGain: number;
+    scalabilityNewWorkers: number;
+    scalabilityDeltaProfit: number;
+    scalabilityDeltaProfitAnnualized: number;
   };
   systemHealth: {
     criticalBugs: number;
@@ -84,6 +90,7 @@ export interface BuildSystemInsightsSummaryInput {
   stats: AdminDashboardStats;
   activeWorkerRate: number;
   averageTicket: number;
+  sevenDayBookings?: number;
   globalUptime: string;
   llmMode: "ready" | "fallback";
   healthSnapshot: AdminSystemHealthSnapshot | null;
@@ -120,6 +127,7 @@ type ScalabilityProfile = {
 
 const AGRA_CITY_ID = "agra";
 const AGRA_CITY_NAME = "agra";
+const SCALABILITY_NEW_WORKER_BLOCK = 100;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const roundTo = (value: number, digits = 2) => Number(value.toFixed(digits));
@@ -325,6 +333,26 @@ const derivePaybackDays = (
   return clamp(Math.round(projectedCac / dailyCommissionPerWorker), 9, 24);
 };
 
+const deriveProjectedMonthlyJobsRunRate = ({
+  sevenDayBookings,
+  completedBookings,
+  activeBookings,
+}: {
+  sevenDayBookings?: number;
+  completedBookings: number;
+  activeBookings: number;
+}) => {
+  if (Number(sevenDayBookings || 0) > 0) {
+    return Math.max(1, Math.round(((sevenDayBookings || 0) / 7) * 30));
+  }
+
+  if (completedBookings > 0) {
+    return Math.max(1, Math.round(completedBookings * 4.2));
+  }
+
+  return Math.max(1, Math.round(activeBookings * 3.4));
+};
+
 const buildExpansionCity = (city: string, isExistingMarket: boolean) => {
   const normalizedCity = city.trim().toLowerCase();
   if (normalizedCity === "new delhi" || normalizedCity === "chandigarh") {
@@ -428,6 +456,7 @@ export const buildSystemInsightsSummary = ({
   stats,
   activeWorkerRate,
   averageTicket,
+  sevenDayBookings,
   globalUptime,
   llmMode,
   healthSnapshot,
@@ -454,6 +483,21 @@ export const buildSystemInsightsSummary = ({
     * revenueProfile.jobsPerWorkerPerMonth
     * revenueProfile.commissionPerJob
     * 12;
+  const projectedMonthlyJobsRunRate = deriveProjectedMonthlyJobsRunRate({
+    sevenDayBookings,
+    completedBookings: Number(investorSummary?.completedJobs ?? stats.completedBookings ?? 0),
+    activeBookings: stats.activeBookings,
+  });
+  const projectedMonthlyNetProfit = Math.max(0, Math.round(yieldPerJob * projectedMonthlyJobsRunRate));
+  const roi12m = roundTo(
+    (((projectedMonthlyNetProfit * 12) - regionalEntryBudget) / Math.max(1, regionalEntryBudget)) * 100,
+    1,
+  );
+  const currentMarginPerWorkerPerMonth = yieldPerJob * revenueProfile.jobsPerWorkerPerMonth;
+  const scalabilityDeltaProfit = Math.round(
+    (SCALABILITY_NEW_WORKER_BLOCK * scalabilityProfile.operationalEfficiencyGain) * currentMarginPerWorkerPerMonth,
+  );
+  const scalabilityDeltaProfitAnnualized = scalabilityDeltaProfit * 12;
   const burnToScaleRatio = roundTo(
     regionalEntryBudget / Math.max(1, budgetProfile.marketCapacity * yieldPerJob),
     2,
@@ -499,11 +543,17 @@ export const buildSystemInsightsSummary = ({
       setupOverhead: budgetProfile.setupOverhead,
       regionalEntryBudget,
       burnToScaleRatio,
+      roi12m,
       launchMode: budgetProfile.launchMode,
+      jobsPerWorkerPerMonth: revenueProfile.jobsPerWorkerPerMonth,
+      commissionPerProjectedJob: revenueProfile.commissionPerJob,
       projectedFirstYearRevenue,
       marketShareCapture: revenueProfile.marketShareCapture,
       marginExpansionPer100Workers: scalabilityProfile.marginExpansionPer100Workers,
       operationalEfficiencyGain: scalabilityProfile.operationalEfficiencyGain,
+      scalabilityNewWorkers: SCALABILITY_NEW_WORKER_BLOCK,
+      scalabilityDeltaProfit,
+      scalabilityDeltaProfitAnnualized,
     },
     systemHealth: {
       criticalBugs: criticalBugCount,
@@ -528,11 +578,16 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
   const marketCapacity = Math.round(summary.unitEconomics.marketCapacity || 0);
   const launchCacPerWorker = Math.round(summary.unitEconomics.launchCacPerWorker || cacProjected);
   const burnToScaleRatio = Number(summary.unitEconomics.burnToScaleRatio || 0);
+  const roi12m = Number(summary.unitEconomics.roi12m || 0);
   const projectedFirstYearRevenue = Math.round(summary.unitEconomics.projectedFirstYearRevenue || 0);
   const marketShareCapture = Math.round(summary.unitEconomics.marketShareCapture || 12);
   const marginExpansionPer100Workers = Number(summary.unitEconomics.marginExpansionPer100Workers || 4.2);
+  const scalabilityNewWorkers = Math.round(summary.unitEconomics.scalabilityNewWorkers || SCALABILITY_NEW_WORKER_BLOCK);
+  const scalabilityDeltaProfit = Math.round(summary.unitEconomics.scalabilityDeltaProfit || 0);
+  const scalabilityDeltaProfitAnnualized = Math.round(summary.unitEconomics.scalabilityDeltaProfitAnnualized || 0);
   const regionalBudgetLabel = formatCompactInrAscii(regionalEntryBudget);
   const revenuePotentialLabel = formatCompactInrAscii(projectedFirstYearRevenue);
+  const scalabilityDeltaLabel = formatCompactInrAscii(scalabilityDeltaProfit);
 
   return [
     {
@@ -580,8 +635,8 @@ export const buildFallbackStrategyChips = (summary: SystemInsightsSummary): Stra
       title: "Revenue Potential",
       tone: "emerald",
       actionLabel: "Open Revenue",
-      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture. Explain the burn-to-scale ratio, launch mode, and how this city becomes self-sustaining without breaking unit economics. Also note that every 100 additional workers increase net margin by ${marginExpansionPer100Workers.toFixed(1)}% due to route optimization.`,
-      insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% market capture | +${marginExpansionPer100Workers.toFixed(1)}% margin / 100 workers`,
+      copilotQuery: `In ${city}, RAHI projects a Year-1 revenue of INR ${projectedFirstYearRevenue.toLocaleString("en-IN")} with a ${marketShareCapture}% market capture, a ${roi12m.toFixed(0)}% projected 12-month ROI, and a ${paybackDays}-day payback period. Explain the burn-to-scale ratio, launch mode, and the unit-economic multiplier using Delta Profit = (New Workers x Efficiency Gain) x Current Margin. Use ${scalabilityNewWorkers} new workers, an efficiency gain of ${(summary.unitEconomics.operationalEfficiencyGain * 100).toFixed(1)}%, and quantify the uplift as INR ${scalabilityDeltaProfit.toLocaleString("en-IN")} monthly and INR ${scalabilityDeltaProfitAnnualized.toLocaleString("en-IN")} annualized. Also explain how the teal moat identifies captured neighborhoods in ${city}.`,
+      insight: `${city}: ${revenuePotentialLabel} Year-1 revenue | ${marketShareCapture}% capture | ${roi12m.toFixed(0)}% ROI | Delta +${scalabilityDeltaLabel}/mo`,
     },
   ];
 };
@@ -616,6 +671,13 @@ export const normalizeStrategyChips = (
     }
 
     if (seed.id === "financial_stability" && summary.systemHealth.criticalBugs > 0) {
+      return {
+        ...seed,
+        insight: seed.insight,
+      };
+    }
+
+    if (seed.id === "revenue_potential") {
       return {
         ...seed,
         insight: seed.insight,

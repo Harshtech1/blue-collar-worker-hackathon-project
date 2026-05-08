@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUpRight, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { emitAdminMapCommand } from "../adminMapEvents";
 import { emitAdminCopilotSeed } from "../adminCopilotEvents";
 import { useSystemInsights } from "../hooks/useSystemInsights";
 import type { StrategyChip, SystemInsightsSummary } from "../utils/systemInsights";
@@ -65,6 +66,13 @@ export function StrategyChips({ summary, className, onChipClick }: StrategyChips
               key={`${summary.marketMetrics.city}-${chip.id}-${chip.insight}`}
               type="button"
               onClick={() => {
+                if (chip.id === "revenue_potential") {
+                  emitAdminMapCommand({
+                    command: "focus_revenue_moat",
+                    source: "strategy-chips",
+                  });
+                }
+
                 if (onChipClick) {
                   onChipClick(chip);
                   return;
