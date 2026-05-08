@@ -341,6 +341,10 @@ const buildNavigationAnnouncement = (
     const underservedSector = targetSystemSummary.marketMetrics.underservedSector
       || targetSystemSummary.marketMetrics.surgeZones[0]
       || targetZone.zoneLabel;
+    if (targetSystemSummary.marketReadiness) {
+      return `War Room is live for ${targetZone.zoneLabel}. ${targetSystemSummary.marketReadiness.comparisonNarrative} Projected CAC is ${formatCurrency(targetSystemSummary.marketReadiness.projectedCac)} and the launch posture is ${targetSystemSummary.marketMetrics.entryPosture}.`;
+    }
+
     return `War Room is live for ${targetZone.zoneLabel}. Market density is ${targetSystemSummary.marketMetrics.density.toFixed(2)}, the strongest launch lane is ${targetSystemSummary.marketMetrics.recommendedExpansionCity}, and the cleanest underserved sector is ${underservedSector}.`;
   }
 
@@ -442,6 +446,16 @@ const buildLocalCopilotResponse = (
     const underservedSector = systemSummary.marketMetrics.underservedSector
       || systemSummary.marketMetrics.surgeZones[0]
       || summary.currentCity;
+    if (systemSummary.marketReadiness) {
+      return {
+        reply: `${systemSummary.marketMetrics.zoneLabel} is running a Punjab micro-market entry. Projected CAC is ${formatCompactCurrency(systemSummary.marketReadiness.projectedCac)}, village readiness is ${systemSummary.marketReadiness.villageReadinessScore}/100, and Year-1 revenue is modeled at ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)}. ${systemSummary.marketReadiness.comparisonNarrative} Payback is ${systemSummary.unitEconomics.paybackDays} days and the next ${scalabilityNewWorkers} workers add about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit.`,
+        navigationTarget: null,
+        navigationReason: null,
+        auditHighlights: highlights,
+        confidence: "high",
+      };
+    }
+
     return {
       reply: `In ${summary.currentCity}, RAHI projects ${formatCompactCurrency(systemSummary.unitEconomics.projectedFirstYearRevenue)} in Year-1 revenue with ${systemSummary.unitEconomics.marketShareCapture}% market capture, ${systemSummary.unitEconomics.roi12m.toFixed(0)}% projected 12-month ROI, and a ${systemSummary.unitEconomics.paybackDays}-day payback period. The strongest underserved sector is ${underservedSector}, where demand is rising without dense competitor pressure. The scalability multiplier is Delta Profit = (New Workers x Efficiency Gain) x Current Margin. For the next ${scalabilityNewWorkers} workers, that adds about ${formatCompactCurrency(scalabilityDeltaProfit)} in monthly profit and ${formatCompactCurrency(scalabilityDeltaProfitAnnualized)} annualized while burn-to-scale stays at ${systemSummary.unitEconomics.burnToScaleRatio.toFixed(2)}x. If competitor red zones intensify, activate a temporary defensive payout to protect the captured moat before entering a deeper discount battle.`,
       navigationTarget: null,
