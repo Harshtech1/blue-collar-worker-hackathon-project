@@ -154,9 +154,7 @@ const formatViewportLabelSafe = ({ label, lat, lng }: ZoneViewport) => {
 const getMapStyleLabel = (mapStyle: AdminMapStyle) => (
   mapStyle === "road"
     ? "Standard Road"
-    : mapStyle === "satellite"
-      ? "Operational Satellite"
-      : "Night Ops"
+    : "Infrastructure Overlay"
 );
 
 type ProjectedAssetYieldSnapshot = {

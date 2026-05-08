@@ -277,7 +277,10 @@ export default function AdminDashboard() {
   const selectedCityLabel = selectedMarket.city.label;
   const districtOverlayMode = selectedDistrictId ? "district" as const : "city" as const;
   const selectedDistrictLabel = selectedMarket.district?.label || getMarketDistrictBySlug(selectedDistrictId, selectedCitySlug)?.label || null;
-  const marketStateOptions = useMemo(() => listMarketStates(), []);
+  const marketStateOptions = useMemo(
+    () => listMarketStates().filter((state) => ["punjab", "uttar-pradesh", "delhi"].includes(state.slug)),
+    [],
+  );
   const stateCityOptions = useMemo(
     () => listMarketCities(selectedStateSlug),
     [selectedStateSlug],
@@ -304,7 +307,7 @@ export default function AdminDashboard() {
     regionId: marketSnapshot?.market.regionId || selectedDistrictId,
     regionLabel: marketSnapshot?.market.regionLabel || selectedDistrictLabel,
     mode: marketSnapshot?.dataMode === "live" ? "live" : "demo-fallback",
-    mapStyle: pitchMode ? "night-ops" : mapStyle,
+    mapStyle: pitchMode ? "road" : mapStyle,
   }), [
     mapStyle,
     marketSnapshot,
@@ -987,7 +990,7 @@ export default function AdminDashboard() {
     },
     cityOptions: marketCityOptions,
     regionOptions,
-    mapStyle: pitchMode ? "night-ops" : mapStyle,
+    mapStyle: pitchMode ? "road" : mapStyle,
     marketSnapshot: marketSnapshot || fallbackMarketSnapshot,
     marketSnapshotLoading,
     districtOverlayMode,

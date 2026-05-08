@@ -112,7 +112,6 @@ type MapViewMode = AdminMapStyle;
 const resolvePrimaryMapStyle = (mapStyleMode?: AdminMapStyle, pitchMode = false): MapViewMode => {
   if (pitchMode) return "road";
   if (mapStyleMode === "satellite") return "satellite";
-  if (mapStyleMode === "night-ops") return "night-ops";
   return "road";
 };
 
@@ -795,9 +794,7 @@ export function MissionControlMap({
         .rahi-map-shell .leaflet-tile-pane {
           filter: ${mapViewMode === "road"
             ? "contrast(1.01) brightness(1.03) saturate(0.82)"
-            : mapViewMode === "satellite"
-              ? "contrast(1.02) brightness(0.98) saturate(0.92)"
-              : "contrast(1.12) brightness(0.72) saturate(0.78)"};
+            : "contrast(1.02) brightness(0.99) saturate(0.98)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -958,7 +955,7 @@ export function MissionControlMap({
                 attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
-          ) : mapViewMode === "satellite" ? (
+          ) : (
             <>
               <TileLayer
                 url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -967,17 +964,6 @@ export function MissionControlMap({
               <TileLayer
                 url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
                 attribution="Labels &copy; Esri"
-              />
-            </>
-          ) : (
-            <>
-              <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
-                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
-              />
-              <TileLayer
-                url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
-                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
           )}
@@ -1240,13 +1226,14 @@ export function MissionControlMap({
                   type="button"
                   onClick={() => {
                     setMapViewMode("road");
-                    setShowSectorOverlays(true);
+                    setShowSectorOverlays(false);
                     setShowMoatOverlay(false);
                     setShowCompetitorOverlay(false);
+                    setShowMapSettings(false);
                     onMapStyleChange?.("road");
                   }}
                   className={cn(
-                    "flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
                     mapViewMode === "road"
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
@@ -1258,38 +1245,83 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
-                    setShowSectorOverlays((current) => !current);
-                    setShowMoatOverlay(false);
-                    setShowCompetitorOverlay(false);
-                  }}
-                  className={cn(
-                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    showSectorOverlays
-                      ? "bg-sky-50 text-sky-700"
-                      : "text-slate-700 hover:bg-slate-50",
-                  )}
-                >
-                  <span>Sector Overlays</span>
-                  <span>{showSectorOverlays ? "On" : "Off"}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
                     setMapViewMode("satellite");
-                    setShowSectorOverlays(false);
-                    setShowMoatOverlay(false);
+                    setShowSectorOverlays(true);
                     setShowCompetitorOverlay(false);
+                    setShowMoatOverlay(false);
+                    setShowMapSettings(false);
                     onMapStyleChange?.("satellite");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
                     mapViewMode === "satellite"
+                      ? "bg-sky-50 text-sky-700"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Infrastructure Overlay</span>
+                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextMoatState = !showMoatOverlay;
+                    setMapViewMode("road");
+                    setShowSectorOverlays(true);
+                    setShowMoatOverlay(nextMoatState);
+                    setShowCompetitorOverlay(false);
+                    setShowMapSettings(false);
+                    onMapStyleChange?.("road");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    showMoatOverlay
+                      ? "bg-teal-50 text-teal-700"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Teal Moat</span>
+                  <span>{showMoatOverlay ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextCompetitorState = !showCompetitorOverlay;
+                    setMapViewMode("road");
+                    setShowSectorOverlays(nextCompetitorState ? true : showSectorOverlays);
+                    setShowMoatOverlay(false);
+                    setShowCompetitorOverlay(nextCompetitorState);
+                    setShowMapSettings(false);
+                    onMapStyleChange?.("road");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    showCompetitorOverlay
+                      ? "bg-rose-50 text-rose-700"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Competitor View</span>
+                  <span>{showCompetitorOverlay ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapViewMode("night-ops");
+                    setShowSectorOverlays(false);
+                    setShowMoatOverlay(false);
+                    setShowCompetitorOverlay(false);
+                    setShowMapSettings(false);
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "night-ops"
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Satellite</span>
-                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
+                  <span>High-Contrast Dark</span>
+                  <span>{mapViewMode === "night-ops" ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}
