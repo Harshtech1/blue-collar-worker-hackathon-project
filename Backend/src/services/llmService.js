@@ -1495,10 +1495,13 @@ const getSystemInsightsMaxTokens = () => DEFAULT_SYSTEM_INSIGHTS_MAX_TOKENS;
 
 const buildSystemInsightsPrompt = (payload) => [
   "Analyze these RAHI platform metrics.",
-  "Generate 3 short, high-impact strategy chips focused on:",
+  "Generate 5 short, high-impact strategy chips focused on:",
   "1. Local Ops",
   "2. Financial Sustainability",
   "3. Market Expansion",
+  "4. Expansion Budget",
+  "5. Revenue Potential",
+  "Revenue Potential must mention Year-1 revenue, market share capture, payback, and the scalability multiplier.",
   "",
   "System Summary:",
   JSON.stringify(payload, null, 2),
@@ -1516,6 +1519,34 @@ const buildSystemInsightsFallback = (input) => {
   const cacProjected = Math.round(Number(payload.unitEconomics?.cacProjected || 150));
   const paybackDays = Math.round(Number(payload.unitEconomics?.paybackDays || 18));
   const criticalBugs = Math.round(Number(payload.systemHealth?.criticalBugs || 0));
+  const regionalEntryBudget = Math.round(Number(payload.unitEconomics?.regionalEntryBudget || 0));
+  const projectedFirstYearRevenue = Math.round(Number(payload.unitEconomics?.projectedFirstYearRevenue || 0));
+  const marketShareCapture = Math.max(
+    1,
+    Math.round(Number(payload.unitEconomics?.marketShareCapture || 12)),
+  );
+  const burnToScaleRatio = Number(payload.unitEconomics?.burnToScaleRatio || 0);
+  const marketCapacity = Math.round(Number(payload.unitEconomics?.marketCapacity || 0));
+  const launchMode = String(payload.unitEconomics?.launchMode || "Shadow Launch").trim();
+  const marginExpansionPer100Workers = Number(
+    payload.unitEconomics?.marginExpansionPer100Workers || 0,
+  );
+  const scalabilityNewWorkers = Math.max(
+    1,
+    Math.round(Number(payload.unitEconomics?.scalabilityNewWorkers || 100)),
+  );
+  const scalabilityDeltaProfit = Math.round(
+    Number(payload.unitEconomics?.scalabilityDeltaProfit || 0),
+  );
+  const revenueLabel = projectedFirstYearRevenue > 0
+    ? `INR ${projectedFirstYearRevenue.toLocaleString("en-IN")}`
+    : "Revenue model pending";
+  const budgetLabel = regionalEntryBudget > 0
+    ? `INR ${regionalEntryBudget.toLocaleString("en-IN")}`
+    : "Budget under review";
+  const deltaProfitLabel = scalabilityDeltaProfit > 0
+    ? `INR ${scalabilityDeltaProfit.toLocaleString("en-IN")}`
+    : "INR 0";
 
   return {
     chips: [
