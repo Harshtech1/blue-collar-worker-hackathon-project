@@ -90,7 +90,7 @@ export interface AdminActivityEntry {
   role?: string;
 }
 
-export type AdminMapStyle = "road" | "satellite";
+export type AdminMapStyle = "road" | "terrain" | "high-contrast";
 
 export interface AdminActiveMarket {
   cityId: string;

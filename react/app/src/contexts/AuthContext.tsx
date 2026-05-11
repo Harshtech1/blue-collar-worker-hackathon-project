@@ -41,6 +41,9 @@ interface AuthContextType {
   hasCompletedOnboarding: (userId: string) => Promise<boolean>;
   signInWithOTP: (phone: string) => Promise<{ error: Error | null }>;
   verifyOTP: (email: string, otp: string, shouldLogin?: boolean) => Promise<{ data: any; error: Error | null }>;
+  requestPasswordResetOtp: (email: string) => Promise<{ data: any; error: Error | null }>;
+  verifyPasswordResetOtp: (email: string, otp: string) => Promise<{ data: any; error: Error | null }>;
+  resetPassword: (email: string, resetToken: string, newPassword: string) => Promise<{ data: any; error: Error | null }>;
   login?: (provider: string) => Promise<{ error: Error | null }>;
 }
 
@@ -266,6 +269,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const requestPasswordResetOtp = async (email: string) => {
+    try {
+      const res = await fetch(`${API}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({ message: 'Unable to request password reset OTP' }));
+      if (!res.ok) {
+        return { data: null, error: new Error(data.message || 'Unable to request password reset OTP') };
+      }
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: err as Error };
+    }
+  };
+
+  const verifyPasswordResetOtp = async (email: string, otp: string) => {
+    try {
+      const res = await fetch(`${API}/auth/verify-password-reset-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otp }),
+      });
+      const data = await res.json().catch(() => ({ message: 'Unable to verify password reset OTP' }));
+      if (!res.ok) {
+        return { data: null, error: new Error(data.message || 'Unable to verify password reset OTP') };
+      }
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: err as Error };
+    }
+  };
+
+  const resetPassword = async (email: string, resetToken: string, newPassword: string) => {
+    try {
+      const res = await fetch(`${API}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, resetToken, newPassword }),
+      });
+      const data = await res.json().catch(() => ({ message: 'Unable to reset password' }));
+      if (!res.ok) {
+        return { data: null, error: new Error(data.message || 'Unable to reset password') };
+      }
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: err as Error };
+    }
+  };
+
   const login = async (provider: string) => {
     // Provider-based login is app-specific (e.g., Google OAuth). Expose a helper that UI can use to redirect.
     try {
@@ -329,6 +383,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hasCompletedOnboarding,
         signInWithOTP,
         verifyOTP,
+        requestPasswordResetOtp,
+        verifyPasswordResetOtp,
+        resetPassword,
         login,
       }}
     >

@@ -16,6 +16,7 @@ import { API } from "@/lib/constants";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
+import ForgotPassword from "./pages/ForgotPassword";
 import Register from "./pages/Register";
 import Services from "./pages/Services";
 import BookService from "./pages/BookService";
@@ -253,6 +254,7 @@ const App = () => {
                     </Route>
 
                     <Route path="/login" element={<EnhancedLogin />} />
+                    <Route path="/forgot-password" element={<ForgotPassword />} />
                     <Route path="/register" element={<Register />} />
 
                     {/* ENABLED ROUTES */}

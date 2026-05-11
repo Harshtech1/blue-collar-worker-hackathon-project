@@ -227,7 +227,8 @@ export default function AdminDashboard() {
   const [channelLatencyMs, setChannelLatencyMs] = useState(42);
   const [mapStyle, setMapStyle] = useState<AdminMapStyle>(((): AdminMapStyle => {
     const persisted = localStorage.getItem(ADMIN_MAP_STYLE_KEY);
-    if (persisted === "terrain" || persisted === "satellite") return "satellite";
+    if (persisted === "terrain") return "terrain";
+    if (persisted === "satellite" || persisted === "night-ops" || persisted === "high-contrast") return "high-contrast";
     if (persisted === "road") return "road";
     return "road";
   })());

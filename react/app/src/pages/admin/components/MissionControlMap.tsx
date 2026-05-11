@@ -117,7 +117,9 @@ type MapViewMode = AdminMapStyle;
 
 const resolvePrimaryMapStyle = (mapStyleMode?: AdminMapStyle, pitchMode = false): MapViewMode => {
   if (pitchMode) return "road";
-  return mapStyleMode === "satellite" ? "satellite" : "road";
+  if (mapStyleMode === "terrain") return "terrain";
+  if (mapStyleMode === "high-contrast") return "high-contrast";
+  return "road";
 };
 
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
@@ -766,7 +768,9 @@ export function MissionControlMap({
         .rahi-map-shell .leaflet-tile-pane {
           filter: ${mapViewMode === "road"
             ? "contrast(1.01) brightness(1.03) saturate(0.82)"
-            : "contrast(1.02) brightness(0.99) saturate(0.98)"};
+            : mapViewMode === "terrain"
+              ? "contrast(1.04) brightness(0.98) saturate(0.94)"
+              : "contrast(1.06) brightness(0.9) saturate(0.8)"};
         }
 
         .rahi-map-shell .leaflet-control-container {
@@ -927,18 +931,29 @@ export function MissionControlMap({
                 attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
-          ) : mapViewMode === "satellite" ? (
+          ) : mapViewMode === "terrain" ? (
             <>
               <TileLayer
-                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                attribution="Tiles &copy; Esri"
+                url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
               <TileLayer
-                url="https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-                attribution="Labels &copy; Esri"
+                url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
               />
             </>
-          ) : null}
+          ) : (
+            <>
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              />
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
+                attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+              />
+            </>
+          )}
 
           <Pane name="market-moat" style={{ zIndex: 419 }}>
             {showMoatOverlay && mapViewMode === "road" && marketMoatZones.map((zone) => (
@@ -1229,6 +1244,40 @@ export function MissionControlMap({
                 <button
                   type="button"
                   onClick={() => {
+                    setMapViewMode("terrain");
+                    setShowMapSettings(false);
+                    onMapStyleChange?.("terrain");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "terrain"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>Terrain</span>
+                  <span>{mapViewMode === "terrain" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMapViewMode("high-contrast");
+                    setShowMapSettings(false);
+                    onMapStyleChange?.("high-contrast");
+                  }}
+                  className={cn(
+                    "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
+                    mapViewMode === "high-contrast"
+                      ? "bg-slate-900 text-white"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span>High Contrast</span>
+                  <span>{mapViewMode === "high-contrast" ? "On" : "Off"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     const nextSectorState = !showSectorOverlays;
                     setMapViewMode("road");
                     onMapOverlaysChange?.({
@@ -1292,30 +1341,30 @@ export function MissionControlMap({
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Competitor Red Zones</span>
+                  <span>Competitor Heat</span>
                   <span>{showCompetitorOverlay ? "On" : "Off"}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    setMapViewMode("satellite");
+                    setMapViewMode("road");
                     onMapOverlaysChange?.({
                       showSectorOverlays: false,
                       showMoatOverlay: false,
                       showCompetitorOverlay: false,
                     });
                     setShowMapSettings(false);
-                    onMapStyleChange?.("satellite");
+                    onMapStyleChange?.("road");
                   }}
                   className={cn(
                     "mt-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-left text-[11px] font-semibold transition",
-                    mapViewMode === "satellite"
+                    mapViewMode === "road" && !showSectorOverlays && !showMoatOverlay && !showCompetitorOverlay
                       ? "bg-slate-900 text-white"
                       : "text-slate-700 hover:bg-slate-50",
                   )}
                 >
-                  <span>Satellite</span>
-                  <span>{mapViewMode === "satellite" ? "On" : "Off"}</span>
+                  <span>Clear Road View</span>
+                  <span>{mapViewMode === "road" && !showSectorOverlays && !showMoatOverlay && !showCompetitorOverlay ? "On" : "Off"}</span>
                 </button>
               </div>
             ) : null}

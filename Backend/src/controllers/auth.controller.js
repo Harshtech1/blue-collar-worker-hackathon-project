@@ -29,6 +29,24 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+const PASSWORD_RESET_TTL_MS = 10 * 60 * 1000;
+const PASSWORD_RESET_TOKEN_TTL = '15m';
+const MIN_PASSWORD_LENGTH = 8;
+
+const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
+
+const buildPasswordResetToken = (user) => jwt.sign({
+  purpose: 'password-reset',
+  id: user._id.toString(),
+  email: user.email,
+}, getJwtSecret(), { expiresIn: PASSWORD_RESET_TOKEN_TTL });
+
+const clearPasswordResetState = {
+  passwordResetOtp: null,
+  passwordResetOtpExpires: null,
+  passwordResetVerifiedAt: null,
+};
+
 export const register = async (req, res) => {
   try {
     const { email, password, full_name, phone, role } = req.body;
@@ -266,6 +284,160 @@ export const sendOtp = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message || 'Server error' });
+  }
+};
+
+export const forgotPassword = async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const genericMessage = 'If an account exists for this email, a password reset OTP has been sent.';
+    const db = getDb();
+    const user = await db.collection('users').findOne({ email });
+
+    if (!user) {
+      return res.json({ message: genericMessage });
+    }
+
+    const otp = generateOTP();
+    logOtpForDev(email, otp);
+
+    await db.collection('users').updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          passwordResetOtp: otp,
+          passwordResetOtpExpires: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+          passwordResetVerifiedAt: null,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    sendEmail(
+      email,
+      'Your RAHI password reset OTP',
+      `Your password reset OTP is ${otp}. Enter this code in the RAHI app to choose a new password.`,
+    ).catch((emailErr) => {
+      console.error('Password reset OTP email failed:', emailErr);
+    });
+
+    return res.json({ message: genericMessage });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: err.message || 'Server error' });
+  }
+};
+
+export const verifyPasswordResetOtp = async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const otp = String(req.body.otp || '').trim();
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'Email and OTP are required' });
+    }
+
+    const db = getDb();
+    const user = await db.collection('users').findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired password reset OTP' });
+    }
+
+    const isMasterOtp = isMasterOtpEnabled() && otp === getMasterOtp();
+    if (!isMasterOtp && (!user.passwordResetOtp || user.passwordResetOtp !== otp)) {
+      return res.status(400).json({ message: 'Invalid or expired password reset OTP' });
+    }
+
+    if (!isMasterOtp && user.passwordResetOtpExpires < new Date()) {
+      return res.status(400).json({ message: 'Password reset OTP expired' });
+    }
+
+    const resetToken = buildPasswordResetToken(user);
+
+    await db.collection('users').updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          passwordResetVerifiedAt: new Date(),
+          updatedAt: new Date(),
+        },
+        $unset: {
+          passwordResetOtp: '',
+          passwordResetOtpExpires: '',
+        },
+      },
+    );
+
+    return res.json({
+      message: 'OTP verified successfully',
+      resetToken,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: err.message || 'Server error' });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const resetToken = String(req.body.resetToken || '').trim();
+    const newPassword = String(req.body.newPassword || '');
+
+    if (!email || !resetToken || !newPassword) {
+      return res.status(400).json({ message: 'Email, reset token, and new password are required' });
+    }
+
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters long` });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, getJwtSecret());
+    } catch (_err) {
+      return res.status(400).json({ message: 'Password reset session expired. Please request a new OTP.' });
+    }
+
+    if (decoded?.purpose !== 'password-reset' || normalizeEmail(decoded?.email) !== email) {
+      return res.status(400).json({ message: 'Password reset session is invalid' });
+    }
+
+    const db = getDb();
+    const user = await db.collection('users').findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: 'Unable to reset password for this account' });
+    }
+
+    const verifiedAt = user.passwordResetVerifiedAt ? new Date(user.passwordResetVerifiedAt) : null;
+    if (!verifiedAt || (Date.now() - verifiedAt.getTime()) > PASSWORD_RESET_TTL_MS) {
+      return res.status(400).json({ message: 'Password reset verification expired. Please request a new OTP.' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    await db.collection('users').updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          password: hashedPassword,
+          otp: null,
+          otpExpires: null,
+          updatedAt: new Date(),
+          ...clearPasswordResetState,
+        },
+      },
+    );
+
+    return res.json({ message: 'Password reset successful. You can now log in with your new password.' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: err.message || 'Server error' });
   }
 };
 
