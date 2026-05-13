@@ -1,56 +1,62 @@
 export const MOCK_SERVICES = [
   {
-    id: 'plumbing-1',
-    name: 'Professional Plumbing',
-    localizedName: 'Professional Plumbing',
-    description: 'Verified plumbers for tap repairs, pipe leaks, fittings, and routine maintenance.',
+    id: 'plumbing',
+    name: 'Plumber',
+    name_hi: 'Plumber',
+    localizedName: 'Plumber',
+    description: 'Tap repair, pipe leakage, blockage removal, tank repair, and fitting installation.',
     icon: 'droplets',
-    color: '#3b82f6',
+    color: '#0ea5e9',
     category: 'plumbing'
   },
   {
-    id: 'mazdoor-1',
-    name: 'Skilled Daily Labour',
-    localizedName: 'Skilled Daily Labour',
-    description: 'Reliable manpower for shifting, construction support, loading, and heavy lifting.',
-    icon: 'hard-hat',
+    id: 'electrical',
+    name: 'Electrician',
+    name_hi: 'Electrician',
+    localizedName: 'Electrician',
+    description: 'Switch board, fan, light, socket, MCB, inverter, and house wiring support.',
+    icon: 'zap',
     color: '#f59e0b',
-    category: 'construction'
+    category: 'electrical'
   },
   {
-    id: 'tent-1',
-    name: 'Tent & Event Setup',
-    localizedName: 'Tent & Event Setup',
-    description: 'Professional tenting, seating, lighting, and decor support for local events.',
-    icon: 'home',
+    id: 'carpentry',
+    name: 'Carpenter',
+    name_hi: 'Carpenter',
+    localizedName: 'Carpenter',
+    description: 'Furniture repair, shelf installation, wood fittings, and drill-and-hang work.',
+    icon: 'hammer',
     color: '#8b5cf6',
-    category: 'tent'
+    category: 'carpentry'
   },
   {
-    id: 'laundry-1',
-    name: 'Laundry & Dry Cleaning',
-    localizedName: 'Laundry & Dry Cleaning',
-    description: 'Convenient washing, ironing, and dry-cleaning pickup for everyday clothing.',
-    icon: 'shirt',
-    color: '#06b6d4',
-    category: 'laundry'
+    id: 'painting',
+    name: 'Painter',
+    name_hi: 'Painter',
+    localizedName: 'Painter',
+    description: 'Room painting, touch-ups, ceiling work, primer, and exterior paint support.',
+    icon: 'paintbrush',
+    color: '#ec4899',
+    category: 'painting'
   },
   {
-    id: 'tiffin-1',
-    name: 'Home Tiffin Service',
-    localizedName: 'Home Tiffin Service',
-    description: 'Fresh, home-style meals delivered to students, offices, and households.',
-    icon: 'utensils',
-    color: '#ef4444',
-    category: 'food'
+    id: 'appliance-repair',
+    name: 'Appliance Repair',
+    name_hi: 'Appliance Repair',
+    localizedName: 'Appliance Repair',
+    description: 'Repair support for washing machines, refrigerators, microwaves, coolers, and geysers.',
+    icon: 'settings',
+    color: '#6366f1',
+    category: 'appliance-repair'
   },
   {
-    id: 'helper-1',
-    name: 'Student Support Assistant',
-    localizedName: 'Student Support Assistant',
-    description: 'Academic help for assignments, projects, tutoring, and study support.',
-    icon: 'graduation-cap',
-    color: '#10b981',
-    category: 'education'
+    id: 'ac-repair',
+    name: 'AC Service',
+    name_hi: 'AC Service',
+    localizedName: 'AC Service',
+    description: 'Split and window AC service, gas charging, installation, and water leakage repair.',
+    icon: 'thermometer',
+    color: '#2563eb',
+    category: 'ac-repair'
   }
 ];

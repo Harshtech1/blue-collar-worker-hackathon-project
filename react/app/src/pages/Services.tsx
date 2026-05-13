@@ -4,25 +4,19 @@ import { motion } from 'framer-motion';
 import {
   Search,
   Star,
-  Shield,
   Zap,
   Settings,
-  HardHat,
   Droplets,
-  Sparkles,
   ArrowRight,
-  CheckCircle2,
-  Home,
-  Shirt,
-  Utensils,
-  GraduationCap
+  Paintbrush,
+  Thermometer,
+  Hammer,
 } from 'lucide-react';
 
 import { Layout } from '@/components/layout/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useServices, ServiceCategory } from '@/hooks/useServices';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -33,24 +27,19 @@ const iconMap: Record<string, React.ElementType> = {
   droplets: Droplets,
   zap: Zap,
   settings: Settings,
-  'hard-hat': HardHat,
-  sparkles: Sparkles,
-  home: Home,
-  shirt: Shirt,
-  utensils: Utensils,
-  'graduation-cap': GraduationCap,
+  hammer: Hammer,
+  paintbrush: Paintbrush,
+  thermometer: Thermometer,
 };
 
 const CATEGORIES = [
-  { id: 'all', label: 'All Services', icon: Sparkles },
-  { id: 'repair', label: 'Repairs', icon: Settings },
-  { id: 'electric', label: 'Electrical', icon: Zap },
+  { id: 'all', label: 'All Services', icon: Settings },
   { id: 'plumbing', label: 'Plumbing', icon: Droplets },
-  { id: 'construction', label: 'Mazdoor', icon: HardHat },
-  { id: 'tent', label: 'Tent House', icon: Home },
-  { id: 'laundry', label: 'Laundry', icon: Shirt },
-  { id: 'food', label: 'Tiffin', icon: Utensils },
-  { id: 'education', label: 'Helper', icon: GraduationCap },
+  { id: 'electrical', label: 'Electrical', icon: Zap },
+  { id: 'carpentry', label: 'Carpentry', icon: Hammer },
+  { id: 'painting', label: 'Painting', icon: Paintbrush },
+  { id: 'appliance-repair', label: 'Appliance Repair', icon: Settings },
+  { id: 'ac-repair', label: 'AC Service', icon: Thermometer },
 ];
 
 export default function Services() {

@@ -117,9 +117,9 @@ export default function BookService() {
   }, [serviceId]);
 
 
-  // If detailed items exist, we have 4 steps, otherwise 3
+  // Detailed categories skip timing selection and continue as instant bookings.
   const hasSubItems = !!detailedItems;
-  const totalSteps = hasSubItems ? 4 : 3;
+  const totalSteps = 3;
 
   const findService = (serviceList: any[], id: string | undefined) => {
     if (!id) return null;
@@ -179,7 +179,7 @@ export default function BookService() {
   }, [appLocation, bookingType, selectedItem, selectedLocation]);
 
   useEffect(() => {
-    if (!user) {
+    if (false && !user) {
       toast.error(language === 'hi' ? 'कृपया पहले लॉगिन करें' : 'Please login first');
       navigate('/');
     }
@@ -222,6 +222,12 @@ export default function BookService() {
 
   // ── Create real booking via API and wait for worker response ───────────
   const handleBooking = async () => {
+    if (!user) {
+      toast.error(language === 'hi' ? 'à¤•à¥ƒà¤ªà¤¯à¤¾ à¤²à¥‰à¤—à¤¿à¤¨ à¤•à¤°à¤•à¥‡ à¤¬à¥à¤•à¤¿à¤‚à¤— à¤•à¤¨à¥à¤«à¤°à¥à¤® à¤•à¤°à¥‡à¤‚' : 'Please login to confirm your booking');
+      navigate('/login');
+      return;
+    }
+
     if (!address) {
       toast.error(language === 'hi' ? 'कृपया पता दर्ज करें' : 'Please enter address');
       return;
@@ -325,6 +331,7 @@ export default function BookService() {
     { titleEn: 'Details', titleHi: 'विवरण' },
     { titleEn: 'Confirm', titleHi: 'पुष्टि' }
   ];
+  const visibleSteps = hasSubItems ? [steps[0], steps[2], steps[3]] : steps;
 
   return (
     <Layout>
@@ -355,7 +362,7 @@ export default function BookService() {
                 style={{ width: `${((step - 1) / (totalSteps - 1)) * 100}%` }}
               />
 
-              {steps.map((s, i) => {
+              {visibleSteps.map((s, i) => {
                 const isCompleted = i + 1 < step;
                 const isActive = i + 1 === step;
                 return (
@@ -403,6 +410,9 @@ export default function BookService() {
                       key={item.id}
                       onClick={() => {
                         setSelectedItem(item);
+                        setBookingType('instant');
+                        setScheduledDate('');
+                        setScheduledTime('');
                         setStep(2);
                       }}
                       className={cn(
@@ -428,8 +438,8 @@ export default function BookService() {
               </motion.div>
             )}
 
-            {/* Step 1/2: Booking Type Selection */}
-            {((!hasSubItems && step === 1) || (hasSubItems && step === 2)) && (
+            {/* Step 1: Booking Type Selection */}
+            {!hasSubItems && step === 1 && (
               <motion.div
                 key="step1"
                 initial={{ opacity: 0, x: 20 }}
@@ -503,8 +513,8 @@ export default function BookService() {
               </motion.div>
             )}
 
-            {/* Step 2/3: Address Selection */}
-            {((!hasSubItems && step === 2) || (hasSubItems && step === 3)) && (
+            {/* Step 2: Address Selection */}
+            {step === 2 && (
               <motion.div
                 key="step2"
                 initial={{ opacity: 0, x: 20 }}
@@ -516,7 +526,11 @@ export default function BookService() {
                   <h2 className="text-2xl font-black text-slate-800">
                     {language === 'hi' ? 'कहाँ आना है?' : 'Where should we come?'}
                   </h2>
-                  <p className="text-slate-500">Provide your location and any specific details.</p>
+                  <p className="text-slate-500">
+                    {hasSubItems
+                      ? `Selected service: ${selectedItem?.name || service.localizedName}. Provide your location and we will continue with an instant booking.`
+                      : 'Provide your location and any specific details.'}
+                  </p>
                 </div>
 
                 <div className="space-y-5">
@@ -581,7 +595,7 @@ export default function BookService() {
                           <Icon className="h-7 w-7" style={{ color: service.color }} />
                         </div>
                         <div className="flex-1">
-                          <h4 className="font-bold text-slate-800">{service.localizedName}</h4>
+                          <h4 className="font-bold text-slate-800">{selectedItem?.name || service.localizedName}</h4>
                           <div className="flex gap-2 mt-1">
                             <Badge variant="outline" className="text-[10px] uppercase">{bookingType}</Badge>
                             <span className="text-xs text-slate-400 font-medium">Verified Prof.</span>

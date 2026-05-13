@@ -20,6 +20,14 @@ export interface ServiceCategory {
 
 export function useServices() {
   const { language } = useLanguage();
+  const localizedMocks = MOCK_SERVICES.map((service) => ({
+    ...service,
+    localizedName:
+      language === 'hi' ? service.name_hi || service.localizedName || service.name :
+        language === 'bn' ? service.name_bn || service.localizedName || service.name :
+          language === 'gu' ? service.name_gu || service.localizedName || service.name :
+            service.localizedName || service.name,
+  }));
 
   return useQuery<ServiceCategory[]>({
     queryKey: ['services', language],
@@ -54,8 +62,10 @@ export function useServices() {
         return mappedDbData;
       }
 
-      return MOCK_SERVICES;
+      return localizedMocks;
     },
+    initialData: localizedMocks,
+    placeholderData: (previousData) => previousData ?? localizedMocks,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes
     retry: 2,
